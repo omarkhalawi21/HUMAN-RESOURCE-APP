@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Pulse HR — Employee Management</title>
+<title>Hassad Coffee Roasters — HR</title>
+<link rel="icon" type="image/png" href="logo.png" />
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -364,7 +365,7 @@ function seedData() {
     });
   });
   return {
-    settings: { companyName: 'Acme Co.', workStart: '09:00', workEnd: '17:00', currency: 'SAR', lang: 'en', requireLocation: true },
+    settings: { companyName: 'Hassad Coffee Roasters', workStart: '09:00', workEnd: '17:00', currency: 'SAR', lang: 'en', requireLocation: true },
     users, employees, attendance, leaveRequests, leaveBalances, payroll,
     session: null,
     activity: [
@@ -446,11 +447,11 @@ function renderLogin() {
     </div>
     <div class="w-full max-w-md bg-white rounded-2xl shadow-pop p-8 fade-in">
       <div class="flex flex-col items-center mb-6">
-        <div class="w-20 h-20 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center pulse-ring mb-4">
-          ${icon('clock','w-10 h-10')}
+        <div class="w-28 h-28 rounded-full bg-white flex items-center justify-center pulse-ring mb-4 overflow-hidden border border-slate-100">
+          <img src="logo.png" alt="${escapeHTML(state.settings.companyName)}" class="w-full h-full object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML='${ICONS.clock.replace(/'/g,'&apos;')}'; this.parentElement.classList.add('text-brand-600'); this.parentElement.querySelector('svg').classList.add('w-12','h-12');" />
         </div>
         <div class="text-sm text-slate-500">${escapeHTML(t('login_welcome'))}</div>
-        <div class="text-3xl font-bold text-brand-700 tracking-tight">${escapeHTML(state.settings.companyName)}</div>
+        <div class="text-2xl font-bold text-slate-900 tracking-tight text-center">${escapeHTML(state.settings.companyName)}</div>
         <div class="text-sm text-slate-500 mt-2">${escapeHTML(t('login_sub'))}</div>
       </div>
       <form onsubmit="event.preventDefault(); doLogin();" class="space-y-4">
@@ -529,11 +530,13 @@ function renderShell(routeContent) {
   ];
   const sidebar = `
     <aside class="w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen sticky top-0">
-      <div class="px-5 h-16 flex items-center gap-2.5 border-b border-slate-100">
-        <div class="w-9 h-9 rounded-lg bg-brand-600 text-white flex items-center justify-center">${icon('clock','w-5 h-5')}</div>
-        <div>
-          <div class="text-sm font-bold text-slate-900 leading-tight">${escapeHTML(state.settings.companyName)}</div>
-          <div class="text-xs text-slate-400">Pulse HR</div>
+      <div class="px-4 h-16 flex items-center gap-2.5 border-b border-slate-100">
+        <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden shrink-0 border border-slate-100">
+          <img src="logo.png" alt="logo" class="w-full h-full object-contain" onerror="this.style.display='none'; this.parentElement.classList.add('bg-brand-600'); this.parentElement.innerHTML='<span class=\\'text-white\\'>${ICONS.clock.replace(/'/g,'&apos;').replace(/"/g,'&quot;')}</span>';" />
+        </div>
+        <div class="min-w-0">
+          <div class="text-sm font-bold text-slate-900 leading-tight truncate">${escapeHTML(state.settings.companyName)}</div>
+          <div class="text-xs text-slate-400">HR Console</div>
         </div>
       </div>
       <nav class="flex-1 overflow-y-auto p-3 space-y-1">
