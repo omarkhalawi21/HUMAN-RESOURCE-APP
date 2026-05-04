@@ -1,0 +1,1577 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pulse HR — Employee Management</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'Cairo', 'system-ui', 'sans-serif'],
+        },
+        colors: {
+          brand: {
+            50:  '#eef7ff',
+            100: '#d9ecff',
+            200: '#bcdeff',
+            300: '#8ec8ff',
+            400: '#59a8ff',
+            500: '#2e88ff',
+            600: '#1e6ef2',
+            700: '#1858dc',
+            800: '#1a48b0',
+            900: '#1c408a',
+          }
+        },
+        boxShadow: {
+          card: '0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06)',
+          pop:  '0 10px 30px rgba(15,23,42,0.12), 0 2px 6px rgba(15,23,42,0.06)',
+        }
+      }
+    }
+  }
+</script>
+<style>
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', 'Cairo', system-ui, sans-serif;
+    background: #f6f8fb;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+  }
+  [dir="rtl"] body { font-family: 'Cairo', 'Inter', system-ui, sans-serif; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #d6dde8; border-radius: 8px; border: 2px solid #f6f8fb; }
+  ::-webkit-scrollbar-thumb:hover { background: #b9c2d2; }
+  .nav-item.active { background: #eef5ff; color: #1e6ef2; font-weight: 600; }
+  .nav-item.active .icon { color: #1e6ef2; }
+  .stat-up   { color: #047857; background: #ecfdf5; }
+  .stat-down { color: #b91c1c; background: #fef2f2; }
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge-green  { background: #ecfdf5; color: #047857; }
+  .badge-amber  { background: #fffbeb; color: #b45309; }
+  .badge-red    { background: #fef2f2; color: #b91c1c; }
+  .badge-blue   { background: #eef5ff; color: #1e6ef2; }
+  .badge-slate  { background: #f1f5f9; color: #475569; }
+  .badge-purple { background: #f5f3ff; color: #7c3aed; }
+  .fade-in { animation: fade .2s ease-out; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .pulse-ring {
+    box-shadow: 0 0 0 0 rgba(46,136,255,0.6);
+    animation: pulse-ring 2s infinite;
+  }
+  @keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0 rgba(46,136,255,0.45); }
+    70%  { box-shadow: 0 0 0 18px rgba(46,136,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(46,136,255,0); }
+  }
+  .dropdown { display: none; }
+  .dropdown.open { display: block; }
+  .modal-backdrop { background: rgba(15,23,42,0.45); backdrop-filter: blur(2px); }
+  .skeleton { background: linear-gradient(90deg,#eef2f7 0%,#f8fafc 50%,#eef2f7 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+  @keyframes skel { from {background-position: 200% 0;} to {background-position: -200% 0;} }
+  .hover-row:hover { background: #f8fafc; }
+  .input { width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; transition: border .15s, box-shadow .15s; background: white; }
+  .input:focus { border-color: #2e88ff; box-shadow: 0 0 0 3px rgba(46,136,255,0.15); }
+  .label { font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; transition: all .15s; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
+  .btn-primary { background: #1e6ef2; color: white; }
+  .btn-primary:hover { background: #1858dc; }
+  .btn-ghost { background: white; color: #334155; border-color: #e2e8f0; }
+  .btn-ghost:hover { background: #f8fafc; }
+  .btn-danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+  .btn-danger:hover { background: #fee2e2; }
+  .btn-success { background: #047857; color: white; }
+  .btn-success:hover { background: #036647; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+  .clock-tile {
+    background: linear-gradient(135deg, #1e6ef2 0%, #2e88ff 50%, #59a8ff 100%);
+    color: white;
+  }
+  table.data { width: 100%; border-collapse: separate; border-spacing: 0; }
+  table.data th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; text-align: start; padding: 14px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+  table.data td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #0f172a; }
+  table.data tbody tr:last-child td { border-bottom: none; }
+  .avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; font-weight: 600; color: white; flex-shrink: 0; }
+  .toast {
+    position: fixed; top: 20px; right: 20px; z-index: 100;
+    background: #0f172a; color: white; padding: 12px 18px; border-radius: 10px;
+    font-size: 14px; font-weight: 500; box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    animation: slideIn .25s ease-out;
+  }
+  [dir="rtl"] .toast { right: auto; left: 20px; animation: slideInL .25s ease-out; }
+  @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes slideInL { from { transform: translateX(-20px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .tab { padding: 10px 16px; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #64748b; cursor: pointer; transition: all .15s; }
+  .tab.active { color: #1e6ef2; border-bottom-color: #1e6ef2; }
+  .tab:hover:not(.active) { color: #334155; }
+  .progress-bar { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg,#2e88ff,#1e6ef2); transition: width .3s; }
+  /* RTL adjustments */
+  [dir="rtl"] .rtl-flip { transform: scaleX(-1); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============================================================
+   PULSE HR — single-file employee management web app
+   Inspired by Availo (branding/attendance) and Foodics (console UI)
+   Storage: localStorage. No backend.
+============================================================ */
+
+/* -------------------- ICONS (Lucide-inspired SVG) -------------------- */
+const ICONS = {
+  logo:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l3 2"/><path d="m9 12 2 2 4-4" stroke-opacity=".0"/></svg>`,
+  dashboard:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>`,
+  users:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+  clock:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  wallet:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h16v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h3v-4Z"/></svg>`,
+  report:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 5-5"/></svg>`,
+  settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  search:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+  bell:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`,
+  plus:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+  edit:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
+  trash:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>`,
+  close:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+  check:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  download: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+  filter:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>`,
+  logout:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`,
+  globe:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+  pin:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+  inbox:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>`,
+  sun:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`,
+  moon:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`,
+  building: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg>`,
+  eye:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  eyeOff:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`,
+};
+
+const icon = (name, className='w-5 h-5') => `<span class="inline-block ${className}">${ICONS[name]||''}</span>`;
+
+/* -------------------- I18N -------------------- */
+const I18N = {
+  en: {
+    login_welcome: "Welcome to",
+    login_sub: "Please enter your credentials",
+    username: "Username",
+    password: "Password",
+    login: "Login",
+    forgot: "Forgot your password?",
+    demo_hint: "Demo accounts",
+    dashboard: "Dashboard",
+    employees: "Employees",
+    attendance: "Attendance",
+    leave: "Leave",
+    payroll: "Payroll",
+    reports: "Reports",
+    settings: "Settings",
+    logout: "Logout",
+    today: "Today",
+    present: "Present",
+    absent: "Absent",
+    late: "Late",
+    on_leave: "On leave",
+    pending: "Pending",
+    approved: "Approved",
+    rejected: "Rejected",
+    clock_in: "Clock In",
+    clock_out: "Clock Out",
+    add_employee: "Add Employee",
+    request_leave: "Request Leave",
+    run_payroll: "Run Payroll",
+    search: "Search...",
+    actions: "Actions",
+    save: "Save",
+    cancel: "Cancel",
+    edit: "Edit",
+    delete: "Delete",
+    approve: "Approve",
+    reject: "Reject",
+    export: "Export",
+    filter: "Filter",
+    print: "Print",
+    total_employees: "Total Employees",
+    present_today: "Present Today",
+    pending_requests: "Pending Requests",
+    payroll_month: "Payroll This Month",
+    recent_activity: "Recent Activity",
+    monthly_attendance: "Monthly Attendance",
+    quick_actions: "Quick Actions",
+    no_data: "No records yet",
+    confirm_delete: "Are you sure you want to delete this?",
+    welcome_back: "Welcome back",
+  },
+  ar: {
+    login_welcome: "مرحبًا بك في",
+    login_sub: "الرجاء إدخال بيانات الاعتماد",
+    username: "اسم المستخدم",
+    password: "كلمة المرور",
+    login: "تسجيل الدخول",
+    forgot: "نسيت كلمة المرور؟",
+    demo_hint: "حسابات تجريبية",
+    dashboard: "الرئيسية",
+    employees: "الموظفون",
+    attendance: "الحضور",
+    leave: "الإجازات",
+    payroll: "الرواتب",
+    reports: "التقارير",
+    settings: "الإعدادات",
+    logout: "تسجيل الخروج",
+    today: "اليوم",
+    present: "حاضر",
+    absent: "غائب",
+    late: "متأخر",
+    on_leave: "في إجازة",
+    pending: "قيد المراجعة",
+    approved: "موافق",
+    rejected: "مرفوض",
+    clock_in: "تسجيل الحضور",
+    clock_out: "تسجيل الانصراف",
+    add_employee: "إضافة موظف",
+    request_leave: "طلب إجازة",
+    run_payroll: "تشغيل الرواتب",
+    search: "بحث...",
+    actions: "إجراءات",
+    save: "حفظ",
+    cancel: "إلغاء",
+    edit: "تعديل",
+    delete: "حذف",
+    approve: "موافقة",
+    reject: "رفض",
+    export: "تصدير",
+    filter: "تصفية",
+    print: "طباعة",
+    total_employees: "إجمالي الموظفين",
+    present_today: "الحاضرون اليوم",
+    pending_requests: "طلبات معلّقة",
+    payroll_month: "رواتب الشهر",
+    recent_activity: "النشاط الأخير",
+    monthly_attendance: "حضور الشهر",
+    quick_actions: "إجراءات سريعة",
+    no_data: "لا توجد سجلات بعد",
+    confirm_delete: "هل أنت متأكد من الحذف؟",
+    welcome_back: "أهلاً بعودتك",
+  }
+};
+const t = (key) => (I18N[state.settings.lang] && I18N[state.settings.lang][key]) || I18N.en[key] || key;
+
+/* -------------------- STATE / PERSISTENCE -------------------- */
+const STORAGE_KEY = 'pulsehr_state_v1';
+let state;
+
+function loadState() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try { return JSON.parse(saved); } catch(e) { console.warn('Bad state', e); }
+  }
+  return seedData();
+}
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function resetState() { localStorage.removeItem(STORAGE_KEY); state = seedData(); saveState(); }
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function todayISO() { return new Date().toISOString().slice(0,10); }
+function nowHHMM() {
+  const d = new Date();
+  return d.toTimeString().slice(0,5);
+}
+function fmtMoney(n) {
+  const c = state?.settings?.currency || 'USD';
+  const sym = {USD:'$', EUR:'€', GBP:'£', AED:'AED ', SAR:'SAR ', EGP:'EGP '}[c] || (c+' ');
+  return sym + (Number(n)||0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+}
+function diffMinutes(a, b) {
+  const [ah,am]=a.split(':').map(Number), [bh,bm]=b.split(':').map(Number);
+  return (bh*60+bm)-(ah*60+am);
+}
+function minutesToHrs(m) { return (m/60).toFixed(2); }
+
+function seedData() {
+  const depts = ['Engineering', 'Sales', 'Marketing', 'Operations', 'HR', 'Finance'];
+  const employees = [
+    { id: 'e1', firstName: 'Omar',   lastName: 'Khalawi',  email: 'omar@acme.co',   phone: '+966 50 111 1111', role: 'CEO',          department: 'Operations', hireDate: '2022-01-15', salary: 8000, status: 'active', avatarColor: '#1e6ef2' },
+    { id: 'e2', firstName: 'Sara',   lastName: 'Al-Ahmad', email: 'sara@acme.co',   phone: '+966 50 222 2222', role: 'HR Manager',   department: 'HR',         hireDate: '2022-03-10', salary: 5500, status: 'active', avatarColor: '#7c3aed' },
+    { id: 'e3', firstName: 'Khaled', lastName: 'Mansour',  email: 'khaled@acme.co', phone: '+966 50 333 3333', role: 'Engineer',     department: 'Engineering',hireDate: '2023-06-01', salary: 4500, status: 'active', avatarColor: '#059669' },
+    { id: 'e4', firstName: 'Layla',  lastName: 'Hadi',     email: 'layla@acme.co',  phone: '+966 50 444 4444', role: 'Designer',     department: 'Marketing',  hireDate: '2023-09-12', salary: 4200, status: 'active', avatarColor: '#db2777' },
+    { id: 'e5', firstName: 'Ahmed',  lastName: 'Nasr',     email: 'ahmed@acme.co',  phone: '+966 50 555 5555', role: 'Sales Lead',   department: 'Sales',      hireDate: '2024-01-20', salary: 5000, status: 'active', avatarColor: '#ea580c' },
+    { id: 'e6', firstName: 'Noor',   lastName: 'Saleh',    email: 'noor@acme.co',   phone: '+966 50 666 6666', role: 'Accountant',   department: 'Finance',    hireDate: '2024-04-05', salary: 4800, status: 'active', avatarColor: '#0891b2' },
+    { id: 'e7', firstName: 'Yousef', lastName: 'Tamimi',   email: 'yousef@acme.co', phone: '+966 50 777 7777', role: 'Engineer',     department: 'Engineering',hireDate: '2024-07-22', salary: 4500, status: 'active', avatarColor: '#16a34a' },
+    { id: 'e8', firstName: 'Hala',   lastName: 'Rashid',   email: 'hala@acme.co',   phone: '+966 50 888 8888', role: 'Marketer',     department: 'Marketing',  hireDate: '2025-02-14', salary: 3800, status: 'active', avatarColor: '#9333ea' },
+  ];
+  const users = [
+    { id: 'u1', username: 'admin',  password: 'admin123',  role: 'admin',    employeeId: 'e1' },
+    { id: 'u2', username: 'sara',   password: 'sara123',   role: 'admin',    employeeId: 'e2' },
+    { id: 'u3', username: 'khaled', password: 'khaled123', role: 'employee', employeeId: 'e3' },
+    { id: 'u4', username: 'layla',  password: 'layla123',  role: 'employee', employeeId: 'e4' },
+  ];
+  // Generate attendance for last 21 days
+  const attendance = [];
+  const start = new Date(); start.setDate(start.getDate()-21);
+  for (let i=0; i<21; i++) {
+    const d = new Date(start); d.setDate(start.getDate()+i);
+    const day = d.getDay();
+    if (day===5 || day===6) continue; // skip Fri/Sat (Saudi weekend)
+    const iso = d.toISOString().slice(0,10);
+    employees.forEach(emp => {
+      if (Math.random() < 0.05) return; // 5% absent
+      const lateMin = Math.random() < 0.18 ? Math.floor(Math.random()*40)+5 : 0;
+      const ci = `0${9 + Math.floor(lateMin/60)}:${String((lateMin%60)).padStart(2,'0')}`;
+      const co = `${17 + Math.floor(Math.random()*2)}:${String(Math.floor(Math.random()*55)).padStart(2,'0')}`;
+      attendance.push({
+        id: uid(), employeeId: emp.id, date: iso,
+        clockIn: ci, clockOut: co,
+        status: lateMin>0 ? 'late' : 'present',
+        location: { lat: 24.7136 + (Math.random()-0.5)*0.05, lng: 46.6753 + (Math.random()-0.5)*0.05, label: 'HQ' },
+        notes: ''
+      });
+    });
+  }
+  const leaveRequests = [
+    { id: uid(), employeeId: 'e3', type: 'annual',   startDate: '2026-05-10', endDate: '2026-05-14', days: 5, reason: 'Family trip',          status: 'pending',  requestedAt: '2026-05-01' },
+    { id: uid(), employeeId: 'e4', type: 'sick',     startDate: '2026-04-28', endDate: '2026-04-29', days: 2, reason: 'Flu',                  status: 'approved', requestedAt: '2026-04-27', decidedBy: 'u2', decidedAt: '2026-04-27' },
+    { id: uid(), employeeId: 'e7', type: 'personal', startDate: '2026-05-20', endDate: '2026-05-20', days: 1, reason: 'Personal appointment', status: 'pending',  requestedAt: '2026-05-02' },
+    { id: uid(), employeeId: 'e5', type: 'annual',   startDate: '2026-04-15', endDate: '2026-04-19', days: 5, reason: 'Vacation',             status: 'approved', requestedAt: '2026-04-01', decidedBy: 'u1', decidedAt: '2026-04-02' },
+  ];
+  const leaveBalances = {};
+  employees.forEach(e => leaveBalances[e.id] = { annual: 21, sick: 10, personal: 5 });
+  // Apply approved
+  leaveRequests.forEach(r => { if (r.status==='approved') leaveBalances[r.employeeId][r.type] -= r.days; });
+  // Payroll for last month
+  const payroll = [];
+  const lastMonth = new Date(); lastMonth.setMonth(lastMonth.getMonth()-1);
+  const ym = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth()+1).padStart(2,'0')}`;
+  employees.forEach(emp => {
+    payroll.push({
+      id: uid(), employeeId: emp.id, period: ym,
+      base: emp.salary, bonus: Math.random()<0.3 ? 500 : 0,
+      deductions: 0, net: emp.salary + (Math.random()<0.3 ? 500 : 0),
+      status: 'paid', paidAt: lastMonth.toISOString().slice(0,10)
+    });
+  });
+  return {
+    settings: { companyName: 'Acme Co.', workStart: '09:00', workEnd: '17:00', currency: 'SAR', lang: 'en', requireLocation: true },
+    users, employees, attendance, leaveRequests, leaveBalances, payroll,
+    session: null,
+    activity: [
+      { id: uid(), at: new Date().toISOString(), text: 'System initialized with sample data', icon: 'logo' }
+    ]
+  };
+}
+
+state = loadState();
+
+/* -------------------- HELPERS -------------------- */
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
+function escapeHTML(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+function toast(msg, type='info') {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.style.background = type==='error' ? '#b91c1c' : type==='success' ? '#047857' : '#0f172a';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .2s'; t.style.opacity='0'; setTimeout(()=>t.remove(), 200); }, 2200);
+}
+function getEmployee(id) { return state.employees.find(e => e.id===id); }
+function currentUser() { return state.session ? state.users.find(u => u.id===state.session.userId) : null; }
+function currentEmployee() {
+  const u = currentUser();
+  return u ? getEmployee(u.employeeId) : null;
+}
+function isAdmin() { return currentUser()?.role === 'admin'; }
+function avatarHTML(emp, size=36) {
+  if (!emp) return '';
+  const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
+  return `<span class="avatar" style="width:${size}px;height:${size}px;background:${emp.avatarColor||'#64748b'};font-size:${size*0.4}px">${escapeHTML(initials)}</span>`;
+}
+function statusBadge(status) {
+  const map = {
+    present:  ['badge-green',  t('present')],
+    late:     ['badge-amber',  t('late')],
+    absent:   ['badge-red',    t('absent')],
+    pending:  ['badge-amber',  t('pending')],
+    approved: ['badge-green',  t('approved')],
+    rejected: ['badge-red',    t('rejected')],
+    paid:     ['badge-green',  'Paid'],
+    active:   ['badge-green',  'Active'],
+    on_leave: ['badge-blue',   t('on_leave')],
+  };
+  const [cls, label] = map[status] || ['badge-slate', status];
+  return `<span class="badge ${cls}">${escapeHTML(label)}</span>`;
+}
+function setLang(lang) {
+  state.settings.lang = lang;
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang==='ar' ? 'rtl' : 'ltr';
+  saveState();
+  render();
+}
+
+/* -------------------- ROUTER -------------------- */
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'reports', 'settings'];
+function getRoute() {
+  const h = location.hash.replace('#/', '') || 'dashboard';
+  return routes.includes(h) ? h : 'dashboard';
+}
+window.addEventListener('hashchange', render);
+
+/* -------------------- LOGIN -------------------- */
+function renderLogin() {
+  const lang = state.settings.lang;
+  return `
+  <div class="min-h-screen flex items-center justify-center p-6"
+       style="background: linear-gradient(135deg,#eef5ff 0%,#dbeafe 50%,#eef5ff 100%);">
+    <div class="absolute top-4 ${lang==='ar'?'left-4':'right-4'} flex gap-2">
+      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm">
+        ${icon('globe','w-4 h-4')} ${lang==='en'?'العربية':'English'}
+      </button>
+    </div>
+    <div class="w-full max-w-md bg-white rounded-2xl shadow-pop p-8 fade-in">
+      <div class="flex flex-col items-center mb-6">
+        <div class="w-20 h-20 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center pulse-ring mb-4">
+          ${icon('clock','w-10 h-10')}
+        </div>
+        <div class="text-sm text-slate-500">${escapeHTML(t('login_welcome'))}</div>
+        <div class="text-3xl font-bold text-brand-700 tracking-tight">${escapeHTML(state.settings.companyName)}</div>
+        <div class="text-sm text-slate-500 mt-2">${escapeHTML(t('login_sub'))}</div>
+      </div>
+      <form onsubmit="event.preventDefault(); doLogin();" class="space-y-4">
+        <div>
+          <label class="label">${escapeHTML(t('username'))}</label>
+          <input id="login-username" class="input" autocomplete="username" placeholder="admin" />
+        </div>
+        <div>
+          <label class="label">${escapeHTML(t('password'))}</label>
+          <div class="relative">
+            <input id="login-password" type="password" class="input ${lang==='ar'?'pl-10':'pr-10'}" autocomplete="current-password" placeholder="••••••••" />
+            <button type="button" onclick="togglePw()" class="absolute top-1/2 -translate-y-1/2 ${lang==='ar'?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
+              ${icon('eye','w-5 h-5')}
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary w-full justify-center !py-3">${escapeHTML(t('login'))}</button>
+        <div class="text-center text-xs text-slate-400 hover:text-slate-600 cursor-pointer">${escapeHTML(t('forgot'))}</div>
+      </form>
+      <div class="mt-6 pt-6 border-t border-slate-100 text-xs text-slate-500">
+        <div class="font-semibold mb-2 uppercase tracking-wider">${escapeHTML(t('demo_hint'))}</div>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="quickLogin('admin','admin123')" class="text-start bg-slate-50 hover:bg-slate-100 rounded-lg p-2">
+            <div class="font-semibold text-slate-700">admin / admin123</div>
+            <div class="text-slate-500">Admin (Omar)</div>
+          </button>
+          <button onclick="quickLogin('khaled','khaled123')" class="text-start bg-slate-50 hover:bg-slate-100 rounded-lg p-2">
+            <div class="font-semibold text-slate-700">khaled / khaled123</div>
+            <div class="text-slate-500">Employee</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function togglePw() {
+  const i = $('#login-password');
+  i.type = i.type==='password' ? 'text' : 'password';
+}
+function quickLogin(u, p) {
+  $('#login-username').value = u;
+  $('#login-password').value = p;
+  doLogin();
+}
+function doLogin() {
+  const u = $('#login-username').value.trim();
+  const p = $('#login-password').value;
+  const user = state.users.find(x => x.username===u && x.password===p);
+  if (!user) { toast('Invalid credentials', 'error'); return; }
+  state.session = { userId: user.id, loggedAt: new Date().toISOString() };
+  saveState();
+  toast(`${t('welcome_back')}, ${getEmployee(user.employeeId)?.firstName||u}!`, 'success');
+  location.hash = '#/dashboard';
+  render();
+}
+function logout() {
+  state.session = null; saveState();
+  location.hash = '';
+  render();
+}
+
+/* -------------------- LAYOUT (sidebar + topbar) -------------------- */
+function renderShell(routeContent) {
+  const route = getRoute();
+  const emp = currentEmployee();
+  const admin = isAdmin();
+  const lang = state.settings.lang;
+  const navItems = [
+    { key:'dashboard',  icon:'dashboard', label:t('dashboard'), show:true },
+    { key:'employees',  icon:'users',     label:t('employees'), show:admin },
+    { key:'attendance', icon:'clock',     label:t('attendance'),show:true },
+    { key:'leave',      icon:'calendar',  label:t('leave'),     show:true },
+    { key:'payroll',    icon:'wallet',    label:t('payroll'),   show:true },
+    { key:'reports',    icon:'report',    label:t('reports'),   show:admin },
+    { key:'settings',   icon:'settings',  label:t('settings'),  show:admin },
+  ];
+  const sidebar = `
+    <aside class="w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen sticky top-0">
+      <div class="px-5 h-16 flex items-center gap-2.5 border-b border-slate-100">
+        <div class="w-9 h-9 rounded-lg bg-brand-600 text-white flex items-center justify-center">${icon('clock','w-5 h-5')}</div>
+        <div>
+          <div class="text-sm font-bold text-slate-900 leading-tight">${escapeHTML(state.settings.companyName)}</div>
+          <div class="text-xs text-slate-400">Pulse HR</div>
+        </div>
+      </div>
+      <nav class="flex-1 overflow-y-auto p-3 space-y-1">
+        ${navItems.filter(n=>n.show).map(n=>`
+          <a href="#/${n.key}" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
+            <span class="icon w-5 h-5 text-slate-400">${ICONS[n.icon]}</span>
+            <span>${escapeHTML(n.label)}</span>
+          </a>
+        `).join('')}
+      </nav>
+      <div class="p-3 border-t border-slate-100">
+        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="location.hash='#/settings'">
+          ${avatarHTML(emp, 36)}
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-900 truncate">${escapeHTML(emp.firstName+' '+emp.lastName)}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)}</div>
+          </div>
+        </div>
+        <button onclick="logout()" class="w-full mt-2 flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-slate-900 py-2 rounded-lg hover:bg-slate-50">
+          ${icon('logout','w-4 h-4')} ${escapeHTML(t('logout'))}
+        </button>
+      </div>
+    </aside>`;
+  const topbar = `
+    <header class="h-16 bg-white border-b border-slate-200 px-6 flex items-center gap-4 sticky top-0 z-10">
+      <div class="flex-1">
+        <div class="text-xs text-slate-400 uppercase tracking-wider">${escapeHTML(state.settings.companyName)}</div>
+        <div class="text-base font-semibold text-slate-900">${escapeHTML(t(route))}</div>
+      </div>
+      <div class="relative w-72 hidden md:block">
+        <span class="absolute top-1/2 -translate-y-1/2 ${lang==='ar'?'right-3':'left-3'} text-slate-400">${icon('search','w-4 h-4')}</span>
+        <input id="topbar-search" placeholder="${escapeHTML(t('search'))}" class="input ${lang==='ar'?'pr-10':'pl-10'}" oninput="globalSearch(this.value)" />
+      </div>
+      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm" title="Language">
+        ${icon('globe','w-4 h-4')} ${lang==='en'?'AR':'EN'}
+      </button>
+      <button class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" onclick="toggleNotifications()">
+        ${icon('bell','w-5 h-5')}
+        ${state.leaveRequests.filter(r=>r.status==='pending').length>0 && admin ? '<span class="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500"></span>' : ''}
+      </button>
+    </header>`;
+
+  return `
+    <div class="flex min-h-screen ${lang==='ar'?'flex-row-reverse':''}">
+      ${sidebar}
+      <main class="flex-1 min-w-0">
+        ${topbar}
+        <div class="p-6 fade-in" id="route-content">${routeContent}</div>
+      </main>
+    </div>
+  `;
+}
+function globalSearch(q) {
+  // simple — only highlights employees route results
+  if (getRoute() !== 'employees') return;
+  const rows = $$('#emp-tbody tr');
+  q = q.toLowerCase();
+  rows.forEach(r => {
+    r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+function toggleNotifications() {
+  if (!isAdmin()) { toast('No new notifications'); return; }
+  const pendings = state.leaveRequests.filter(r=>r.status==='pending');
+  if (!pendings.length) return toast('No pending requests');
+  toast(`${pendings.length} pending leave request(s)`);
+  location.hash = '#/leave';
+}
+
+/* -------------------- DASHBOARD -------------------- */
+function renderDashboard() {
+  const admin = isAdmin();
+  const today = todayISO();
+  const presentToday = state.attendance.filter(a => a.date===today && a.status!=='absent');
+  const onLeave = state.leaveRequests.filter(r => r.status==='approved' && r.startDate<=today && r.endDate>=today);
+  const pending = state.leaveRequests.filter(r => r.status==='pending');
+  const totalPayroll = state.payroll.reduce((s,p)=>s+(p.net||0),0);
+  const me = currentEmployee();
+  const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
+
+  // Mini chart: last 7 days
+  const last7 = [];
+  for (let i=6;i>=0;i--) {
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const iso = d.toISOString().slice(0,10);
+    const count = state.attendance.filter(a => a.date===iso && a.status!=='absent').length;
+    last7.push({ date: iso, count, label: d.toLocaleDateString(undefined,{weekday:'short'}) });
+  }
+  const maxC = Math.max(...last7.map(x=>x.count), 1);
+
+  // Activity feed (recent attendance + leaves)
+  const activity = [
+    ...state.attendance.slice(-8).map(a => ({
+      at: a.date+'T'+a.clockIn, type:'attendance', text:`${getEmployee(a.employeeId)?.firstName||'?'} clocked in at ${a.clockIn}`, icon:'clock'
+    })),
+    ...state.leaveRequests.slice(-6).map(r => ({
+      at: r.requestedAt, type:'leave', text:`${getEmployee(r.employeeId)?.firstName||'?'} requested ${r.days}d ${r.type} leave`, icon:'calendar'
+    }))
+  ].sort((a,b)=>b.at.localeCompare(a.at)).slice(0, 8);
+
+  return `
+    <!-- Greeting + clock-in widget -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div class="text-sm text-slate-500">${new Date().toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'})}</div>
+            <h2 class="text-2xl font-bold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName)} 👋</h2>
+            <p class="text-slate-500 mt-1">${admin ? "Here's how your team is doing today." : "Have a productive day."}</p>
+          </div>
+          ${admin ? '' : `
+            <a href="#/attendance" class="btn btn-primary">${icon('clock','w-4 h-4')} ${escapeHTML(myToday ? (myToday.clockOut? t('clock_in') : t('clock_out')) : t('clock_in'))}</a>
+          `}
+        </div>
+      </div>
+      <div class="clock-tile rounded-2xl shadow-card p-6 flex flex-col justify-center">
+        <div class="text-white/80 text-sm">${escapeHTML(t('today'))}</div>
+        <div class="text-4xl font-bold mt-1" id="dash-clock">${new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="text-white/80 text-sm mt-2">Working hours: ${state.settings.workStart} – ${state.settings.workEnd}</div>
+      </div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      ${statCard(t('total_employees'), state.employees.length, '+2 this month', 'up', 'users')}
+      ${statCard(t('present_today'),  presentToday.length, `${state.employees.length-presentToday.length} away`, 'up', 'check')}
+      ${statCard(t('on_leave'),       onLeave.length,       `${pending.length} pending`,                'down', 'calendar')}
+      ${statCard(t('payroll_month'),  fmtMoney(totalPayroll), 'last cycle',                              'up', 'wallet')}
+    </div>
+
+    <!-- Charts + activity -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6">
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="font-semibold text-slate-900">${escapeHTML(t('monthly_attendance'))}</h3>
+          <span class="text-xs text-slate-500">Last 7 days</span>
+        </div>
+        <div class="flex items-end gap-3 h-48">
+          ${last7.map(d => `
+            <div class="flex-1 flex flex-col items-center gap-2">
+              <div class="text-xs font-semibold text-slate-700">${d.count}</div>
+              <div class="w-full rounded-t-lg" style="height:${(d.count/maxC)*100}%;background:linear-gradient(180deg,#59a8ff,#1e6ef2);min-height:4px"></div>
+              <div class="text-xs text-slate-500">${escapeHTML(d.label)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-6">
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="font-semibold text-slate-900">${escapeHTML(t('recent_activity'))}</h3>
+        </div>
+        <div class="space-y-4 max-h-64 overflow-y-auto">
+          ${activity.length===0 ? `<div class="text-sm text-slate-400">${escapeHTML(t('no_data'))}</div>` :
+            activity.map(a => `
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 shrink-0 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center">${icon(a.icon||'clock','w-4 h-4')}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm text-slate-700">${escapeHTML(a.text)}</div>
+                  <div class="text-xs text-slate-400 mt-0.5">${new Date(a.at).toLocaleString()}</div>
+                </div>
+              </div>
+            `).join('')}
+        </div>
+      </div>
+    </div>
+
+    ${admin ? `
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
+      <div class="bg-white rounded-2xl shadow-card p-6">
+        <h3 class="font-semibold text-slate-900 mb-4">By Department</h3>
+        ${(() => {
+          const groups = {};
+          state.employees.forEach(e => groups[e.department] = (groups[e.department]||0)+1);
+          const total = state.employees.length;
+          return Object.entries(groups).map(([k,v]) => `
+            <div class="mb-3">
+              <div class="flex justify-between text-sm mb-1">
+                <span class="text-slate-700 font-medium">${escapeHTML(k)}</span>
+                <span class="text-slate-500">${v} (${Math.round(v*100/total)}%)</span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" style="width:${(v/total)*100}%"></div></div>
+            </div>
+          `).join('');
+        })()}
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-6">
+        <h3 class="font-semibold text-slate-900 mb-4">${escapeHTML(t('quick_actions'))}</h3>
+        <div class="grid grid-cols-2 gap-3">
+          <button onclick="openEmployeeModal()" class="btn btn-ghost justify-center !py-4">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
+          <button onclick="openLeaveModal()" class="btn btn-ghost justify-center !py-4">${icon('calendar','w-4 h-4')} ${escapeHTML(t('request_leave'))}</button>
+          <button onclick="location.hash='#/payroll'" class="btn btn-ghost justify-center !py-4">${icon('wallet','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
+          <button onclick="location.hash='#/reports'" class="btn btn-ghost justify-center !py-4">${icon('report','w-4 h-4')} ${escapeHTML(t('reports'))}</button>
+        </div>
+      </div>
+    </div>
+    ` : ''}
+  `;
+}
+function statCard(label, value, caption, dir, ico) {
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div class="w-10 h-10 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center">${icon(ico,'w-5 h-5')}</div>
+        <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${dir==='up'?'stat-up':'stat-down'}">${escapeHTML(caption)}</span>
+      </div>
+      <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(label)}</div>
+      <div class="text-2xl font-bold text-slate-900 mt-0.5">${value}</div>
+    </div>
+  `;
+}
+
+/* -------------------- EMPLOYEES -------------------- */
+let empFilter = { dept: 'all' };
+function renderEmployees() {
+  const emps = state.employees.filter(e => empFilter.dept==='all' || e.department===empFilter.dept);
+  const depts = [...new Set(state.employees.map(e=>e.department))];
+  return `
+    <div class="bg-white rounded-2xl shadow-card">
+      <div class="flex items-center justify-between gap-3 p-5 border-b border-slate-100 flex-wrap">
+        <div>
+          <h2 class="font-semibold text-slate-900">${escapeHTML(t('employees'))}</h2>
+          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${state.employees.length} employees</div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <select class="input !py-2" onchange="empFilter.dept=this.value; render();">
+            <option value="all" ${empFilter.dept==='all'?'selected':''}>All departments</option>
+            ${depts.map(d=>`<option value="${escapeHTML(d)}" ${empFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
+          </select>
+          <button onclick="exportCSV('employees')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+          <button onclick="openEmployeeModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>
+            <th>Employee</th><th>Role</th><th>Department</th><th>Email</th><th>Hire date</th><th>Salary</th><th>Status</th><th class="!text-end">${escapeHTML(t('actions'))}</th>
+          </tr></thead>
+          <tbody id="emp-tbody">
+            ${emps.length===0 ? `<tr><td colspan="8" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              emps.map(e => `
+              <tr class="hover-row">
+                <td><div class="flex items-center gap-3">${avatarHTML(e,36)}<div><div class="font-medium text-slate-900">${escapeHTML(e.firstName+' '+e.lastName)}</div><div class="text-xs text-slate-500">${escapeHTML(e.phone||'')}</div></div></div></td>
+                <td>${escapeHTML(e.role)}</td>
+                <td><span class="badge badge-slate">${escapeHTML(e.department)}</span></td>
+                <td class="text-slate-600">${escapeHTML(e.email)}</td>
+                <td class="text-slate-600">${fmtDate(e.hireDate)}</td>
+                <td class="font-medium">${fmtMoney(e.salary)}</td>
+                <td>${statusBadge(e.status)}</td>
+                <td class="!text-end whitespace-nowrap">
+                  <button onclick="openEmployeeModal('${e.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                  <button onclick="deleteEmployee('${e.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function deleteEmployee(id) {
+  if (!confirm(t('confirm_delete'))) return;
+  state.employees = state.employees.filter(e => e.id!==id);
+  state.users = state.users.filter(u => u.employeeId!==id);
+  saveState(); render();
+  toast('Employee removed', 'success');
+}
+function openEmployeeModal(id) {
+  const editing = id ? getEmployee(id) : null;
+  const form = `
+    <div class="grid grid-cols-2 gap-4">
+      <div><label class="label">First name</label><input id="m-fn" class="input" value="${escapeHTML(editing?.firstName||'')}"></div>
+      <div><label class="label">Last name</label><input id="m-ln" class="input" value="${escapeHTML(editing?.lastName||'')}"></div>
+      <div class="col-span-2"><label class="label">Email</label><input id="m-em" class="input" type="email" value="${escapeHTML(editing?.email||'')}"></div>
+      <div><label class="label">Phone</label><input id="m-ph" class="input" value="${escapeHTML(editing?.phone||'')}"></div>
+      <div><label class="label">Role</label><input id="m-ro" class="input" value="${escapeHTML(editing?.role||'')}"></div>
+      <div><label class="label">Department</label><input id="m-dp" class="input" list="dept-list" value="${escapeHTML(editing?.department||'')}">
+        <datalist id="dept-list">${[...new Set(state.employees.map(e=>e.department))].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
+      </div>
+      <div><label class="label">Hire date</label><input id="m-hd" class="input" type="date" value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
+      <div><label class="label">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" value="${editing?.salary||0}"></div>
+      <div><label class="label">Status</label>
+        <select id="m-st" class="input">
+          <option value="active" ${editing?.status==='active'?'selected':''}>Active</option>
+          <option value="on_leave" ${editing?.status==='on_leave'?'selected':''}>On leave</option>
+        </select>
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit employee' : t('add_employee'), form, () => {
+    const data = {
+      firstName: $('#m-fn').value.trim(),
+      lastName:  $('#m-ln').value.trim(),
+      email:     $('#m-em').value.trim(),
+      phone:     $('#m-ph').value.trim(),
+      role:      $('#m-ro').value.trim() || 'Employee',
+      department:$('#m-dp').value.trim() || 'General',
+      hireDate:  $('#m-hd').value,
+      salary:    Number($('#m-sa').value)||0,
+      status:    $('#m-st').value,
+    };
+    if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
+    if (editing) {
+      Object.assign(editing, data); toast('Employee updated', 'success');
+    } else {
+      const newE = { id: 'e'+uid(), ...data, avatarColor: pickColor() };
+      state.employees.push(newE);
+      state.leaveBalances[newE.id] = { annual: 21, sick: 10, personal: 5 };
+      // create matching user account
+      state.users.push({ id:'u'+uid(), username: data.firstName.toLowerCase(), password: 'changeme', role:'employee', employeeId: newE.id });
+      toast('Employee added (default password: changeme)', 'success');
+    }
+    saveState(); render();
+    return true;
+  });
+}
+function pickColor() {
+  const palette = ['#1e6ef2','#7c3aed','#059669','#db2777','#ea580c','#0891b2','#16a34a','#9333ea','#c026d3','#475569'];
+  return palette[Math.floor(Math.random()*palette.length)];
+}
+
+/* -------------------- ATTENDANCE -------------------- */
+let attTab = 'me';
+function renderAttendance() {
+  const me = currentEmployee();
+  const today = todayISO();
+  const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
+  const admin = isAdmin();
+  if (!admin) attTab = 'me';
+
+  const tabs = admin ? `
+    <div class="flex gap-1 border-b border-slate-200 mb-5">
+      <div class="tab ${attTab==='me'?'active':''}" onclick="attTab='me'; render();">My Attendance</div>
+      <div class="tab ${attTab==='all'?'active':''}" onclick="attTab='all'; render();">All Employees Today</div>
+      <div class="tab ${attTab==='history'?'active':''}" onclick="attTab='history'; render();">All History</div>
+    </div>` : '';
+
+  // clock-in tile
+  const clockTile = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-6">
+      <div class="flex items-center justify-between gap-4 flex-wrap">
+        <div class="flex items-center gap-4">
+          ${avatarHTML(me, 60)}
+          <div>
+            <div class="text-sm text-slate-500">${new Date().toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</div>
+            <div class="text-2xl font-bold text-slate-900 mt-1">${escapeHTML(me.firstName+' '+me.lastName)}</div>
+            <div class="text-sm text-slate-500">${escapeHTML(me.role)} • ${escapeHTML(me.department)}</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-6">
+          <div class="text-center">
+            <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('clock_in'))}</div>
+            <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn || '—'}</div>
+          </div>
+          <div class="text-center">
+            <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('clock_out'))}</div>
+            <div class="text-2xl font-bold text-slate-900">${myToday?.clockOut || '—'}</div>
+          </div>
+          <div class="text-center">
+            <div class="text-xs text-slate-500 uppercase tracking-wider">Hours</div>
+            <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn && myToday?.clockOut ? minutesToHrs(diffMinutes(myToday.clockIn, myToday.clockOut))+'h' : '—'}</div>
+          </div>
+          ${!myToday ? `<button onclick="clockIn()" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
+            : !myToday.clockOut ? `<button onclick="clockOut()" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
+            : `<div class="badge badge-green !px-4 !py-2">✓ Done for today</div>`}
+        </div>
+      </div>
+      ${myToday?.location ? `<div class="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500 flex items-center gap-1.5">${icon('pin','w-4 h-4')} Location captured: ${escapeHTML(myToday.location.label||'')} ${myToday.location.lat ? `(${myToday.location.lat.toFixed(4)}, ${myToday.location.lng.toFixed(4)})` : ''}</div>` : ''}
+    </div>
+  `;
+
+  let main = '';
+  if (attTab==='me' || !admin) {
+    const mine = state.attendance.filter(a => a.employeeId===me.id).slice().sort((a,b)=>b.date.localeCompare(a.date));
+    const stats = computeAttStats(mine);
+    main = `
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+        ${miniStat(t('present'), stats.present, 'check', 'green')}
+        ${miniStat(t('late'),    stats.late,    'clock', 'amber')}
+        ${miniStat(t('absent'),  stats.absent,  'close', 'red')}
+        ${miniStat('Avg hours',  stats.avgHrs+'h', 'clock', 'blue')}
+      </div>
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="flex items-center justify-between p-5 border-b border-slate-100">
+          <h3 class="font-semibold text-slate-900">My History</h3>
+          <button onclick="exportCSV('my-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th><th>Location</th></tr></thead>
+            <tbody>
+              ${mine.length===0 ? `<tr><td colspan="6" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+                mine.map(a => `
+                <tr class="hover-row">
+                  <td class="font-medium">${fmtDate(a.date)}</td>
+                  <td>${a.clockIn||'—'}</td>
+                  <td>${a.clockOut||'—'}</td>
+                  <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td>${statusBadge(a.status)}</td>
+                  <td class="text-slate-500 text-xs">${a.location?.label||'—'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } else if (attTab==='all') {
+    const rows = state.employees.map(e => {
+      const a = state.attendance.find(x => x.employeeId===e.id && x.date===today);
+      const onLeave = state.leaveRequests.find(r=>r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
+      return { e, a, onLeave };
+    });
+    main = `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex justify-between items-center">
+          <h3 class="font-semibold text-slate-900">Today — ${new Date().toLocaleDateString()}</h3>
+          <button onclick="exportCSV('today-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Employee</th><th>Department</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr></thead>
+            <tbody>
+              ${rows.map(({e,a,onLeave}) => `
+                <tr class="hover-row">
+                  <td><div class="flex items-center gap-3">${avatarHTML(e,32)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
+                  <td>${escapeHTML(e.department)}</td>
+                  <td>${a?.clockIn||'—'}</td>
+                  <td>${a?.clockOut||'—'}</td>
+                  <td>${a?.clockIn && a?.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td>${onLeave ? statusBadge('on_leave') : a ? statusBadge(a.status) : statusBadge('absent')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } else {
+    const sorted = state.attendance.slice().sort((a,b)=>b.date.localeCompare(a.date) || a.clockIn.localeCompare(b.clockIn));
+    main = `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex justify-between items-center">
+          <h3 class="font-semibold text-slate-900">All History</h3>
+          <button onclick="exportCSV('all-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Date</th><th>Employee</th><th>In</th><th>Out</th><th>Hours</th><th>Status</th></tr></thead>
+            <tbody>
+              ${sorted.slice(0,200).map(a => {
+                const e = getEmployee(a.employeeId); if(!e) return '';
+                return `
+                <tr class="hover-row">
+                  <td>${fmtDate(a.date)}</td>
+                  <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span>${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
+                  <td>${a.clockIn||'—'}</td>
+                  <td>${a.clockOut||'—'}</td>
+                  <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td>${statusBadge(a.status)}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+  return tabs + clockTile + main;
+}
+function computeAttStats(records) {
+  const present = records.filter(r => r.status==='present').length;
+  const late = records.filter(r => r.status==='late').length;
+  const absent = records.filter(r => r.status==='absent').length;
+  const totalMin = records.filter(r=>r.clockIn && r.clockOut).reduce((s,r)=>s+diffMinutes(r.clockIn,r.clockOut),0);
+  const avgHrs = records.length ? minutesToHrs(totalMin / Math.max(1,records.length)) : '0.00';
+  return { present, late, absent, avgHrs };
+}
+function miniStat(label, value, ico, color) {
+  const colors = { green:'bg-emerald-50 text-emerald-600', amber:'bg-amber-50 text-amber-600', red:'bg-rose-50 text-rose-600', blue:'bg-brand-50 text-brand-600' };
+  return `
+    <div class="bg-white rounded-xl shadow-card p-4 flex items-center gap-3">
+      <div class="w-10 h-10 rounded-lg ${colors[color]} flex items-center justify-center">${icon(ico,'w-5 h-5')}</div>
+      <div>
+        <div class="text-xs text-slate-500">${escapeHTML(label)}</div>
+        <div class="text-xl font-bold text-slate-900">${value}</div>
+      </div>
+    </div>
+  `;
+}
+async function clockIn() {
+  const me = currentEmployee();
+  const now = nowHHMM();
+  const lateMin = diffMinutes(state.settings.workStart, now);
+  const status = lateMin > 5 ? 'late' : 'present';
+  const record = {
+    id: uid(), employeeId: me.id, date: todayISO(),
+    clockIn: now, clockOut: null, status,
+    location: null, notes: ''
+  };
+  if (state.settings.requireLocation && navigator.geolocation) {
+    toast('Capturing location...');
+    try {
+      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
+      record.location = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'Captured' };
+    } catch(e) {
+      record.location = { label: 'Location unavailable' };
+    }
+  }
+  state.attendance.push(record);
+  state.activity.unshift({ id: uid(), at: new Date().toISOString(), text: `${me.firstName} clocked in at ${now}`, icon:'clock' });
+  saveState(); render();
+  toast(status==='late' ? `Clocked in (late by ${lateMin}m)` : 'Clocked in successfully', 'success');
+}
+function clockOut() {
+  const me = currentEmployee();
+  const today = todayISO();
+  const rec = state.attendance.find(a => a.employeeId===me.id && a.date===today);
+  if (!rec) { toast('No clock-in found', 'error'); return; }
+  rec.clockOut = nowHHMM();
+  saveState(); render();
+  toast('Clocked out — have a good rest!', 'success');
+}
+
+/* -------------------- LEAVE -------------------- */
+let leaveTab = 'mine';
+function renderLeave() {
+  const me = currentEmployee();
+  const admin = isAdmin();
+  if (!admin) leaveTab = 'mine';
+  const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
+  const myReqs = state.leaveRequests.filter(r => r.employeeId===me.id).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
+  const allReqs = state.leaveRequests.slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
+  const pending = state.leaveRequests.filter(r=>r.status==='pending');
+
+  const tabs = admin ? `
+    <div class="flex gap-1 border-b border-slate-200 mb-5">
+      <div class="tab ${leaveTab==='mine'?'active':''}" onclick="leaveTab='mine'; render();">My Leave</div>
+      <div class="tab ${leaveTab==='pending'?'active':''}" onclick="leaveTab='pending'; render();">Pending Approvals ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</div>
+      <div class="tab ${leaveTab==='all'?'active':''}" onclick="leaveTab='all'; render();">All Requests</div>
+    </div>` : '';
+
+  const balanceCards = `
+    <div class="grid grid-cols-3 gap-4 mb-6">
+      ${balanceCard('Annual',   balances.annual,   21, '#1e6ef2')}
+      ${balanceCard('Sick',     balances.sick,     10, '#059669')}
+      ${balanceCard('Personal', balances.personal, 5,  '#7c3aed')}
+    </div>
+  `;
+  const requestBtn = `
+    <div class="flex justify-end mb-4">
+      <button onclick="openLeaveModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('request_leave'))}</button>
+    </div>
+  `;
+
+  let table = '';
+  const rows = leaveTab==='mine' ? myReqs : leaveTab==='pending' ? pending : allReqs;
+  table = `
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="p-5 border-b border-slate-100">
+        <h3 class="font-semibold text-slate-900">${leaveTab==='mine'?'My Requests':leaveTab==='pending'?'Pending Approvals':'All Leave Requests'}</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>${admin && leaveTab!=='mine'?'<th>Employee</th>':''}<th>Type</th><th>Dates</th><th>Days</th><th>Reason</th><th>Requested</th><th>Status</th>${admin?'<th class="!text-end">Action</th>':''}</tr></thead>
+          <tbody>
+            ${rows.length===0 ? `<tr><td colspan="${admin?8:6}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              rows.map(r => {
+                const e = getEmployee(r.employeeId);
+                return `
+                <tr class="hover-row">
+                  ${admin && leaveTab!=='mine'?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span>${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>`:''}
+                  <td><span class="badge badge-blue">${escapeHTML(r.type)}</span></td>
+                  <td class="text-slate-700 text-sm">${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}</td>
+                  <td class="font-medium">${r.days}</td>
+                  <td class="text-slate-600 text-sm">${escapeHTML(r.reason||'—')}</td>
+                  <td class="text-slate-500 text-xs">${fmtDate(r.requestedAt)}</td>
+                  <td>${statusBadge(r.status)}</td>
+                  ${admin ? `<td class="!text-end whitespace-nowrap">
+                    ${r.status==='pending'?`
+                      <button onclick="decideLeave('${r.id}','approved')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} ${escapeHTML(t('approve'))}</button>
+                      <button onclick="decideLeave('${r.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
+                    `:'<span class="text-xs text-slate-400">decided</span>'}
+                  </td>`:''}
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  return tabs + balanceCards + requestBtn + table;
+}
+function balanceCard(label, used, total, color) {
+  const remaining = used; // already remaining
+  const pct = (used/total)*100;
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">${escapeHTML(label)} Leave</span>
+        <span class="badge badge-slate">${remaining}/${total}</span>
+      </div>
+      <div class="text-2xl font-bold text-slate-900">${remaining} <span class="text-sm font-normal text-slate-500">days left</span></div>
+      <div class="progress-bar mt-3"><div class="progress-fill" style="width:${pct}%; background:${color}"></div></div>
+    </div>
+  `;
+}
+function openLeaveModal() {
+  const me = currentEmployee();
+  const form = `
+    <div class="grid grid-cols-2 gap-4">
+      <div><label class="label">Type</label>
+        <select id="lv-type" class="input">
+          <option value="annual">Annual</option>
+          <option value="sick">Sick</option>
+          <option value="personal">Personal</option>
+        </select>
+      </div>
+      <div><label class="label">Days</label><input id="lv-days" class="input" type="number" min="1" value="1" readonly></div>
+      <div><label class="label">Start date</label><input id="lv-start" class="input" type="date" value="${todayISO()}" oninput="calcLeaveDays()"></div>
+      <div><label class="label">End date</label><input id="lv-end" class="input" type="date" value="${todayISO()}" oninput="calcLeaveDays()"></div>
+      <div class="col-span-2"><label class="label">Reason</label><textarea id="lv-reason" class="input" rows="3" placeholder="Optional notes for your manager..."></textarea></div>
+    </div>
+  `;
+  openModal(t('request_leave'), form, () => {
+    const start = $('#lv-start').value, end = $('#lv-end').value;
+    if (!start || !end || end<start) { toast('Invalid dates', 'error'); return false; }
+    const days = Math.max(1, Math.round((new Date(end) - new Date(start))/86400000)+1);
+    state.leaveRequests.push({
+      id: uid(), employeeId: me.id, type: $('#lv-type').value,
+      startDate: start, endDate: end, days, reason: $('#lv-reason').value.trim(),
+      status: 'pending', requestedAt: todayISO()
+    });
+    saveState(); render();
+    toast('Leave request submitted', 'success');
+    return true;
+  });
+  setTimeout(calcLeaveDays, 50);
+}
+function calcLeaveDays() {
+  const s = $('#lv-start')?.value, e = $('#lv-end')?.value;
+  if (!s || !e) return;
+  const d = Math.max(1, Math.round((new Date(e) - new Date(s))/86400000)+1);
+  if ($('#lv-days')) $('#lv-days').value = d;
+}
+function decideLeave(id, decision) {
+  const r = state.leaveRequests.find(x=>x.id===id);
+  if (!r) return;
+  r.status = decision; r.decidedBy = currentUser().id; r.decidedAt = todayISO();
+  if (decision==='approved') {
+    const bal = state.leaveBalances[r.employeeId];
+    if (bal && bal[r.type]!=null) bal[r.type] = Math.max(0, bal[r.type] - r.days);
+  }
+  saveState(); render();
+  toast(`Request ${decision}`, 'success');
+}
+
+/* -------------------- PAYROLL -------------------- */
+function renderPayroll() {
+  const admin = isAdmin();
+  const me = currentEmployee();
+  const records = (admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id))
+    .slice().sort((a,b)=>b.period.localeCompare(a.period));
+  const totalPaid = records.reduce((s,p)=>s+p.net,0);
+
+  return `
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Total Paid</div>
+        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(totalPaid)}</div>
+        <div class="text-xs text-slate-400 mt-1">${records.length} payslip(s)</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Avg / Person</div>
+        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(records.length?totalPaid/state.employees.length:0)}</div>
+      </div>
+      ${admin ? `
+      <div class="bg-white rounded-2xl shadow-card p-5 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-slate-500 uppercase tracking-wider">Run new cycle</div>
+          <div class="text-sm text-slate-700 mt-1">Generate payslips for this month</div>
+        </div>
+        <button onclick="runPayroll()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
+      </div>
+      ` : `
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Base Salary</div>
+        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(me.salary)}</div>
+        <div class="text-xs text-slate-400 mt-1">monthly</div>
+      </div>`}
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="flex items-center justify-between p-5 border-b border-slate-100">
+        <h3 class="font-semibold text-slate-900">${admin?'Payroll History':'My Payslips'}</h3>
+        <button onclick="exportCSV('payroll')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>${admin?'<th>Employee</th>':''}<th>Period</th><th>Base</th><th>Bonus</th><th>Deductions</th><th>Net</th><th>Status</th><th>Paid on</th></tr></thead>
+          <tbody>
+            ${records.length===0 ? `<tr><td colspan="${admin?8:7}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              records.map(p => {
+                const e = getEmployee(p.employeeId);
+                return `
+                <tr class="hover-row">
+                  ${admin?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>`:''}
+                  <td class="font-medium">${escapeHTML(p.period)}</td>
+                  <td>${fmtMoney(p.base)}</td>
+                  <td class="text-emerald-600">+${fmtMoney(p.bonus||0)}</td>
+                  <td class="text-rose-600">-${fmtMoney(p.deductions||0)}</td>
+                  <td class="font-bold">${fmtMoney(p.net)}</td>
+                  <td>${statusBadge(p.status)}</td>
+                  <td class="text-slate-500 text-xs">${fmtDate(p.paidAt)}</td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function runPayroll() {
+  const ym = new Date().toISOString().slice(0,7);
+  if (state.payroll.some(p => p.period===ym)) {
+    if (!confirm(`Payroll for ${ym} already exists. Run again (will duplicate)?`)) return;
+  }
+  state.employees.forEach(e => {
+    state.payroll.push({
+      id: uid(), employeeId: e.id, period: ym,
+      base: e.salary, bonus: 0, deductions: 0,
+      net: e.salary, status: 'paid', paidAt: todayISO()
+    });
+  });
+  saveState(); render();
+  toast(`Payroll run for ${ym} — ${state.employees.length} payslips generated`, 'success');
+}
+
+/* -------------------- REPORTS -------------------- */
+let reportType = 'attendance';
+let reportRange = { from: '', to: '' };
+function renderReports() {
+  if (!reportRange.from) {
+    const d = new Date(); d.setDate(d.getDate()-30);
+    reportRange.from = d.toISOString().slice(0,10);
+    reportRange.to = todayISO();
+  }
+  const recs = state.attendance.filter(a => a.date>=reportRange.from && a.date<=reportRange.to);
+  const byEmp = {};
+  recs.forEach(a => {
+    const k = a.employeeId;
+    if (!byEmp[k]) byEmp[k] = { present:0, late:0, absent:0, mins:0, days:0 };
+    byEmp[k][a.status] = (byEmp[k][a.status]||0) + 1;
+    if (a.clockIn && a.clockOut) {
+      byEmp[k].mins += diffMinutes(a.clockIn, a.clockOut);
+      byEmp[k].days += 1;
+    }
+  });
+  return `
+    <div class="bg-white rounded-2xl shadow-card mb-5 p-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div>
+          <label class="label">Report</label>
+          <select class="input !py-2" onchange="reportType=this.value; render();">
+            <option value="attendance" ${reportType==='attendance'?'selected':''}>Attendance Summary</option>
+            <option value="leave"  ${reportType==='leave'?'selected':''}>Leave Summary</option>
+            <option value="payroll"  ${reportType==='payroll'?'selected':''}>Payroll Summary</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">From</label>
+          <input type="date" class="input !py-2" value="${reportRange.from}" onchange="reportRange.from=this.value; render();">
+        </div>
+        <div>
+          <label class="label">To</label>
+          <input type="date" class="input !py-2" value="${reportRange.to}" onchange="reportRange.to=this.value; render();">
+        </div>
+        <div class="ms-auto flex gap-2">
+          <button onclick="exportCSV('report-${reportType}')" class="btn btn-ghost">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+          <button onclick="window.print()" class="btn btn-ghost">${icon('report','w-4 h-4')} ${escapeHTML(t('print'))}</button>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      ${reportType==='attendance' ? `
+        <div class="p-5 border-b border-slate-100"><h3 class="font-semibold text-slate-900">Attendance Summary</h3><div class="text-xs text-slate-500">${reportRange.from} → ${reportRange.to}</div></div>
+        <div class="overflow-x-auto"><table class="data">
+          <thead><tr><th>Employee</th><th>Department</th><th>Present</th><th>Late</th><th>Absent</th><th>Days worked</th><th>Avg hours/day</th></tr></thead>
+          <tbody>
+            ${state.employees.map(e => {
+              const s = byEmp[e.id]||{present:0,late:0,absent:0,mins:0,days:0};
+              return `<tr class="hover-row">
+                <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
+                <td>${escapeHTML(e.department)}</td>
+                <td><span class="badge badge-green">${s.present}</span></td>
+                <td><span class="badge badge-amber">${s.late}</span></td>
+                <td><span class="badge badge-red">${s.absent}</span></td>
+                <td>${s.days}</td>
+                <td>${s.days?minutesToHrs(s.mins/s.days)+'h':'—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>
+      ` : reportType==='leave' ? `
+        <div class="p-5 border-b border-slate-100"><h3 class="font-semibold text-slate-900">Leave Summary</h3></div>
+        <div class="overflow-x-auto"><table class="data">
+          <thead><tr><th>Employee</th><th>Annual remaining</th><th>Sick remaining</th><th>Personal remaining</th><th>Approved (period)</th><th>Pending</th></tr></thead>
+          <tbody>
+            ${state.employees.map(e => {
+              const b = state.leaveBalances[e.id]||{annual:0,sick:0,personal:0};
+              const approved = state.leaveRequests.filter(r=>r.employeeId===e.id && r.status==='approved' && r.startDate>=reportRange.from && r.endDate<=reportRange.to).reduce((s,r)=>s+r.days,0);
+              const pending  = state.leaveRequests.filter(r=>r.employeeId===e.id && r.status==='pending').length;
+              return `<tr class="hover-row">
+                <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
+                <td>${b.annual}</td><td>${b.sick}</td><td>${b.personal}</td>
+                <td><span class="badge badge-green">${approved} d</span></td>
+                <td>${pending?`<span class="badge badge-amber">${pending}</span>`:'—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>
+      ` : `
+        <div class="p-5 border-b border-slate-100"><h3 class="font-semibold text-slate-900">Payroll Summary</h3></div>
+        <div class="overflow-x-auto"><table class="data">
+          <thead><tr><th>Employee</th><th>Cycles</th><th>Total Base</th><th>Total Bonuses</th><th>Total Net</th></tr></thead>
+          <tbody>
+            ${state.employees.map(e => {
+              const ps = state.payroll.filter(p=>p.employeeId===e.id);
+              const tb = ps.reduce((s,p)=>s+p.base,0);
+              const tbo= ps.reduce((s,p)=>s+(p.bonus||0),0);
+              const tn = ps.reduce((s,p)=>s+p.net,0);
+              return `<tr class="hover-row">
+                <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
+                <td>${ps.length}</td>
+                <td>${fmtMoney(tb)}</td>
+                <td class="text-emerald-600">+${fmtMoney(tbo)}</td>
+                <td class="font-bold">${fmtMoney(tn)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>
+      `}
+    </div>
+  `;
+}
+
+/* -------------------- SETTINGS -------------------- */
+function renderSettings() {
+  const s = state.settings;
+  return `
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl shadow-card p-6">
+        <h3 class="font-semibold text-slate-900 mb-1">Company</h3>
+        <p class="text-sm text-slate-500 mb-5">These settings apply to the whole organization.</p>
+        <div class="space-y-4">
+          <div><label class="label">Company name</label><input id="set-name" class="input" value="${escapeHTML(s.companyName)}"></div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="label">Work day starts</label><input id="set-start" type="time" class="input" value="${s.workStart}"></div>
+            <div><label class="label">Work day ends</label><input id="set-end"   type="time" class="input" value="${s.workEnd}"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div><label class="label">Currency</label>
+              <select id="set-cur" class="input">
+                ${['SAR','AED','USD','EUR','GBP','EGP'].map(c=>`<option value="${c}" ${s.currency===c?'selected':''}>${c}</option>`).join('')}
+              </select>
+            </div>
+            <div><label class="label">Language</label>
+              <select id="set-lang" class="input">
+                <option value="en" ${s.lang==='en'?'selected':''}>English</option>
+                <option value="ar" ${s.lang==='ar'?'selected':''}>العربية</option>
+              </select>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 pt-2">
+            <input id="set-loc" type="checkbox" ${s.requireLocation?'checked':''} class="w-4 h-4 accent-brand-600">
+            <label for="set-loc" class="text-sm text-slate-700">Capture location on clock-in (browser geolocation)</label>
+          </div>
+        </div>
+        <button onclick="saveSettings()" class="btn btn-primary mt-5">${icon('check','w-4 h-4')} ${escapeHTML(t('save'))}</button>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-6">
+        <h3 class="font-semibold text-slate-900 mb-1">Users & accounts</h3>
+        <p class="text-sm text-slate-500 mb-5">Login accounts that map to employees.</p>
+        <div class="space-y-2 max-h-96 overflow-y-auto">
+          ${state.users.map(u => {
+            const e = getEmployee(u.employeeId);
+            return `
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-slate-50">
+              ${avatarHTML(e,32)}
+              <div class="flex-1 min-w-0">
+                <div class="font-medium text-slate-900 text-sm truncate">${escapeHTML(e?(e.firstName+' '+e.lastName):'(no employee)')}</div>
+                <div class="text-xs text-slate-500">@${escapeHTML(u.username)}</div>
+              </div>
+              <span class="badge ${u.role==='admin'?'badge-purple':'badge-slate'}">${escapeHTML(u.role)}</span>
+              <button onclick="resetUserPassword('${u.id}')" class="text-xs text-brand-600 hover:underline">reset pw</button>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
+        <h3 class="font-semibold text-slate-900 mb-1">Danger zone</h3>
+        <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
+        <div class="flex flex-wrap gap-3">
+          <button onclick="if(confirm('Wipe all data and re-seed?')) { resetState(); location.hash='#/dashboard'; render(); toast('Reset to sample data','success'); }" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
+          <button onclick="if(confirm('Clear all attendance records?')) { state.attendance=[]; saveState(); render(); toast('Attendance cleared','success'); }" class="btn btn-ghost">Clear attendance</button>
+          <button onclick="downloadBackup()" class="btn btn-ghost">${icon('download','w-4 h-4')} Download backup</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function saveSettings() {
+  state.settings.companyName = $('#set-name').value.trim() || 'Company';
+  state.settings.workStart = $('#set-start').value;
+  state.settings.workEnd = $('#set-end').value;
+  state.settings.currency = $('#set-cur').value;
+  state.settings.requireLocation = $('#set-loc').checked;
+  const newLang = $('#set-lang').value;
+  if (newLang !== state.settings.lang) { setLang(newLang); }
+  saveState(); render();
+  toast('Settings saved', 'success');
+}
+function resetUserPassword(uid_) {
+  const u = state.users.find(x=>x.id===uid_);
+  if (!u) return;
+  const newPw = 'pw' + Math.random().toString(36).slice(2,8);
+  u.password = newPw; saveState();
+  toast(`New password for @${u.username}: ${newPw}`, 'success');
+}
+function downloadBackup() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `pulsehr-backup-${todayISO()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* -------------------- CSV EXPORT -------------------- */
+function exportCSV(kind) {
+  let rows = [], filename = kind+'.csv';
+  if (kind==='employees') {
+    rows = [['Name','Email','Phone','Role','Department','Hire date','Salary','Status']];
+    state.employees.forEach(e => rows.push([e.firstName+' '+e.lastName, e.email, e.phone, e.role, e.department, e.hireDate, e.salary, e.status]));
+  } else if (kind==='my-attendance') {
+    const me = currentEmployee();
+    rows = [['Date','Clock In','Clock Out','Hours','Status']];
+    state.attendance.filter(a=>a.employeeId===me.id).forEach(a => rows.push([a.date,a.clockIn,a.clockOut||'',a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'',a.status]));
+  } else if (kind==='today-attendance') {
+    rows = [['Employee','Department','Clock In','Clock Out','Status']];
+    const today = todayISO();
+    state.employees.forEach(e => {
+      const a = state.attendance.find(x=>x.employeeId===e.id&&x.date===today);
+      rows.push([e.firstName+' '+e.lastName, e.department, a?.clockIn||'', a?.clockOut||'', a?.status||'absent']);
+    });
+  } else if (kind==='all-attendance') {
+    rows = [['Date','Employee','Clock In','Clock Out','Hours','Status']];
+    state.attendance.forEach(a => {
+      const e = getEmployee(a.employeeId); if(!e) return;
+      rows.push([a.date, e.firstName+' '+e.lastName, a.clockIn, a.clockOut||'', a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'', a.status]);
+    });
+  } else if (kind==='payroll') {
+    rows = [['Employee','Period','Base','Bonus','Deductions','Net','Status','Paid on']];
+    state.payroll.forEach(p => {
+      const e = getEmployee(p.employeeId); if(!e) return;
+      rows.push([e.firstName+' '+e.lastName, p.period, p.base, p.bonus||0, p.deductions||0, p.net, p.status, p.paidAt]);
+    });
+  } else {
+    toast('Exporting current view'); return;
+  }
+  const csv = rows.map(r => r.map(v => {
+    const s = String(v??'');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+  toast('Exported '+filename, 'success');
+}
+
+/* -------------------- MODAL SYSTEM -------------------- */
+let modalOnSave = null;
+function openModal(title, bodyHTML, onSave) {
+  modalOnSave = onSave;
+  const m = el(`
+    <div id="modal-root" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop fade-in">
+      <div class="bg-white rounded-2xl shadow-pop w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-5 border-b border-slate-100">
+          <h3 class="font-semibold text-lg text-slate-900">${escapeHTML(title)}</h3>
+          <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 p-1">${icon('close','w-5 h-5')}</button>
+        </div>
+        <div class="p-5 overflow-y-auto">${bodyHTML}</div>
+        <div class="flex justify-end gap-2 p-5 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
+          <button onclick="closeModal()" class="btn btn-ghost">${escapeHTML(t('cancel'))}</button>
+          <button onclick="submitModal()" class="btn btn-primary">${escapeHTML(t('save'))}</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.body.appendChild(m);
+  m.addEventListener('click', e => { if (e.target===m) closeModal(); });
+}
+function closeModal() { document.getElementById('modal-root')?.remove(); modalOnSave=null; }
+function submitModal() {
+  if (!modalOnSave) return closeModal();
+  const result = modalOnSave();
+  if (result !== false) closeModal();
+}
+
+/* -------------------- MAIN RENDER -------------------- */
+function render() {
+  document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
+  document.documentElement.lang = state.settings.lang;
+  const app = $('#app');
+  if (!state.session) { app.innerHTML = renderLogin(); return; }
+  const route = getRoute();
+  let content = '';
+  switch (route) {
+    case 'dashboard':  content = renderDashboard(); break;
+    case 'employees':  content = isAdmin() ? renderEmployees() : renderDashboard(); break;
+    case 'attendance': content = renderAttendance(); break;
+    case 'leave':      content = renderLeave(); break;
+    case 'payroll':    content = renderPayroll(); break;
+    case 'reports':    content = isAdmin() ? renderReports() : renderDashboard(); break;
+    case 'settings':   content = isAdmin() ? renderSettings() : renderDashboard(); break;
+    default:           content = renderDashboard();
+  }
+  app.innerHTML = renderShell(content);
+}
+
+/* -------------------- INIT -------------------- */
+render();
+
+// Live clock on dashboard
+setInterval(() => {
+  const c = document.getElementById('dash-clock');
+  if (c) c.textContent = new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+}, 30000);
+</script>
+</body>
+</html>
