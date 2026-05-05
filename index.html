@@ -492,8 +492,8 @@ function renderLogin() {
     </div>
     <div class="w-full max-w-md bg-white rounded-2xl shadow-pop p-8 fade-in">
       <div class="flex flex-col items-center mb-6">
-        <div class="w-28 h-28 rounded-full bg-white flex items-center justify-center pulse-ring mb-4 overflow-hidden border border-slate-100">
-          <img src="logo.png" alt="${escapeHTML(state.settings.companyName)}" class="w-full h-full object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML='${ICONS.clock.replace(/'/g,'&apos;')}'; this.parentElement.classList.add('text-brand-600'); this.parentElement.querySelector('svg').classList.add('w-12','h-12');" />
+        <div class="w-28 h-28 rounded-full bg-white flex items-center justify-center pulse-ring mb-4 overflow-hidden border border-slate-100 shadow-card">
+          <img src="logo.png" alt="${escapeHTML(state.settings.companyName)}" class="w-full h-full object-contain p-2" onerror="this.style.visibility='hidden'" />
         </div>
         <div class="text-sm text-slate-500">${escapeHTML(t('login_welcome'))}</div>
         <div class="text-2xl font-bold text-slate-900 tracking-tight text-center">${escapeHTML(state.settings.companyName)}</div>
@@ -577,7 +577,7 @@ function renderShell(routeContent) {
     <aside class="app-sidebar w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen md:sticky md:top-0">
       <div class="px-4 h-16 flex items-center gap-2.5 border-b border-slate-100">
         <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden shrink-0 border border-slate-100">
-          <img src="logo.png" alt="logo" class="w-full h-full object-contain" onerror="this.style.display='none'; this.parentElement.classList.add('bg-brand-600'); this.parentElement.innerHTML='<span class=\\'text-white\\'>${ICONS.clock.replace(/'/g,'&apos;').replace(/"/g,'&quot;')}</span>';" />
+          <img src="logo.png" alt="logo" class="w-full h-full object-contain" onerror="this.style.visibility='hidden'" />
         </div>
         <div class="min-w-0">
           <div class="text-sm font-bold text-slate-900 leading-tight truncate">${escapeHTML(state.settings.companyName)}</div>
