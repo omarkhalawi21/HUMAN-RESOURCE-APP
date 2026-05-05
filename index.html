@@ -327,6 +327,7 @@ function emptyState() {
     settings: { companyName: 'Hassad Coffee Roasters', workStart: '09:00', workEnd: '17:00', currency: 'SAR', lang: 'en', requireLocation: true },
     users: [],
     employees: [],
+    branches: [],
     attendance: [],
     leaveRequests: [],
     leaveBalances: {},
@@ -335,6 +336,27 @@ function emptyState() {
     activity: [],
     companyId: null,
   };
+}
+
+/* -------------------- GEOFENCING HELPERS -------------------- */
+function distanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function nearestBranch(lat, lng, accuracy=0) {
+  const active = (state.branches||[]).filter(b => b.isActive);
+  if (active.length === 0) return null;
+  let best = null;
+  for (const b of active) {
+    const d = distanceMeters(lat, lng, b.latitude, b.longitude);
+    const within = d <= b.radius + accuracy;
+    if (!best || d < best.distance) best = { branch: b, distance: d, within };
+  }
+  return best;
 }
 
 /* -------------------- FIELD MAPPERS (DB snake_case ↔ JS camelCase) -------------------- */
@@ -372,6 +394,21 @@ function mapAttendanceFromDb(r) {
     clockOut: r.clock_out ? r.clock_out.slice(0,5) : null,
     status: r.status, notes: r.notes||'',
     location: (r.location_lat || r.location_label) ? { lat: r.location_lat, lng: r.location_lng, label: r.location_label||'Captured' } : null,
+    branchId: r.branch_id || null,
+  };
+}
+function mapBranchFromDb(r) {
+  return {
+    id: r.id, name: r.name, address: r.address || '',
+    latitude: Number(r.latitude), longitude: Number(r.longitude),
+    radius: Number(r.radius_meters)||150, isActive: r.is_active !== false,
+  };
+}
+function branchToDb(b) {
+  return {
+    name: b.name, address: b.address || null,
+    latitude: Number(b.latitude), longitude: Number(b.longitude),
+    radius_meters: Number(b.radius)||150, is_active: !!b.isActive,
   };
 }
 function mapLeaveFromDb(r) {
@@ -395,13 +432,15 @@ function mapPayrollFromDb(r) {
 async function loadAll() {
   isLoadingData = true;
   try {
-    const [companyR, employeesR, attendanceR, leaveR, payrollR] = await Promise.all([
+    const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
       sb.from('leave_requests').select('*').order('created_at', { ascending: false }),
       sb.from('payroll').select('*').order('period', { ascending: false }),
+      sb.from('branches').select('*').order('name'),
     ]);
+    state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
       const c = mapCompanyFromDb(companyR.data);
       state.companyId = c._id;
@@ -1296,24 +1335,56 @@ async function clockIn() {
   const lateMin = diffMinutes(state.settings.workStart, now);
   const status = lateMin > 5 ? 'late' : 'present';
   let location = null;
-  if (state.settings.requireLocation && navigator.geolocation) {
+  let branch = null;
+  const branchesActive = (state.branches||[]).filter(b => b.isActive);
+  const requireBranch = branchesActive.length > 0;
+
+  if (state.settings.requireLocation || requireBranch) {
+    if (!navigator.geolocation) {
+      toast('This device does not support location. Ask your admin for help.', 'error');
+      return;
+    }
     toast('Capturing location...');
+    let pos;
     try {
-      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
-      location = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'Captured' };
+      pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, enableHighAccuracy: true }));
     } catch(e) {
-      location = { label: 'Location unavailable' };
+      toast('Could not get your location. Please enable location permissions and try again.', 'error');
+      return;
+    }
+    const lat = pos.coords.latitude, lng = pos.coords.longitude, acc = pos.coords.accuracy || 0;
+    location = { lat, lng, label: 'Captured' };
+
+    if (requireBranch) {
+      const near = nearestBranch(lat, lng, acc);
+      if (!near) {
+        toast('No active branches configured. Ask your admin.', 'error'); return;
+      }
+      if (!near.within) {
+        const dist = Math.round(near.distance);
+        toast(`You are ${dist}m from "${near.branch.name}". Clock-in only works at a branch location.`, 'error');
+        return;
+      }
+      branch = near.branch;
+      location.label = near.branch.name;
     }
   }
+
   const { data, error } = await sb.from('attendance').insert({
     employee_id: me.id, date: todayISO(),
     clock_in: now, clock_out: null, status,
-    location_lat: location?.lat || null, location_lng: location?.lng || null, location_label: location?.label || null
+    location_lat: location?.lat || null, location_lng: location?.lng || null, location_label: location?.label || null,
+    branch_id: branch?.id || null,
   }).select().single();
   if (error) { toast(error.message, 'error'); return; }
   state.attendance.unshift(mapAttendanceFromDb(data));
   render();
-  toast(status==='late' ? `Clocked in (late by ${lateMin}m)` : 'Clocked in successfully', 'success');
+  toast(
+    branch
+      ? (status==='late' ? `Clocked in at ${branch.name} (late by ${lateMin}m)` : `Clocked in at ${branch.name}`)
+      : (status==='late' ? `Clocked in (late by ${lateMin}m)` : 'Clocked in successfully'),
+    'success'
+  );
 }
 async function clockOut() {
   const me = currentEmployee();
@@ -1921,6 +1992,39 @@ function renderSettings() {
       </div>
 
       <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-1">
+          <h3 class="font-display text-lg font-semibold text-slate-900">Branches</h3>
+          <button onclick="openBranchModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add branch</button>
+        </div>
+        <p class="text-sm text-slate-500 mb-5">Define each location where employees can clock in. While at least one active branch exists, employees must be physically inside a branch's radius to clock in.</p>
+        ${(state.branches||[]).length === 0 ? `
+          <div class="text-sm text-slate-500 bg-brand-50 border border-brand-100 rounded-xl p-4">
+            ${icon('pin','w-4 h-4 inline')} No branches yet. Clock-in works from anywhere until you add one. Click <strong>Add branch</strong> to start enforcing geofenced attendance.
+          </div>
+        ` : `
+        <div class="overflow-x-auto -mx-2">
+          <table class="data" style="min-width: 640px">
+            <thead><tr><th>Branch</th><th>Address</th><th>Coordinates</th><th>Radius</th><th>Status</th><th class="!text-end">Actions</th></tr></thead>
+            <tbody>
+              ${state.branches.map(b => `
+                <tr class="hover-row">
+                  <td><div class="flex items-center gap-2"><span class="w-7 h-7 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center">${icon('pin','w-3.5 h-3.5')}</span><span class="font-medium">${escapeHTML(b.name)}</span></div></td>
+                  <td class="text-slate-600 text-xs">${escapeHTML(b.address||'—')}</td>
+                  <td class="text-slate-500 text-xs font-mono">${b.latitude.toFixed(5)}, ${b.longitude.toFixed(5)}</td>
+                  <td class="text-slate-700">${b.radius}m</td>
+                  <td>${b.isActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-slate">Inactive</span>'}</td>
+                  <td class="!text-end whitespace-nowrap">
+                    <button onclick="openBranchModal('${b.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                    <button onclick="deleteBranch('${b.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        `}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Danger zone</h3>
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
@@ -1932,6 +2036,90 @@ function renderSettings() {
     </div>
   `;
 }
+/* -------------------- BRANCHES -------------------- */
+function openBranchModal(id) {
+  const editing = id ? state.branches.find(b => b.id===id) : null;
+  const form = `
+    <div class="space-y-4">
+      <div><label class="label">Branch name</label><input id="br-name" class="input" value="${escapeHTML(editing?.name||'')}" placeholder="e.g. Main Roastery, Café Riyadh"></div>
+      <div><label class="label">Address (optional)</label><input id="br-addr" class="input" value="${escapeHTML(editing?.address||'')}" placeholder="Street, district, city"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Latitude</label><input id="br-lat" class="input" type="number" step="any" value="${editing?.latitude ?? ''}" placeholder="24.71361"></div>
+        <div><label class="label">Longitude</label><input id="br-lng" class="input" type="number" step="any" value="${editing?.longitude ?? ''}" placeholder="46.67528"></div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <button type="button" onclick="useMyLocationForBranch()" class="btn btn-ghost btn-sm">${icon('pin','w-4 h-4')} Use my current location</button>
+        <span class="text-xs text-slate-500">Tip: stand inside the branch and click this button on your phone for accurate coords. You can also paste coordinates from Google Maps.</span>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Radius (meters)</label>
+          <input id="br-radius" class="input" type="number" min="20" max="5000" step="10" value="${editing?.radius ?? 150}">
+        </div>
+        <div>
+          <label class="label">Status</label>
+          <select id="br-active" class="input">
+            <option value="true" ${editing?.isActive!==false?'selected':''}>Active</option>
+            <option value="false" ${editing?.isActive===false?'selected':''}>Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div class="text-xs text-slate-500 bg-brand-50 border border-brand-100 rounded-lg p-3">
+        Common radius values: <strong>50m</strong> single shop · <strong>150m</strong> small building (default) · <strong>300m</strong> block · <strong>500m</strong> campus.
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit branch' : 'Add branch', form, async () => {
+    const data = {
+      name: $('#br-name').value.trim(),
+      address: $('#br-addr').value.trim(),
+      latitude: parseFloat($('#br-lat').value),
+      longitude: parseFloat($('#br-lng').value),
+      radius: parseInt($('#br-radius').value, 10) || 150,
+      isActive: $('#br-active').value === 'true',
+    };
+    if (!data.name) { toast('Branch name required', 'error'); return false; }
+    if (isNaN(data.latitude) || isNaN(data.longitude)) { toast('Valid latitude and longitude required', 'error'); return false; }
+    if (Math.abs(data.latitude) > 90 || Math.abs(data.longitude) > 180) { toast('Coordinates out of range', 'error'); return false; }
+    const dbRow = branchToDb(data);
+    if (editing) {
+      const { data: row, error } = await sb.from('branches').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapBranchFromDb(row));
+      toast('Branch updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('branches').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.branches.push(mapBranchFromDb(row));
+      toast('Branch added — geofencing now active for clock-in', 'success');
+    }
+    render();
+    return true;
+  });
+}
+async function deleteBranch(id) {
+  const b = state.branches.find(x => x.id===id);
+  if (!b) return;
+  if (!confirm(`Delete "${b.name}"? Existing attendance records linked to this branch will keep their location data.`)) return;
+  const { error } = await sb.from('branches').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.branches = state.branches.filter(x => x.id!==id);
+  render();
+  toast('Branch deleted', 'success');
+}
+function useMyLocationForBranch() {
+  if (!navigator.geolocation) { toast('Geolocation not supported on this device', 'error'); return; }
+  toast('Capturing your location...');
+  navigator.geolocation.getCurrentPosition(pos => {
+    const lat = pos.coords.latitude, lng = pos.coords.longitude, acc = pos.coords.accuracy||0;
+    if ($('#br-lat')) $('#br-lat').value = lat.toFixed(6);
+    if ($('#br-lng')) $('#br-lng').value = lng.toFixed(6);
+    toast(`Location captured (accuracy ±${Math.round(acc)}m)`, 'success');
+  }, err => {
+    toast('Could not get location: ' + err.message, 'error');
+  }, { timeout: 8000, enableHighAccuracy: true });
+}
+
 async function saveSettings() {
   const updates = {
     name: $('#set-name').value.trim() || 'Hassad Coffee Roasters',
