@@ -8,13 +8,14 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap" rel="stylesheet">
 <script>
   tailwind.config = {
     theme: {
       extend: {
         fontFamily: {
           sans: ['Inter', 'Cairo', 'system-ui', 'sans-serif'],
+          display: ['Fraunces', 'Cairo', 'Georgia', 'serif'],
         },
         colors: {
           brand: {
@@ -482,51 +483,99 @@ window.addEventListener('hashchange', render);
 /* -------------------- LOGIN -------------------- */
 function renderLogin() {
   const lang = state.settings.lang;
+  const isAr = lang==='ar';
+  const tagline = isAr
+    ? 'حصاد كل فنجان<br>يبدأ من هنا.'
+    : 'Every cup begins<br/>with the harvest.';
+  const subline = isAr
+    ? 'منصة الموارد البشرية لمحمصة حصاد — لتنظيم فريقك بأناقة.'
+    : 'The HR platform for Hassad Coffee Roasters — your team, beautifully organized.';
   return `
-  <div class="min-h-screen flex items-center justify-center p-6 relative"
-       style="background: linear-gradient(180deg, rgba(42,31,21,0.15) 0%, rgba(42,31,21,0.05) 40%, rgba(42,31,21,0.25) 100%), url('bg-coffee.jpg') center/cover no-repeat, linear-gradient(135deg,#fbf7f1 0%,#f4e8d4 50%,#fbf6ef 100%);">
-    <div class="absolute top-4 ${lang==='ar'?'left-4':'right-4'} flex gap-2">
-      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm">
-        ${icon('globe','w-4 h-4')} ${lang==='en'?'العربية':'English'}
-      </button>
-    </div>
-    <div class="w-full max-w-md bg-white rounded-2xl shadow-pop p-8 fade-in">
-      <div class="flex flex-col items-center mb-6">
-        <div class="w-28 h-28 rounded-full bg-white flex items-center justify-center pulse-ring mb-4 overflow-hidden border border-slate-100 shadow-card">
-          <img src="logo.png" alt="${escapeHTML(state.settings.companyName)}" class="w-full h-full object-contain p-2" onerror="this.style.visibility='hidden'" />
-        </div>
-        <div class="text-sm text-slate-500">${escapeHTML(t('login_welcome'))}</div>
-        <div class="text-2xl font-bold text-slate-900 tracking-tight text-center">${escapeHTML(state.settings.companyName)}</div>
-        <div class="text-sm text-slate-500 mt-2">${escapeHTML(t('login_sub'))}</div>
-      </div>
-      <form onsubmit="event.preventDefault(); doLogin();" class="space-y-4">
-        <div>
-          <label class="label">${escapeHTML(t('username'))}</label>
-          <input id="login-username" class="input" autocomplete="username" placeholder="admin" />
-        </div>
-        <div>
-          <label class="label">${escapeHTML(t('password'))}</label>
-          <div class="relative">
-            <input id="login-password" type="password" class="input ${lang==='ar'?'pl-10':'pr-10'}" autocomplete="current-password" placeholder="••••••••" />
-            <button type="button" onclick="togglePw()" class="absolute top-1/2 -translate-y-1/2 ${lang==='ar'?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
-              ${icon('eye','w-5 h-5')}
-            </button>
+  <div class="min-h-screen w-full flex flex-col md:flex-row relative overflow-hidden bg-[#fbf7f1]">
+
+    <!-- LEFT: editorial photo panel -->
+    <div class="relative md:w-1/2 h-64 md:h-screen overflow-hidden">
+      <div class="absolute inset-0" style="background-image: url('bg-coffee.jpg'); background-size: cover; background-position: center; transform: scale(1.04);"></div>
+      <div class="absolute inset-0" style="background: linear-gradient(165deg, rgba(42,31,21,0.35) 0%, rgba(42,31,21,0.55) 60%, rgba(42,31,21,0.85) 100%);"></div>
+      <!-- decorative grain/noise -->
+      <div class="absolute inset-0 opacity-[0.08] mix-blend-overlay" style="background-image: radial-gradient(circle at 20% 30%, white 1px, transparent 1px), radial-gradient(circle at 80% 70%, white 1px, transparent 1px); background-size: 24px 24px, 32px 32px;"></div>
+
+      <div class="relative h-full flex flex-col justify-between p-6 md:p-12 text-white">
+        <!-- top: small logo mark -->
+        <div class="flex items-center gap-3">
+          <div class="w-11 h-11 rounded-full bg-white/95 flex items-center justify-center overflow-hidden ring-1 ring-white/40 shadow-md">
+            <img src="logo.png" alt="logo" class="w-full h-full object-contain p-1" onerror="this.style.visibility='hidden'" />
+          </div>
+          <div class="leading-tight">
+            <div class="text-[11px] uppercase tracking-[0.18em] text-white/70">${isAr ? 'محمصة' : 'Coffee Roasters'}</div>
+            <div class="font-display font-semibold text-lg">${escapeHTML(state.settings.companyName)}</div>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary w-full justify-center !py-3">${escapeHTML(t('login'))}</button>
-        <div class="text-center text-xs text-slate-400 hover:text-slate-600 cursor-pointer">${escapeHTML(t('forgot'))}</div>
-      </form>
-      <div class="mt-6 pt-6 border-t border-slate-100 text-xs text-slate-500">
-        <div class="font-semibold mb-2 uppercase tracking-wider">${escapeHTML(t('demo_hint'))}</div>
-        <div class="grid grid-cols-2 gap-2">
-          <button onclick="quickLogin('admin','admin123')" class="text-start bg-slate-50 hover:bg-slate-100 rounded-lg p-2">
-            <div class="font-semibold text-slate-700">admin / admin123</div>
-            <div class="text-slate-500">Admin (Omar)</div>
+
+        <!-- center: editorial quote (hidden on mobile to save space) -->
+        <div class="hidden md:block max-w-md">
+          <div class="text-3xl lg:text-5xl font-display font-medium leading-[1.1] tracking-tight" ${isAr?'dir="rtl"':''}>
+            ${tagline}
+          </div>
+          <div class="mt-5 h-px w-16 bg-white/40"></div>
+          <p class="mt-5 text-white/75 text-sm leading-relaxed max-w-sm">${escapeHTML(subline)}</p>
+        </div>
+
+        <!-- bottom: footer / lang toggle -->
+        <div class="flex items-end justify-between">
+          <div class="text-xs text-white/50 hidden md:block">© ${new Date().getFullYear()} ${escapeHTML(state.settings.companyName)}</div>
+          <button onclick="setLang('${isAr?'en':'ar'}')" class="inline-flex items-center gap-1.5 text-xs text-white/85 hover:text-white bg-white/10 hover:bg-white/20 backdrop-blur px-3 py-1.5 rounded-full ring-1 ring-white/20 transition">
+            ${icon('globe','w-3.5 h-3.5')} ${isAr?'English':'العربية'}
           </button>
-          <button onclick="quickLogin('khaled','khaled123')" class="text-start bg-slate-50 hover:bg-slate-100 rounded-lg p-2">
-            <div class="font-semibold text-slate-700">khaled / khaled123</div>
-            <div class="text-slate-500">Employee</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: form panel -->
+    <div class="md:w-1/2 flex items-center justify-center p-6 md:p-10 relative">
+      <div class="absolute inset-0 -z-10" style="background: radial-gradient(circle at 30% 20%, #f4e8d4 0%, #fbf7f1 50%, #fbf7f1 100%);"></div>
+      <div class="w-full max-w-sm fade-in">
+        <div class="mb-8">
+          <div class="text-xs uppercase tracking-[0.2em] text-brand-700 mb-2">${escapeHTML(t('login_welcome'))}</div>
+          <h1 class="font-display text-4xl md:text-5xl font-semibold text-slate-900 leading-[1.05] tracking-tight">
+            ${escapeHTML(state.settings.companyName)}
+          </h1>
+          <p class="mt-3 text-sm text-slate-500">${escapeHTML(t('login_sub'))}</p>
+        </div>
+
+        <form onsubmit="event.preventDefault(); doLogin();" class="space-y-4">
+          <div>
+            <label class="label">${escapeHTML(t('username'))}</label>
+            <input id="login-username" class="input" autocomplete="username" placeholder="admin" />
+          </div>
+          <div>
+            <label class="label">${escapeHTML(t('password'))}</label>
+            <div class="relative">
+              <input id="login-password" type="password" class="input ${isAr?'pl-10':'pr-10'}" autocomplete="current-password" placeholder="••••••••" />
+              <button type="button" onclick="togglePw()" class="absolute top-1/2 -translate-y-1/2 ${isAr?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
+                ${icon('eye','w-5 h-5')}
+              </button>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary w-full justify-center !py-3.5 !text-base shadow-card hover:shadow-pop transition">
+            ${escapeHTML(t('login'))}
+            <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
+          <div class="text-center text-xs text-slate-400 hover:text-brand-700 cursor-pointer transition">${escapeHTML(t('forgot'))}</div>
+        </form>
+
+        <div class="mt-8 pt-6 border-t border-brand-100">
+          <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 mb-3">${escapeHTML(t('demo_hint'))}</div>
+          <div class="grid grid-cols-2 gap-2.5">
+            <button onclick="quickLogin('admin','admin123')" class="text-start bg-white hover:bg-brand-50 rounded-xl p-3 ring-1 ring-slate-100 hover:ring-brand-200 transition group">
+              <div class="text-xs font-mono font-semibold text-slate-800 group-hover:text-brand-700">admin / admin123</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">Admin · Omar</div>
+            </button>
+            <button onclick="quickLogin('khaled','khaled123')" class="text-start bg-white hover:bg-brand-50 rounded-xl p-3 ring-1 ring-slate-100 hover:ring-brand-200 transition group">
+              <div class="text-xs font-mono font-semibold text-slate-800 group-hover:text-brand-700">khaled / khaled123</div>
+              <div class="text-[11px] text-slate-500 mt-0.5">Employee</div>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -611,8 +660,8 @@ function renderShell(routeContent) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div class="flex-1 min-w-0">
-        <div class="text-xs text-slate-400 uppercase tracking-wider truncate">${escapeHTML(state.settings.companyName)}</div>
-        <div class="text-base font-semibold text-slate-900 truncate">${escapeHTML(t(route))}</div>
+        <div class="text-[10px] text-slate-400 uppercase tracking-[0.18em] font-semibold truncate">${escapeHTML(state.settings.companyName)}</div>
+        <div class="font-display text-lg font-semibold text-slate-900 truncate leading-tight">${escapeHTML(t(route))}</div>
       </div>
       <div class="topbar-search relative w-72 hidden md:block">
         <span class="absolute top-1/2 -translate-y-1/2 ${lang==='ar'?'right-3':'left-3'} text-slate-400">${icon('search','w-4 h-4')}</span>
@@ -693,22 +742,29 @@ function renderDashboard() {
   return `
     <!-- Greeting + clock-in widget -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6">
-        <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6 md:p-8 relative overflow-hidden">
+        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #d6b475 0%, transparent 70%);"></div>
+        <div class="absolute bottom-0 right-0 w-32 h-32 rounded-full opacity-10" style="background: radial-gradient(circle, #c44a4a 0%, transparent 70%);"></div>
+        <div class="relative flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <div class="text-sm text-slate-500">${new Date().toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'})}</div>
-            <h2 class="text-2xl font-bold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName)} 👋</h2>
-            <p class="text-slate-500 mt-1">${admin ? "Here's how your team is doing today." : "Have a productive day."}</p>
+            <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${new Date().toLocaleDateString(undefined,{weekday:'long'})} · ${new Date().toLocaleDateString(undefined,{day:'numeric', month:'long'})}</div>
+            <h2 class="font-display text-3xl md:text-4xl font-semibold text-slate-900 mt-2 leading-tight">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName)}.</h2>
+            <p class="text-slate-500 mt-2 max-w-md">${admin ? "A clear view of your team — attendance, requests, and the rhythm of the day." : "Track your day, request time off, and see your payroll in one place."}</p>
           </div>
           ${admin ? '' : `
-            <a href="#/attendance" class="btn btn-primary">${icon('clock','w-4 h-4')} ${escapeHTML(myToday ? (myToday.clockOut? t('clock_in') : t('clock_out')) : t('clock_in'))}</a>
+            <a href="#/attendance" class="btn btn-primary shadow-card hover:shadow-pop">${icon('clock','w-4 h-4')} ${escapeHTML(myToday ? (myToday.clockOut? t('clock_in') : t('clock_out')) : t('clock_in'))}</a>
           `}
         </div>
       </div>
-      <div class="clock-tile rounded-2xl shadow-card p-6 flex flex-col justify-center">
-        <div class="text-white/80 text-sm">${escapeHTML(t('today'))}</div>
-        <div class="text-4xl font-bold mt-1" id="dash-clock">${new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}</div>
-        <div class="text-white/80 text-sm mt-2">Working hours: ${state.settings.workStart} – ${state.settings.workEnd}</div>
+      <div class="clock-tile rounded-2xl shadow-card p-6 flex flex-col justify-center relative">
+        <div class="relative z-10">
+          <div class="text-white/70 text-[11px] uppercase tracking-[0.2em] font-semibold">${escapeHTML(t('today'))}</div>
+          <div class="font-display text-5xl font-semibold mt-2 tabular-nums" id="dash-clock">${new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}</div>
+          <div class="flex items-center gap-2 mt-4 text-white/85 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            Working hours · ${state.settings.workStart} – ${state.settings.workEnd}
+          </div>
+        </div>
       </div>
     </div>
 
@@ -724,7 +780,7 @@ function renderDashboard() {
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
       <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6">
         <div class="flex items-center justify-between mb-5">
-          <h3 class="font-semibold text-slate-900">${escapeHTML(t('monthly_attendance'))}</h3>
+          <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('monthly_attendance'))}</h3>
           <span class="text-xs text-slate-500">Last 7 days</span>
         </div>
         <div class="flex items-end gap-3 h-48">
@@ -739,7 +795,7 @@ function renderDashboard() {
       </div>
       <div class="bg-white rounded-2xl shadow-card p-6">
         <div class="flex items-center justify-between mb-5">
-          <h3 class="font-semibold text-slate-900">${escapeHTML(t('recent_activity'))}</h3>
+          <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('recent_activity'))}</h3>
         </div>
         <div class="space-y-4 max-h-64 overflow-y-auto">
           ${activity.length===0 ? `<div class="text-sm text-slate-400">${escapeHTML(t('no_data'))}</div>` :
@@ -759,7 +815,7 @@ function renderDashboard() {
     ${admin ? `
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
       <div class="bg-white rounded-2xl shadow-card p-6">
-        <h3 class="font-semibold text-slate-900 mb-4">By Department</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-4">By Department</h3>
         ${(() => {
           const groups = {};
           state.employees.forEach(e => groups[e.department] = (groups[e.department]||0)+1);
@@ -776,7 +832,7 @@ function renderDashboard() {
         })()}
       </div>
       <div class="bg-white rounded-2xl shadow-card p-6">
-        <h3 class="font-semibold text-slate-900 mb-4">${escapeHTML(t('quick_actions'))}</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-4">${escapeHTML(t('quick_actions'))}</h3>
         <div class="grid grid-cols-2 gap-3">
           <button onclick="openEmployeeModal()" class="btn btn-ghost justify-center !py-4">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
           <button onclick="openLeaveModal()" class="btn btn-ghost justify-center !py-4">${icon('calendar','w-4 h-4')} ${escapeHTML(t('request_leave'))}</button>
@@ -790,13 +846,13 @@ function renderDashboard() {
 }
 function statCard(label, value, caption, dir, ico) {
   return `
-    <div class="bg-white rounded-2xl shadow-card p-5">
+    <div class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all duration-200 hover:-translate-y-0.5">
       <div class="flex items-center justify-between mb-3">
-        <div class="w-10 h-10 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center">${icon(ico,'w-5 h-5')}</div>
-        <span class="text-[11px] font-semibold px-2 py-0.5 rounded-full ${dir==='up'?'stat-up':'stat-down'}">${escapeHTML(caption)}</span>
+        <div class="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center ring-1 ring-brand-100">${icon(ico,'w-5 h-5')}</div>
+        <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${dir==='up'?'stat-up':'stat-down'}">${escapeHTML(caption)}</span>
       </div>
-      <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(label)}</div>
-      <div class="text-2xl font-bold text-slate-900 mt-0.5">${value}</div>
+      <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">${escapeHTML(label)}</div>
+      <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${value}</div>
     </div>
   `;
 }
@@ -1011,7 +1067,7 @@ function renderAttendance() {
       </div>
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
         <div class="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 class="font-semibold text-slate-900">My History</h3>
+          <h3 class="font-display text-lg font-semibold text-slate-900">My History</h3>
           <button onclick="exportCSV('my-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
         </div>
         <div class="overflow-x-auto">
@@ -1042,7 +1098,7 @@ function renderAttendance() {
     main = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
         <div class="p-5 border-b border-slate-100 flex justify-between items-center">
-          <h3 class="font-semibold text-slate-900">Today — ${new Date().toLocaleDateString()}</h3>
+          <h3 class="font-display text-lg font-semibold text-slate-900">Today — ${new Date().toLocaleDateString()}</h3>
           <button onclick="exportCSV('today-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
         </div>
         <div class="overflow-x-auto">
@@ -1068,7 +1124,7 @@ function renderAttendance() {
     main = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
         <div class="p-5 border-b border-slate-100 flex justify-between items-center">
-          <h3 class="font-semibold text-slate-900">All History</h3>
+          <h3 class="font-display text-lg font-semibold text-slate-900">All History</h3>
           <button onclick="exportCSV('all-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
         </div>
         <div class="overflow-x-auto">
@@ -1185,7 +1241,7 @@ function renderLeave() {
   table = `
     <div class="bg-white rounded-2xl shadow-card overflow-hidden">
       <div class="p-5 border-b border-slate-100">
-        <h3 class="font-semibold text-slate-900">${leaveTab==='mine'?'My Requests':leaveTab==='pending'?'Pending Approvals':'All Leave Requests'}</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900">${leaveTab==='mine'?'My Requests':leaveTab==='pending'?'Pending Approvals':'All Leave Requests'}</h3>
       </div>
       <div class="overflow-x-auto">
         <table class="data">
@@ -1318,7 +1374,7 @@ function renderPayroll() {
     </div>
     <div class="bg-white rounded-2xl shadow-card overflow-hidden">
       <div class="flex items-center justify-between p-5 border-b border-slate-100">
-        <h3 class="font-semibold text-slate-900">${admin?'Payroll History':'My Payslips'}</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900">${admin?'Payroll History':'My Payslips'}</h3>
         <button onclick="exportCSV('payroll')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
       </div>
       <div class="overflow-x-auto">
@@ -1486,7 +1542,7 @@ function renderReports() {
     </div>
     <div class="bg-white rounded-2xl shadow-card overflow-hidden">
       ${reportType==='attendance' ? `
-        <div class="p-5 border-b border-slate-100"><h3 class="font-semibold text-slate-900">Attendance Summary</h3><div class="text-xs text-slate-500">${reportRange.from} → ${reportRange.to}</div></div>
+        <div class="p-5 border-b border-slate-100"><h3 class="font-display text-lg font-semibold text-slate-900">Attendance Summary</h3><div class="text-xs text-slate-500">${reportRange.from} → ${reportRange.to}</div></div>
         <div class="overflow-x-auto"><table class="data">
           <thead><tr><th>Employee</th><th>Department</th><th>Present</th><th>Late</th><th>Absent</th><th>Days worked</th><th>Avg hours/day</th></tr></thead>
           <tbody>
@@ -1505,7 +1561,7 @@ function renderReports() {
           </tbody>
         </table></div>
       ` : reportType==='leave' ? `
-        <div class="p-5 border-b border-slate-100"><h3 class="font-semibold text-slate-900">Leave Summary</h3></div>
+        <div class="p-5 border-b border-slate-100"><h3 class="font-display text-lg font-semibold text-slate-900">Leave Summary</h3></div>
         <div class="overflow-x-auto"><table class="data">
           <thead><tr><th>Employee</th><th>Annual remaining</th><th>Sick remaining</th><th>Personal remaining</th><th>Approved (period)</th><th>Pending</th></tr></thead>
           <tbody>
@@ -1523,7 +1579,7 @@ function renderReports() {
           </tbody>
         </table></div>
       ` : `
-        <div class="p-5 border-b border-slate-100"><h3 class="font-semibold text-slate-900">Payroll Summary</h3></div>
+        <div class="p-5 border-b border-slate-100"><h3 class="font-display text-lg font-semibold text-slate-900">Payroll Summary</h3></div>
         <div class="overflow-x-auto"><table class="data">
           <thead><tr><th>Employee</th><th>Cycles</th><th>Total Base</th><th>Total Bonuses</th><th>Total Net</th></tr></thead>
           <tbody>
@@ -1553,7 +1609,7 @@ function renderSettings() {
   return `
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <div class="bg-white rounded-2xl shadow-card p-6">
-        <h3 class="font-semibold text-slate-900 mb-1">Company</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Company</h3>
         <p class="text-sm text-slate-500 mb-5">These settings apply to the whole organization.</p>
         <div class="space-y-4">
           <div><label class="label">Company name</label><input id="set-name" class="input" value="${escapeHTML(s.companyName)}"></div>
@@ -1583,7 +1639,7 @@ function renderSettings() {
       </div>
 
       <div class="bg-white rounded-2xl shadow-card p-6">
-        <h3 class="font-semibold text-slate-900 mb-1">Users & accounts</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Users & accounts</h3>
         <p class="text-sm text-slate-500 mb-5">Login accounts that map to employees.</p>
         <div class="space-y-2 max-h-96 overflow-y-auto">
           ${state.users.map(u => {
@@ -1603,7 +1659,7 @@ function renderSettings() {
       </div>
 
       <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
-        <h3 class="font-semibold text-slate-900 mb-1">Danger zone</h3>
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Danger zone</h3>
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
           <button onclick="if(confirm('Wipe all data and re-seed?')) { resetState(); location.hash='#/dashboard'; render(); toast('Reset to sample data','success'); }" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
@@ -1693,7 +1749,7 @@ function openModal(title, bodyHTML, onSave) {
     <div id="modal-root" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop fade-in">
       <div class="bg-white rounded-2xl shadow-pop w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div class="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 class="font-semibold text-lg text-slate-900">${escapeHTML(title)}</h3>
+          <h3 class="font-display text-xl font-semibold text-slate-900">${escapeHTML(title)}</h3>
           <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 p-1">${icon('close','w-5 h-5')}</button>
         </div>
         <div class="p-5 overflow-y-auto">${bodyHTML}</div>
