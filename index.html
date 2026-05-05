@@ -6,6 +6,7 @@
 <title>Hassad Coffee Roasters — HR</title>
 <link rel="icon" type="image/png" href="logo.png" />
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap" rel="stylesheet">
@@ -166,9 +167,9 @@
 
 <script>
 /* ============================================================
-   PULSE HR — single-file employee management web app
-   Inspired by Availo (branding/attendance) and Foodics (console UI)
-   Storage: localStorage. No backend.
+   HASSAD HR — single-file employee management web app
+   Backend: Supabase (auth + Postgres). Hosting: Netlify.
+   Inspired by Availo (branding/attendance) and Foodics (console UI).
 ============================================================ */
 
 /* -------------------- ICONS (Lucide-inspired SVG) -------------------- */
@@ -310,19 +311,136 @@ const I18N = {
 };
 const t = (key) => (I18N[state.settings.lang] && I18N[state.settings.lang][key]) || I18N.en[key] || key;
 
-/* -------------------- STATE / PERSISTENCE -------------------- */
-const STORAGE_KEY = 'pulsehr_state_v1';
-let state;
+/* -------------------- SUPABASE CLIENT -------------------- */
+const SUPABASE_URL = 'https://ymtrycprkbwybzhokvgt.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true }
+});
 
-function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try { return JSON.parse(saved); } catch(e) { console.warn('Bad state', e); }
-  }
-  return seedData();
+/* -------------------- STATE (in-memory cache) -------------------- */
+let state;
+let isLoadingData = false;
+
+function emptyState() {
+  return {
+    settings: { companyName: 'Hassad Coffee Roasters', workStart: '09:00', workEnd: '17:00', currency: 'SAR', lang: 'en', requireLocation: true },
+    users: [],
+    employees: [],
+    attendance: [],
+    leaveRequests: [],
+    leaveBalances: {},
+    payroll: [],
+    session: null,
+    activity: [],
+    companyId: null,
+  };
 }
-function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-function resetState() { localStorage.removeItem(STORAGE_KEY); state = seedData(); saveState(); }
+
+/* -------------------- FIELD MAPPERS (DB snake_case ↔ JS camelCase) -------------------- */
+function mapCompanyFromDb(r) {
+  if (!r) return null;
+  return { _id: r.id, companyName: r.name, workStart: (r.work_start||'09:00:00').slice(0,5), workEnd: (r.work_end||'17:00:00').slice(0,5), currency: r.currency, lang: r.language, requireLocation: r.require_location };
+}
+function mapEmployeeFromDb(r) {
+  return {
+    id: r.id, user_id: r.user_id,
+    firstName: r.first_name, lastName: r.last_name||'',
+    email: r.email, phone: r.phone||'',
+    role: r.job_title, department: r.department,
+    hireDate: r.hire_date, salary: Number(r.salary)||0,
+    status: r.status, isAdmin: r.is_admin,
+    avatarColor: r.avatar_color || '#a87035',
+    photo: r.photo,
+    leave_annual: r.leave_annual, leave_sick: r.leave_sick, leave_personal: r.leave_personal,
+  };
+}
+function employeeToDb(e) {
+  return {
+    first_name: e.firstName, last_name: e.lastName||'',
+    email: e.email, phone: e.phone||null,
+    job_title: e.role || 'Employee', department: e.department || 'General',
+    hire_date: e.hireDate, salary: Number(e.salary)||0,
+    status: e.status || 'active',
+    avatar_color: e.avatarColor, photo: e.photo,
+  };
+}
+function mapAttendanceFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id, date: r.date,
+    clockIn: r.clock_in ? r.clock_in.slice(0,5) : null,
+    clockOut: r.clock_out ? r.clock_out.slice(0,5) : null,
+    status: r.status, notes: r.notes||'',
+    location: (r.location_lat || r.location_label) ? { lat: r.location_lat, lng: r.location_lng, label: r.location_label||'Captured' } : null,
+  };
+}
+function mapLeaveFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id, type: r.leave_type,
+    startDate: r.start_date, endDate: r.end_date, days: r.days,
+    reason: r.reason||'', status: r.status,
+    requestedAt: r.created_at ? r.created_at.slice(0,10) : '',
+    decidedBy: r.decided_by, decidedAt: r.decided_at ? r.decided_at.slice(0,10) : null,
+  };
+}
+function mapPayrollFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id, period: r.period,
+    base: Number(r.base)||0, bonus: Number(r.bonus)||0, deductions: Number(r.deductions)||0,
+    net: Number(r.net)||0, status: r.status, paidAt: r.paid_at,
+  };
+}
+
+/* -------------------- LOAD ALL FROM SUPABASE -------------------- */
+async function loadAll() {
+  isLoadingData = true;
+  try {
+    const [companyR, employeesR, attendanceR, leaveR, payrollR] = await Promise.all([
+      sb.from('companies').select('*').limit(1).maybeSingle(),
+      sb.from('employees').select('*').order('first_name'),
+      sb.from('attendance').select('*').order('date', { ascending: false }),
+      sb.from('leave_requests').select('*').order('created_at', { ascending: false }),
+      sb.from('payroll').select('*').order('period', { ascending: false }),
+    ]);
+    if (companyR.data) {
+      const c = mapCompanyFromDb(companyR.data);
+      state.companyId = c._id;
+      state.settings = { companyName: c.companyName, workStart: c.workStart, workEnd: c.workEnd, currency: c.currency, lang: c.lang || state.settings.lang, requireLocation: c.requireLocation };
+    }
+    state.employees = (employeesR.data || []).map(mapEmployeeFromDb);
+    state.attendance = (attendanceR.data || []).map(mapAttendanceFromDb);
+    state.leaveRequests = (leaveR.data || []).map(mapLeaveFromDb);
+    state.payroll = (payrollR.data || []).map(mapPayrollFromDb);
+    state.leaveBalances = {};
+    state.employees.forEach(e => {
+      state.leaveBalances[e.id] = { annual: e.leave_annual, sick: e.leave_sick, personal: e.leave_personal };
+    });
+    state.users = state.employees.filter(e => e.user_id).map(e => ({
+      id: 'u-'+e.id, username: e.email, role: e.isAdmin?'admin':'employee', employeeId: e.id, user_id: e.user_id
+    }));
+  } catch(e) {
+    console.error('Load failed:', e);
+    toast('Failed to load data: '+e.message, 'error');
+  } finally {
+    isLoadingData = false;
+  }
+}
+
+// Compatibility shims for old call sites; real persistence is via Supabase mutations.
+function saveState() { /* no-op: data persisted to Supabase per-mutation */ }
+function loadState() { return emptyState(); }
+async function resetState() {
+  if (!isAdmin()) return;
+  if (!confirm('Reset all company data? This deletes all employees, attendance, leave, and payroll records.')) return;
+  await Promise.all([
+    sb.from('attendance').delete().neq('id','00000000-0000-0000-0000-000000000000'),
+    sb.from('leave_requests').delete().neq('id','00000000-0000-0000-0000-000000000000'),
+    sb.from('payroll').delete().neq('id','00000000-0000-0000-0000-000000000000'),
+  ]);
+  await sb.from('employees').delete().is('user_id', null);
+  await loadAll(); render();
+  toast('Company data reset','success');
+}
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function todayISO() { return new Date().toISOString().slice(0,10); }
@@ -345,79 +463,9 @@ function diffMinutes(a, b) {
 }
 function minutesToHrs(m) { return (m/60).toFixed(2); }
 
-function seedData() {
-  const depts = ['Engineering', 'Sales', 'Marketing', 'Operations', 'HR', 'Finance'];
-  const employees = [
-    { id: 'e1', firstName: 'Omar',   lastName: 'Khalawi',  email: 'omar@acme.co',   phone: '+966 50 111 1111', role: 'CEO',          department: 'Operations', hireDate: '2022-01-15', salary: 8000, status: 'active', avatarColor: '#1e6ef2' },
-    { id: 'e2', firstName: 'Sara',   lastName: 'Al-Ahmad', email: 'sara@acme.co',   phone: '+966 50 222 2222', role: 'HR Manager',   department: 'HR',         hireDate: '2022-03-10', salary: 5500, status: 'active', avatarColor: '#7c3aed' },
-    { id: 'e3', firstName: 'Khaled', lastName: 'Mansour',  email: 'khaled@acme.co', phone: '+966 50 333 3333', role: 'Engineer',     department: 'Engineering',hireDate: '2023-06-01', salary: 4500, status: 'active', avatarColor: '#059669' },
-    { id: 'e4', firstName: 'Layla',  lastName: 'Hadi',     email: 'layla@acme.co',  phone: '+966 50 444 4444', role: 'Designer',     department: 'Marketing',  hireDate: '2023-09-12', salary: 4200, status: 'active', avatarColor: '#db2777' },
-    { id: 'e5', firstName: 'Ahmed',  lastName: 'Nasr',     email: 'ahmed@acme.co',  phone: '+966 50 555 5555', role: 'Sales Lead',   department: 'Sales',      hireDate: '2024-01-20', salary: 5000, status: 'active', avatarColor: '#ea580c' },
-    { id: 'e6', firstName: 'Noor',   lastName: 'Saleh',    email: 'noor@acme.co',   phone: '+966 50 666 6666', role: 'Accountant',   department: 'Finance',    hireDate: '2024-04-05', salary: 4800, status: 'active', avatarColor: '#0891b2' },
-    { id: 'e7', firstName: 'Yousef', lastName: 'Tamimi',   email: 'yousef@acme.co', phone: '+966 50 777 7777', role: 'Engineer',     department: 'Engineering',hireDate: '2024-07-22', salary: 4500, status: 'active', avatarColor: '#16a34a' },
-    { id: 'e8', firstName: 'Hala',   lastName: 'Rashid',   email: 'hala@acme.co',   phone: '+966 50 888 8888', role: 'Marketer',     department: 'Marketing',  hireDate: '2025-02-14', salary: 3800, status: 'active', avatarColor: '#9333ea' },
-  ];
-  const users = [
-    { id: 'u1', username: 'admin',  password: 'admin123',  role: 'admin',    employeeId: 'e1' },
-    { id: 'u2', username: 'sara',   password: 'sara123',   role: 'admin',    employeeId: 'e2' },
-    { id: 'u3', username: 'khaled', password: 'khaled123', role: 'employee', employeeId: 'e3' },
-    { id: 'u4', username: 'layla',  password: 'layla123',  role: 'employee', employeeId: 'e4' },
-  ];
-  // Generate attendance for last 21 days
-  const attendance = [];
-  const start = new Date(); start.setDate(start.getDate()-21);
-  for (let i=0; i<21; i++) {
-    const d = new Date(start); d.setDate(start.getDate()+i);
-    const day = d.getDay();
-    if (day===5 || day===6) continue; // skip Fri/Sat (Saudi weekend)
-    const iso = d.toISOString().slice(0,10);
-    employees.forEach(emp => {
-      if (Math.random() < 0.05) return; // 5% absent
-      const lateMin = Math.random() < 0.18 ? Math.floor(Math.random()*40)+5 : 0;
-      const ci = `0${9 + Math.floor(lateMin/60)}:${String((lateMin%60)).padStart(2,'0')}`;
-      const co = `${17 + Math.floor(Math.random()*2)}:${String(Math.floor(Math.random()*55)).padStart(2,'0')}`;
-      attendance.push({
-        id: uid(), employeeId: emp.id, date: iso,
-        clockIn: ci, clockOut: co,
-        status: lateMin>0 ? 'late' : 'present',
-        location: { lat: 24.7136 + (Math.random()-0.5)*0.05, lng: 46.6753 + (Math.random()-0.5)*0.05, label: 'HQ' },
-        notes: ''
-      });
-    });
-  }
-  const leaveRequests = [
-    { id: uid(), employeeId: 'e3', type: 'annual',   startDate: '2026-05-10', endDate: '2026-05-14', days: 5, reason: 'Family trip',          status: 'pending',  requestedAt: '2026-05-01' },
-    { id: uid(), employeeId: 'e4', type: 'sick',     startDate: '2026-04-28', endDate: '2026-04-29', days: 2, reason: 'Flu',                  status: 'approved', requestedAt: '2026-04-27', decidedBy: 'u2', decidedAt: '2026-04-27' },
-    { id: uid(), employeeId: 'e7', type: 'personal', startDate: '2026-05-20', endDate: '2026-05-20', days: 1, reason: 'Personal appointment', status: 'pending',  requestedAt: '2026-05-02' },
-    { id: uid(), employeeId: 'e5', type: 'annual',   startDate: '2026-04-15', endDate: '2026-04-19', days: 5, reason: 'Vacation',             status: 'approved', requestedAt: '2026-04-01', decidedBy: 'u1', decidedAt: '2026-04-02' },
-  ];
-  const leaveBalances = {};
-  employees.forEach(e => leaveBalances[e.id] = { annual: 21, sick: 10, personal: 5 });
-  // Apply approved
-  leaveRequests.forEach(r => { if (r.status==='approved') leaveBalances[r.employeeId][r.type] -= r.days; });
-  // Payroll for last month
-  const payroll = [];
-  const lastMonth = new Date(); lastMonth.setMonth(lastMonth.getMonth()-1);
-  const ym = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth()+1).padStart(2,'0')}`;
-  employees.forEach(emp => {
-    payroll.push({
-      id: uid(), employeeId: emp.id, period: ym,
-      base: emp.salary, bonus: Math.random()<0.3 ? 500 : 0,
-      deductions: 0, net: emp.salary + (Math.random()<0.3 ? 500 : 0),
-      status: 'paid', paidAt: lastMonth.toISOString().slice(0,10)
-    });
-  });
-  return {
-    settings: { companyName: 'Hassad Coffee Roasters', workStart: '09:00', workEnd: '17:00', currency: 'SAR', lang: 'en', requireLocation: true },
-    users, employees, attendance, leaveRequests, leaveBalances, payroll,
-    session: null,
-    activity: [
-      { id: uid(), at: new Date().toISOString(), text: 'System initialized with sample data', icon: 'logo' }
-    ]
-  };
-}
+function seedData() { return emptyState(); }
 
-state = loadState();
+state = emptyState();
 
 /* -------------------- HELPERS -------------------- */
 const $ = (sel) => document.querySelector(sel);
@@ -435,12 +483,18 @@ function toast(msg, type='info') {
   setTimeout(()=>{ t.style.transition='opacity .2s'; t.style.opacity='0'; setTimeout(()=>t.remove(), 200); }, 2200);
 }
 function getEmployee(id) { return state.employees.find(e => e.id===id); }
-function currentUser() { return state.session ? state.users.find(u => u.id===state.session.userId) : null; }
-function currentEmployee() {
-  const u = currentUser();
-  return u ? getEmployee(u.employeeId) : null;
+function currentUser() {
+  if (!state.session) return null;
+  // Find employee record matching the auth user_id
+  const emp = state.employees.find(e => e.user_id === state.session.userId);
+  if (!emp) return null;
+  return { id: 'u-'+emp.id, username: emp.email, password: '', role: emp.isAdmin?'admin':'employee', employeeId: emp.id, user_id: emp.user_id };
 }
-function isAdmin() { return currentUser()?.role === 'admin'; }
+function currentEmployee() {
+  if (!state.session) return null;
+  return state.employees.find(e => e.user_id === state.session.userId) || null;
+}
+function isAdmin() { return currentEmployee()?.isAdmin === true; }
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
@@ -473,7 +527,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'reports', 'settings'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'reports', 'settings', 'account'];
 function getRoute() {
   const h = location.hash.replace('#/', '') || 'dashboard';
   return routes.includes(h) ? h : 'dashboard';
@@ -543,68 +597,126 @@ function renderLogin() {
           <p class="mt-3 text-sm text-slate-500">${escapeHTML(t('login_sub'))}</p>
         </div>
 
-        <form onsubmit="event.preventDefault(); doLogin();" class="space-y-4">
-          <div>
-            <label class="label">${escapeHTML(t('username'))}</label>
-            <input id="login-username" class="input" autocomplete="username" placeholder="admin" />
-          </div>
-          <div>
-            <label class="label">${escapeHTML(t('password'))}</label>
-            <div class="relative">
-              <input id="login-password" type="password" class="input ${isAr?'pl-10':'pr-10'}" autocomplete="current-password" placeholder="••••••••" />
-              <button type="button" onclick="togglePw()" class="absolute top-1/2 -translate-y-1/2 ${isAr?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
-                ${icon('eye','w-5 h-5')}
-              </button>
+        <div id="auth-mode-login" style="${authMode==='signup'?'display:none':''}">
+          <form onsubmit="event.preventDefault(); doLogin();" class="space-y-4">
+            <div>
+              <label class="label">Email</label>
+              <input id="login-email" type="email" class="input" autocomplete="email" placeholder="you@hassad.coffee" />
             </div>
+            <div>
+              <label class="label">${escapeHTML(t('password'))}</label>
+              <div class="relative">
+                <input id="login-password" type="password" class="input ${isAr?'pl-10':'pr-10'}" autocomplete="current-password" placeholder="••••••••" />
+                <button type="button" onclick="togglePw('login-password')" class="absolute top-1/2 -translate-y-1/2 ${isAr?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
+                  ${icon('eye','w-5 h-5')}
+                </button>
+              </div>
+            </div>
+            <button type="submit" id="login-submit" class="btn btn-primary w-full justify-center !py-3.5 !text-base shadow-card hover:shadow-pop transition">
+              ${escapeHTML(t('login'))}
+              <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </button>
+            <div class="text-center text-xs text-slate-400 hover:text-brand-700 cursor-pointer transition" onclick="resetPasswordPrompt()">${escapeHTML(t('forgot'))}</div>
+          </form>
+          <div class="mt-8 pt-6 border-t border-brand-100 text-center">
+            <span class="text-sm text-slate-500">No account yet? </span>
+            <button onclick="setAuthMode('signup')" class="text-sm font-semibold text-brand-700 hover:underline">Create one</button>
           </div>
-          <button type="submit" class="btn btn-primary w-full justify-center !py-3.5 !text-base shadow-card hover:shadow-pop transition">
-            ${escapeHTML(t('login'))}
-            <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-          </button>
-          <div class="text-center text-xs text-slate-400 hover:text-brand-700 cursor-pointer transition">${escapeHTML(t('forgot'))}</div>
-        </form>
+        </div>
 
-        <div class="mt-8 pt-6 border-t border-brand-100">
-          <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 mb-3">${escapeHTML(t('demo_hint'))}</div>
-          <div class="grid grid-cols-2 gap-2.5">
-            <button onclick="quickLogin('admin','admin123')" class="text-start bg-white hover:bg-brand-50 rounded-xl p-3 ring-1 ring-slate-100 hover:ring-brand-200 transition group">
-              <div class="text-xs font-mono font-semibold text-slate-800 group-hover:text-brand-700">admin / admin123</div>
-              <div class="text-[11px] text-slate-500 mt-0.5">Admin · Omar</div>
+        <div id="auth-mode-signup" style="${authMode==='signup'?'':'display:none'}">
+          <form onsubmit="event.preventDefault(); doSignup();" class="space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">First name</label>
+                <input id="signup-fn" class="input" placeholder="Omar" />
+              </div>
+              <div>
+                <label class="label">Last name</label>
+                <input id="signup-ln" class="input" placeholder="Khalawi" />
+              </div>
+            </div>
+            <div>
+              <label class="label">Work email</label>
+              <input id="signup-email" type="email" class="input" autocomplete="email" placeholder="you@hassad.coffee" />
+            </div>
+            <div>
+              <label class="label">Password</label>
+              <input id="signup-password" type="password" class="input" autocomplete="new-password" placeholder="At least 6 characters" />
+            </div>
+            <button type="submit" id="signup-submit" class="btn btn-primary w-full justify-center !py-3.5 !text-base shadow-card hover:shadow-pop transition">
+              Create account
+              <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
-            <button onclick="quickLogin('khaled','khaled123')" class="text-start bg-white hover:bg-brand-50 rounded-xl p-3 ring-1 ring-slate-100 hover:ring-brand-200 transition group">
-              <div class="text-xs font-mono font-semibold text-slate-800 group-hover:text-brand-700">khaled / khaled123</div>
-              <div class="text-[11px] text-slate-500 mt-0.5">Employee</div>
-            </button>
+            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">The first person to sign up becomes the admin. Subsequent signups are regular employees that the admin can manage.</p>
+          </form>
+          <div class="mt-8 pt-6 border-t border-brand-100 text-center">
+            <span class="text-sm text-slate-500">Already have an account? </span>
+            <button onclick="setAuthMode('login')" class="text-sm font-semibold text-brand-700 hover:underline">Log in</button>
           </div>
         </div>
       </div>
     </div>
   </div>`;
 }
-function togglePw() {
-  const i = $('#login-password');
-  i.type = i.type==='password' ? 'text' : 'password';
+let authMode = 'login';
+function setAuthMode(m) { authMode = m; render(); }
+function togglePw(id) {
+  const i = $('#'+(id||'login-password'));
+  if (i) i.type = i.type==='password' ? 'text' : 'password';
 }
-function quickLogin(u, p) {
-  $('#login-username').value = u;
-  $('#login-password').value = p;
-  doLogin();
+async function doLogin() {
+  const email = $('#login-email').value.trim();
+  const password = $('#login-password').value;
+  if (!email || !password) { toast('Email and password required', 'error'); return; }
+  const btn = $('#login-submit'); if (btn) { btn.disabled = true; btn.style.opacity='0.6'; }
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (btn) { btn.disabled = false; btn.style.opacity=''; }
+  if (error) { toast(error.message || 'Invalid credentials', 'error'); return; }
+  await afterAuth(data.user);
 }
-function doLogin() {
-  const u = $('#login-username').value.trim();
-  const p = $('#login-password').value;
-  const user = state.users.find(x => x.username===u && x.password===p);
-  if (!user) { toast('Invalid credentials', 'error'); return; }
-  state.session = { userId: user.id, loggedAt: new Date().toISOString() };
-  saveState();
-  toast(`${t('welcome_back')}, ${getEmployee(user.employeeId)?.firstName||u}!`, 'success');
+async function doSignup() {
+  const firstName = $('#signup-fn').value.trim();
+  const lastName  = $('#signup-ln').value.trim();
+  const email     = $('#signup-email').value.trim();
+  const password  = $('#signup-password').value;
+  if (!firstName || !email) { toast('First name and email required', 'error'); return; }
+  if (!password || password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+  const btn = $('#signup-submit'); if (btn) { btn.disabled = true; btn.style.opacity='0.6'; }
+  const { data, error } = await sb.auth.signUp({
+    email, password,
+    options: { data: { first_name: firstName, last_name: lastName } }
+  });
+  if (btn) { btn.disabled = false; btn.style.opacity=''; }
+  if (error) { toast(error.message || 'Sign up failed', 'error'); return; }
+  // If email confirmation is on, session will be null until they confirm.
+  if (!data.session) {
+    toast('Check your email to confirm your account.', 'success');
+    return;
+  }
+  await afterAuth(data.user);
+}
+async function afterAuth(user) {
+  state.session = { userId: user.id, email: user.email, loggedAt: new Date().toISOString() };
+  await loadAll();
+  const me = currentEmployee();
+  toast(`${t('welcome_back')}, ${me?.firstName||user.email}!`, 'success');
   location.hash = '#/dashboard';
   render();
 }
-function logout() {
-  state.session = null; saveState();
+async function logout() {
+  await sb.auth.signOut();
+  state = emptyState();
+  authMode = 'login';
   location.hash = '';
   render();
+}
+async function resetPasswordPrompt() {
+  const email = $('#login-email')?.value.trim() || prompt('Email to send reset link to:');
+  if (!email) return;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+  if (error) { toast(error.message, 'error'); return; }
+  toast('Password reset link sent to '+email, 'success');
 }
 
 /* -------------------- LAYOUT (sidebar + topbar) -------------------- */
@@ -642,11 +754,11 @@ function renderShell(routeContent) {
         `).join('')}
       </nav>
       <div class="p-3 border-t border-slate-100">
-        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="location.hash='#/settings'">
+        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="location.hash='#/account'" title="My Account">
           ${avatarHTML(emp, 36)}
           <div class="flex-1 min-w-0">
             <div class="text-sm font-semibold text-slate-900 truncate">${escapeHTML(emp.firstName+' '+emp.lastName)}</div>
-            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)}${admin?' · Admin':''}</div>
           </div>
         </div>
         <button onclick="logout()" class="w-full mt-2 flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-slate-900 py-2 rounded-lg hover:bg-slate-50">
@@ -905,11 +1017,13 @@ function renderEmployees() {
     </div>
   `;
 }
-function deleteEmployee(id) {
+async function deleteEmployee(id) {
   if (!confirm(t('confirm_delete'))) return;
+  const { error } = await sb.from('employees').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
   state.employees = state.employees.filter(e => e.id!==id);
-  state.users = state.users.filter(u => u.employeeId!==id);
-  saveState(); render();
+  delete state.leaveBalances[id];
+  render();
   toast('Employee removed', 'success');
 }
 let _pendingPhoto = null;
@@ -952,7 +1066,7 @@ function openEmployeeModal(id) {
       </div>
     </div>
   `;
-  openModal(editing ? 'Edit employee' : t('add_employee'), form, () => {
+  openModal(editing ? 'Edit employee' : t('add_employee'), form, async () => {
     const data = {
       firstName: $('#m-fn').value.trim(),
       lastName:  $('#m-ln').value.trim(),
@@ -965,19 +1079,23 @@ function openEmployeeModal(id) {
       status:    $('#m-st').value,
     };
     if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
+    const dbRow = { ...employeeToDb(data), photo: _pendingPhoto, avatar_color: editing?.avatarColor || pickColor() };
     if (editing) {
-      Object.assign(editing, data, { photo: _pendingPhoto });
+      const { data: row, error } = await sb.from('employees').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      const updated = mapEmployeeFromDb(row);
+      Object.assign(editing, updated);
       toast('Employee updated', 'success');
     } else {
-      const newE = { id: 'e'+uid(), ...data, photo: _pendingPhoto, avatarColor: pickColor() };
+      const { data: row, error } = await sb.from('employees').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      const newE = mapEmployeeFromDb(row);
       state.employees.push(newE);
-      state.leaveBalances[newE.id] = { annual: 21, sick: 10, personal: 5 };
-      // create matching user account
-      state.users.push({ id:'u'+uid(), username: data.firstName.toLowerCase(), password: 'changeme', role:'employee', employeeId: newE.id });
-      toast('Employee added (default password: changeme)', 'success');
+      state.leaveBalances[newE.id] = { annual: newE.leave_annual, sick: newE.leave_sick, personal: newE.leave_personal };
+      toast('Employee added. Share the signup link with them so they can create a password.', 'success');
     }
     _pendingPhoto = null;
-    saveState(); render();
+    render();
     return true;
   });
 }
@@ -1173,35 +1291,41 @@ function miniStat(label, value, ico, color) {
 }
 async function clockIn() {
   const me = currentEmployee();
+  if (!me) { toast('Not signed in', 'error'); return; }
   const now = nowHHMM();
   const lateMin = diffMinutes(state.settings.workStart, now);
   const status = lateMin > 5 ? 'late' : 'present';
-  const record = {
-    id: uid(), employeeId: me.id, date: todayISO(),
-    clockIn: now, clockOut: null, status,
-    location: null, notes: ''
-  };
+  let location = null;
   if (state.settings.requireLocation && navigator.geolocation) {
     toast('Capturing location...');
     try {
       const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }));
-      record.location = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'Captured' };
+      location = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'Captured' };
     } catch(e) {
-      record.location = { label: 'Location unavailable' };
+      location = { label: 'Location unavailable' };
     }
   }
-  state.attendance.push(record);
-  state.activity.unshift({ id: uid(), at: new Date().toISOString(), text: `${me.firstName} clocked in at ${now}`, icon:'clock' });
-  saveState(); render();
+  const { data, error } = await sb.from('attendance').insert({
+    employee_id: me.id, date: todayISO(),
+    clock_in: now, clock_out: null, status,
+    location_lat: location?.lat || null, location_lng: location?.lng || null, location_label: location?.label || null
+  }).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  state.attendance.unshift(mapAttendanceFromDb(data));
+  render();
   toast(status==='late' ? `Clocked in (late by ${lateMin}m)` : 'Clocked in successfully', 'success');
 }
-function clockOut() {
+async function clockOut() {
   const me = currentEmployee();
+  if (!me) return;
   const today = todayISO();
   const rec = state.attendance.find(a => a.employeeId===me.id && a.date===today);
   if (!rec) { toast('No clock-in found', 'error'); return; }
-  rec.clockOut = nowHHMM();
-  saveState(); render();
+  const newOut = nowHHMM();
+  const { data, error } = await sb.from('attendance').update({ clock_out: newOut }).eq('id', rec.id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(rec, mapAttendanceFromDb(data));
+  render();
   toast('Clocked out — have a good rest!', 'success');
 }
 
@@ -1305,16 +1429,18 @@ function openLeaveModal() {
       <div class="col-span-2"><label class="label">Reason</label><textarea id="lv-reason" class="input" rows="3" placeholder="Optional notes for your manager..."></textarea></div>
     </div>
   `;
-  openModal(t('request_leave'), form, () => {
+  openModal(t('request_leave'), form, async () => {
     const start = $('#lv-start').value, end = $('#lv-end').value;
     if (!start || !end || end<start) { toast('Invalid dates', 'error'); return false; }
     const days = Math.max(1, Math.round((new Date(end) - new Date(start))/86400000)+1);
-    state.leaveRequests.push({
-      id: uid(), employeeId: me.id, type: $('#lv-type').value,
-      startDate: start, endDate: end, days, reason: $('#lv-reason').value.trim(),
-      status: 'pending', requestedAt: todayISO()
-    });
-    saveState(); render();
+    const { data, error } = await sb.from('leave_requests').insert({
+      employee_id: me.id, leave_type: $('#lv-type').value,
+      start_date: start, end_date: end, days, reason: $('#lv-reason').value.trim(),
+      status: 'pending'
+    }).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    state.leaveRequests.unshift(mapLeaveFromDb(data));
+    render();
     toast('Leave request submitted', 'success');
     return true;
   });
@@ -1326,15 +1452,29 @@ function calcLeaveDays() {
   const d = Math.max(1, Math.round((new Date(e) - new Date(s))/86400000)+1);
   if ($('#lv-days')) $('#lv-days').value = d;
 }
-function decideLeave(id, decision) {
+async function decideLeave(id, decision) {
   const r = state.leaveRequests.find(x=>x.id===id);
   if (!r) return;
-  r.status = decision; r.decidedBy = currentUser().id; r.decidedAt = todayISO();
+  const me = currentEmployee();
+  const updates = { status: decision, decided_by: me?.id || null, decided_at: new Date().toISOString() };
+  const { data, error } = await sb.from('leave_requests').update(updates).eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(r, mapLeaveFromDb(data));
   if (decision==='approved') {
-    const bal = state.leaveBalances[r.employeeId];
-    if (bal && bal[r.type]!=null) bal[r.type] = Math.max(0, bal[r.type] - r.days);
+    // Decrement employee's leave balance
+    const emp = getEmployee(r.employeeId);
+    if (emp) {
+      const balField = 'leave_'+r.type;
+      const newBal = Math.max(0, (emp[balField]||0) - r.days);
+      const dbField = balField; // same name in DB
+      const { data: empRow, error: balErr } = await sb.from('employees').update({ [dbField]: newBal }).eq('id', r.employeeId).select().single();
+      if (!balErr && empRow) {
+        Object.assign(emp, mapEmployeeFromDb(empRow));
+        state.leaveBalances[r.employeeId] = { annual: emp.leave_annual, sick: emp.leave_sick, personal: emp.leave_personal };
+      }
+    }
   }
-  saveState(); render();
+  render();
   toast(`Request ${decision}`, 'success');
 }
 
@@ -1479,20 +1619,22 @@ function openPayslip(payrollId) {
   w.document.close();
 }
 
-function runPayroll() {
+async function runPayroll() {
   const ym = new Date().toISOString().slice(0,7);
   if (state.payroll.some(p => p.period===ym)) {
     if (!confirm(`Payroll for ${ym} already exists. Run again (will duplicate)?`)) return;
   }
-  state.employees.forEach(e => {
-    state.payroll.push({
-      id: uid(), employeeId: e.id, period: ym,
-      base: e.salary, bonus: 0, deductions: 0,
-      net: e.salary, status: 'paid', paidAt: todayISO()
-    });
-  });
-  saveState(); render();
-  toast(`Payroll run for ${ym} — ${state.employees.length} payslips generated`, 'success');
+  const rows = state.employees.map(e => ({
+    employee_id: e.id, period: ym,
+    base: e.salary, bonus: 0, deductions: 0,
+    net: e.salary, status: 'paid', paid_at: todayISO()
+  }));
+  if (rows.length === 0) { toast('No employees to pay', 'error'); return; }
+  const { data, error } = await sb.from('payroll').insert(rows).select();
+  if (error) { toast(error.message, 'error'); return; }
+  (data || []).forEach(r => state.payroll.unshift(mapPayrollFromDb(r)));
+  render();
+  toast(`Payroll run for ${ym} — ${rows.length} payslips generated`, 'success');
 }
 
 /* -------------------- REPORTS -------------------- */
@@ -1603,6 +1745,122 @@ function renderReports() {
   `;
 }
 
+/* -------------------- MY ACCOUNT -------------------- */
+function renderAccount() {
+  const user = currentUser();
+  const me = currentEmployee();
+  const isAdminUser = user.role === 'admin';
+  const myAttendance = state.attendance.filter(a => a.employeeId===me.id);
+  const myLeave = state.leaveRequests.filter(r => r.employeeId===me.id);
+  const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
+  return `
+    <div class="max-w-3xl mx-auto space-y-5">
+      <!-- Profile card -->
+      <div class="bg-white rounded-2xl shadow-card p-6 md:p-8 relative overflow-hidden">
+        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #d6b475 0%, transparent 70%);"></div>
+        <div class="relative flex items-center gap-5 flex-wrap">
+          ${avatarHTML(me, 88)}
+          <div class="flex-1 min-w-0">
+            <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">My Profile</div>
+            <h2 class="font-display text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(me.firstName + ' ' + me.lastName)}</h2>
+            <div class="text-slate-500 mt-1">${escapeHTML(me.role)} · ${escapeHTML(me.department)}</div>
+            <div class="flex items-center gap-3 mt-2">
+              <span class="text-xs text-slate-500">@${escapeHTML(user.username)}</span>
+              <span class="badge ${isAdminUser?'badge-purple':'badge-slate'}">${escapeHTML(user.role)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 pt-6 border-t border-slate-100">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Email</div>
+            <div class="text-sm text-slate-900 mt-0.5 truncate">${escapeHTML(me.email)}</div>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Phone</div>
+            <div class="text-sm text-slate-900 mt-0.5 truncate">${escapeHTML(me.phone||'—')}</div>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Hire date</div>
+            <div class="text-sm text-slate-900 mt-0.5">${fmtDate(me.hireDate)}</div>
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Status</div>
+            <div class="text-sm text-slate-900 mt-0.5">${statusBadge(me.status)}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick stats -->
+      <div class="grid grid-cols-3 gap-4">
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Days clocked in</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${myAttendance.length}</div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Leave taken</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${myLeave.filter(r=>r.status==='approved').reduce((s,r)=>s+r.days,0)}<span class="text-base text-slate-400 font-normal"> d</span></div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Annual remaining</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${balances.annual}<span class="text-base text-slate-400 font-normal"> d</span></div>
+        </div>
+      </div>
+
+      <!-- Change password -->
+      <div class="bg-white rounded-2xl shadow-card p-6 md:p-8">
+        <h3 class="font-display text-xl font-semibold text-slate-900 mb-1">Change password</h3>
+        <p class="text-sm text-slate-500 mb-5">Pick something only you would know. Minimum 6 characters.</p>
+        <form onsubmit="event.preventDefault(); changeMyPassword();" class="space-y-4 max-w-md">
+          <div>
+            <label class="label">Current password</label>
+            <input id="acc-current" type="password" class="input" autocomplete="current-password">
+          </div>
+          <div>
+            <label class="label">New password</label>
+            <input id="acc-new" type="password" class="input" autocomplete="new-password" placeholder="At least 6 characters">
+          </div>
+          <div>
+            <label class="label">Confirm new password</label>
+            <input id="acc-confirm" type="password" class="input" autocomplete="new-password">
+          </div>
+          <button type="submit" class="btn btn-primary mt-2">${icon('check','w-4 h-4')} Update password</button>
+        </form>
+      </div>
+
+      <!-- Language preference -->
+      <div class="bg-white rounded-2xl shadow-card p-6 md:p-8">
+        <h3 class="font-display text-xl font-semibold text-slate-900 mb-1">Preferences</h3>
+        <p class="text-sm text-slate-500 mb-5">Personal settings just for your account.</p>
+        <div class="flex items-center gap-3">
+          <label class="label !mb-0">Language</label>
+          <button onclick="setLang('en')" class="btn btn-sm ${state.settings.lang==='en'?'btn-primary':'btn-ghost'}">English</button>
+          <button onclick="setLang('ar')" class="btn btn-sm ${state.settings.lang==='ar'?'btn-primary':'btn-ghost'}">العربية</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+async function changeMyPassword() {
+  const cur = $('#acc-current').value;
+  const newPw = $('#acc-new').value;
+  const confirmPw = $('#acc-confirm').value;
+  if (!newPw || newPw.length < 6) { toast('New password must be at least 6 characters', 'error'); return; }
+  if (newPw !== confirmPw) { toast('Passwords do not match', 'error'); return; }
+  // Verify current password by attempting a sign-in
+  const email = state.session?.email;
+  if (!email) { toast('Session expired', 'error'); return; }
+  if (cur) {
+    const verify = await sb.auth.signInWithPassword({ email, password: cur });
+    if (verify.error) { toast('Current password is incorrect', 'error'); return; }
+  }
+  const { error } = await sb.auth.updateUser({ password: newPw });
+  if (error) { toast(error.message, 'error'); return; }
+  $('#acc-current').value = '';
+  $('#acc-new').value = '';
+  $('#acc-confirm').value = '';
+  toast('Password updated successfully', 'success');
+}
+
 /* -------------------- SETTINGS -------------------- */
 function renderSettings() {
   const s = state.settings;
@@ -1644,15 +1902,19 @@ function renderSettings() {
         <div class="space-y-2 max-h-96 overflow-y-auto">
           ${state.users.map(u => {
             const e = getEmployee(u.employeeId);
+            const isMe = u.id === state.session?.userId;
             return `
             <div class="flex items-center gap-3 p-3 rounded-lg bg-slate-50">
               ${avatarHTML(e,32)}
               <div class="flex-1 min-w-0">
-                <div class="font-medium text-slate-900 text-sm truncate">${escapeHTML(e?(e.firstName+' '+e.lastName):'(no employee)')}</div>
+                <div class="font-medium text-slate-900 text-sm truncate">${escapeHTML(e?(e.firstName+' '+e.lastName):'(no employee)')}${isMe?' <span class="text-xs text-slate-400 font-normal">(you)</span>':''}</div>
                 <div class="text-xs text-slate-500">@${escapeHTML(u.username)}</div>
               </div>
               <span class="badge ${u.role==='admin'?'badge-purple':'badge-slate'}">${escapeHTML(u.role)}</span>
-              <button onclick="resetUserPassword('${u.id}')" class="text-xs text-brand-600 hover:underline">reset pw</button>
+              <div class="flex items-center gap-2 text-xs">
+                ${isMe?'':`<button onclick="toggleUserRole('${u.id}')" class="text-slate-600 hover:text-brand-700 hover:underline whitespace-nowrap">${u.role==='admin'?'demote':'make admin'}</button><span class="text-slate-300">·</span>`}
+                <button onclick="resetUserPassword('${u.id}')" class="text-brand-600 hover:underline whitespace-nowrap">reset pw</button>
+              </div>
             </div>`;
           }).join('')}
         </div>
@@ -1670,23 +1932,56 @@ function renderSettings() {
     </div>
   `;
 }
-function saveSettings() {
-  state.settings.companyName = $('#set-name').value.trim() || 'Company';
-  state.settings.workStart = $('#set-start').value;
-  state.settings.workEnd = $('#set-end').value;
-  state.settings.currency = $('#set-cur').value;
-  state.settings.requireLocation = $('#set-loc').checked;
-  const newLang = $('#set-lang').value;
-  if (newLang !== state.settings.lang) { setLang(newLang); }
-  saveState(); render();
+async function saveSettings() {
+  const updates = {
+    name: $('#set-name').value.trim() || 'Hassad Coffee Roasters',
+    work_start: $('#set-start').value,
+    work_end: $('#set-end').value,
+    currency: $('#set-cur').value,
+    require_location: $('#set-loc').checked,
+    language: $('#set-lang').value,
+  };
+  const { error } = await sb.from('companies').update(updates).eq('id', state.companyId);
+  if (error) { toast(error.message, 'error'); return; }
+  state.settings.companyName = updates.name;
+  state.settings.workStart = updates.work_start;
+  state.settings.workEnd = updates.work_end;
+  state.settings.currency = updates.currency;
+  state.settings.requireLocation = updates.require_location;
+  if (updates.language !== state.settings.lang) { setLang(updates.language); }
+  render();
   toast('Settings saved', 'success');
 }
-function resetUserPassword(uid_) {
-  const u = state.users.find(x=>x.id===uid_);
-  if (!u) return;
-  const newPw = 'pw' + Math.random().toString(36).slice(2,8);
-  u.password = newPw; saveState();
-  toast(`New password for @${u.username}: ${newPw}`, 'success');
+async function resetUserPassword(uid_) {
+  // We can't directly reset another user's password from the client.
+  // Instead, send them a Supabase reset-password email.
+  const emp = state.employees.find(e => 'u-'+e.id === uid_);
+  if (!emp) return;
+  if (!emp.email) { toast('No email on record', 'error'); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(emp.email, { redirectTo: window.location.origin });
+  if (error) { toast(error.message, 'error'); return; }
+  toast(`Reset link sent to ${emp.email}`, 'success');
+}
+async function toggleUserRole(uid_) {
+  const emp = state.employees.find(e => 'u-'+e.id === uid_);
+  if (!emp) return;
+  if (emp.user_id === state.session?.userId) {
+    toast('You cannot change your own role — ask another admin', 'error');
+    return;
+  }
+  if (emp.isAdmin) {
+    const adminCount = state.employees.filter(e=>e.isAdmin).length;
+    if (adminCount <= 1) { toast('At least one admin is required', 'error'); return; }
+    if (!confirm(`Demote ${emp.firstName} to employee? They will lose admin access.`)) return;
+  } else {
+    if (!confirm(`Promote ${emp.firstName} to admin? They will get full access to all data and settings.`)) return;
+  }
+  const newAdmin = !emp.isAdmin;
+  const { data, error } = await sb.from('employees').update({ is_admin: newAdmin }).eq('id', emp.id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(emp, mapEmployeeFromDb(data));
+  render();
+  toast(`${emp.firstName} is now ${newAdmin?'an admin':'an employee'}`, 'success');
 }
 function downloadBackup() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -1786,13 +2081,47 @@ function render() {
     case 'payroll':    content = renderPayroll(); break;
     case 'reports':    content = isAdmin() ? renderReports() : renderDashboard(); break;
     case 'settings':   content = isAdmin() ? renderSettings() : renderDashboard(); break;
+    case 'account':    content = renderAccount(); break;
     default:           content = renderDashboard();
   }
   app.innerHTML = renderShell(content);
 }
 
 /* -------------------- INIT -------------------- */
-render();
+async function bootstrap() {
+  // Show a quick splash
+  $('#app').innerHTML = `
+    <div class="min-h-screen flex items-center justify-center" style="background:#fbf7f1">
+      <div class="text-center">
+        <div class="w-14 h-14 rounded-full border-4 border-brand-200 border-t-brand-700 animate-spin mx-auto"></div>
+        <div class="mt-4 text-sm text-slate-500 font-display">Loading…</div>
+      </div>
+    </div>`;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session?.user) {
+      state.session = { userId: session.user.id, email: session.user.email, loggedAt: new Date().toISOString() };
+      await loadAll();
+    }
+  } catch(e) { console.error('Bootstrap error:', e); }
+  render();
+
+  // React to login/logout in another tab or via session expiry
+  sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_OUT') {
+      state = emptyState();
+      location.hash = '';
+      render();
+    } else if (event === 'SIGNED_IN' && session?.user && !state.session) {
+      state.session = { userId: session.user.id, email: session.user.email, loggedAt: new Date().toISOString() };
+      await loadAll();
+      render();
+    } else if (event === 'TOKEN_REFRESHED') {
+      // no-op
+    }
+  });
+}
+bootstrap();
 
 // Live clock on dashboard
 setInterval(() => {
