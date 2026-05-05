@@ -484,7 +484,7 @@ function renderLogin() {
   const lang = state.settings.lang;
   return `
   <div class="min-h-screen flex items-center justify-center p-6 relative"
-       style="background: linear-gradient(135deg, rgba(42,31,21,0.55), rgba(110,66,32,0.35) 60%, rgba(42,31,21,0.55)), url('bg-coffee.jpg') center/cover no-repeat, linear-gradient(135deg,#fbf7f1 0%,#f4e8d4 50%,#fbf6ef 100%);">
+       style="background: linear-gradient(180deg, rgba(42,31,21,0.15) 0%, rgba(42,31,21,0.05) 40%, rgba(42,31,21,0.25) 100%), url('bg-coffee.jpg') center/cover no-repeat, linear-gradient(135deg,#fbf7f1 0%,#f4e8d4 50%,#fbf6ef 100%);">
     <div class="absolute top-4 ${lang==='ar'?'left-4':'right-4'} flex gap-2">
       <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm">
         ${icon('globe','w-4 h-4')} ${lang==='en'?'العربية':'English'}
