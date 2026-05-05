@@ -18,16 +18,21 @@
         },
         colors: {
           brand: {
-            50:  '#eef7ff',
-            100: '#d9ecff',
-            200: '#bcdeff',
-            300: '#8ec8ff',
-            400: '#59a8ff',
-            500: '#2e88ff',
-            600: '#1e6ef2',
-            700: '#1858dc',
-            800: '#1a48b0',
-            900: '#1c408a',
+            50:  '#fbf6ef',
+            100: '#f4e8d4',
+            200: '#e8d2a9',
+            300: '#d6b475',
+            400: '#c2914a',
+            500: '#a87035',
+            600: '#8a5728',
+            700: '#6e4220',
+            800: '#58351c',
+            900: '#422813',
+          },
+          accent: {
+            500: '#c44a4a',
+            600: '#a93838',
+            700: '#8c2929',
           }
         },
         boxShadow: {
@@ -42,78 +47,115 @@
   html, body { height: 100%; }
   body {
     font-family: 'Inter', 'Cairo', system-ui, sans-serif;
-    background: #f6f8fb;
-    color: #0f172a;
+    background: #fbf7f1;
+    color: #2a1f15;
     -webkit-font-smoothing: antialiased;
   }
   [dir="rtl"] body { font-family: 'Cairo', 'Inter', system-ui, sans-serif; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: #d6dde8; border-radius: 8px; border: 2px solid #f6f8fb; }
-  ::-webkit-scrollbar-thumb:hover { background: #b9c2d2; }
-  .nav-item.active { background: #eef5ff; color: #1e6ef2; font-weight: 600; }
-  .nav-item.active .icon { color: #1e6ef2; }
+  ::-webkit-scrollbar-thumb { background: #e1d4be; border-radius: 8px; border: 2px solid #fbf7f1; }
+  ::-webkit-scrollbar-thumb:hover { background: #c8b390; }
+  .nav-item.active { background: #fbf6ef; color: #6e4220; font-weight: 600; }
+  .nav-item.active .icon { color: #8a5728; }
   .stat-up   { color: #047857; background: #ecfdf5; }
   .stat-down { color: #b91c1c; background: #fef2f2; }
   .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .badge-green  { background: #ecfdf5; color: #047857; }
   .badge-amber  { background: #fffbeb; color: #b45309; }
   .badge-red    { background: #fef2f2; color: #b91c1c; }
-  .badge-blue   { background: #eef5ff; color: #1e6ef2; }
-  .badge-slate  { background: #f1f5f9; color: #475569; }
-  .badge-purple { background: #f5f3ff; color: #7c3aed; }
+  .badge-blue   { background: #fbf6ef; color: #6e4220; }
+  .badge-slate  { background: #f5f0e6; color: #6b5a3f; }
+  .badge-purple { background: #fdf2f8; color: #c44a4a; }
   .fade-in { animation: fade .2s ease-out; }
   @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   .pulse-ring {
-    box-shadow: 0 0 0 0 rgba(46,136,255,0.6);
+    box-shadow: 0 0 0 0 rgba(168,112,53,0.5);
     animation: pulse-ring 2s infinite;
   }
   @keyframes pulse-ring {
-    0%   { box-shadow: 0 0 0 0 rgba(46,136,255,0.45); }
-    70%  { box-shadow: 0 0 0 18px rgba(46,136,255,0); }
-    100% { box-shadow: 0 0 0 0 rgba(46,136,255,0); }
+    0%   { box-shadow: 0 0 0 0 rgba(168,112,53,0.4); }
+    70%  { box-shadow: 0 0 0 18px rgba(168,112,53,0); }
+    100% { box-shadow: 0 0 0 0 rgba(168,112,53,0); }
   }
   .dropdown { display: none; }
   .dropdown.open { display: block; }
-  .modal-backdrop { background: rgba(15,23,42,0.45); backdrop-filter: blur(2px); }
-  .skeleton { background: linear-gradient(90deg,#eef2f7 0%,#f8fafc 50%,#eef2f7 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+  .modal-backdrop { background: rgba(42,31,21,0.5); backdrop-filter: blur(2px); }
+  .skeleton { background: linear-gradient(90deg,#f4e8d4 0%,#fbf7f1 50%,#f4e8d4 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
   @keyframes skel { from {background-position: 200% 0;} to {background-position: -200% 0;} }
-  .hover-row:hover { background: #f8fafc; }
-  .input { width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; transition: border .15s, box-shadow .15s; background: white; }
-  .input:focus { border-color: #2e88ff; box-shadow: 0 0 0 3px rgba(46,136,255,0.15); }
-  .label { font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
+  .hover-row:hover { background: #fbf6ef; }
+  .input { width: 100%; border: 1px solid #e8dcc4; border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; transition: border .15s, box-shadow .15s; background: white; color: #2a1f15; }
+  .input:focus { border-color: #a87035; box-shadow: 0 0 0 3px rgba(168,112,53,0.18); }
+  .label { font-size: 12px; font-weight: 600; color: #6b5a3f; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; transition: all .15s; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
-  .btn-primary { background: #1e6ef2; color: white; }
-  .btn-primary:hover { background: #1858dc; }
-  .btn-ghost { background: white; color: #334155; border-color: #e2e8f0; }
-  .btn-ghost:hover { background: #f8fafc; }
+  .btn-primary { background: #6e4220; color: white; }
+  .btn-primary:hover { background: #58351c; }
+  .btn-accent { background: #c44a4a; color: white; }
+  .btn-accent:hover { background: #a93838; }
+  .btn-ghost { background: white; color: #4a3922; border-color: #e8dcc4; }
+  .btn-ghost:hover { background: #fbf6ef; }
   .btn-danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
   .btn-danger:hover { background: #fee2e2; }
   .btn-success { background: #047857; color: white; }
   .btn-success:hover { background: #036647; }
   .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
   .clock-tile {
-    background: linear-gradient(135deg, #1e6ef2 0%, #2e88ff 50%, #59a8ff 100%);
+    background: linear-gradient(135deg, #422813 0%, #6e4220 45%, #a87035 100%);
     color: white;
+    position: relative;
+    overflow: hidden;
+  }
+  .clock-tile::after {
+    content: '';
+    position: absolute; top: -30px; right: -30px;
+    width: 140px; height: 140px;
+    background: radial-gradient(circle, rgba(196,74,74,0.35), transparent 70%);
+    pointer-events: none;
   }
   table.data { width: 100%; border-collapse: separate; border-spacing: 0; }
-  table.data th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; text-align: start; padding: 14px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
-  table.data td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #0f172a; }
+  table.data th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b5a3f; text-align: start; padding: 14px 16px; background: #fbf6ef; border-bottom: 1px solid #e8dcc4; }
+  table.data td { padding: 14px 16px; border-bottom: 1px solid #f4e8d4; font-size: 14px; color: #2a1f15; }
   table.data tbody tr:last-child td { border-bottom: none; }
-  .avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; font-weight: 600; color: white; flex-shrink: 0; }
+  .avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; font-weight: 600; color: white; flex-shrink: 0; overflow: hidden; }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .toast {
     position: fixed; top: 20px; right: 20px; z-index: 100;
-    background: #0f172a; color: white; padding: 12px 18px; border-radius: 10px;
-    font-size: 14px; font-weight: 500; box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    background: #2a1f15; color: white; padding: 12px 18px; border-radius: 10px;
+    font-size: 14px; font-weight: 500; box-shadow: 0 10px 30px rgba(42,31,21,0.25);
     animation: slideIn .25s ease-out;
   }
   [dir="rtl"] .toast { right: auto; left: 20px; animation: slideInL .25s ease-out; }
   @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes slideInL { from { transform: translateX(-20px); opacity: 0; } to { transform: none; opacity: 1; } }
-  .tab { padding: 10px 16px; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #64748b; cursor: pointer; transition: all .15s; }
-  .tab.active { color: #1e6ef2; border-bottom-color: #1e6ef2; }
-  .tab:hover:not(.active) { color: #334155; }
-  .progress-bar { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
-  .progress-fill { height: 100%; background: linear-gradient(90deg,#2e88ff,#1e6ef2); transition: width .3s; }
+  .tab { padding: 10px 16px; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #6b5a3f; cursor: pointer; transition: all .15s; }
+  .tab.active { color: #6e4220; border-bottom-color: #a87035; }
+  .tab:hover:not(.active) { color: #2a1f15; }
+  .progress-bar { height: 8px; background: #f4e8d4; border-radius: 999px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg,#a87035,#6e4220); transition: width .3s; }
+
+  /* Mobile responsive: hamburger sidebar */
+  .sidebar-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(42,31,21,0.5);
+    backdrop-filter: blur(2px); z-index: 30;
+  }
+  body.sidebar-open .sidebar-backdrop { display: block; }
+  @media (max-width: 768px) {
+    .app-sidebar {
+      position: fixed !important; top: 0; bottom: 0; left: 0; z-index: 40;
+      transform: translateX(-100%); transition: transform .25s ease-out;
+    }
+    [dir="rtl"] .app-sidebar { left: auto; right: 0; transform: translateX(100%); }
+    body.sidebar-open .app-sidebar { transform: translateX(0); }
+    .topbar-search { display: none !important; }
+    .stat-card-caption { display: none; }
+  }
+
+  @media print {
+    body { background: white; }
+    .no-print, aside, header { display: none !important; }
+    main { padding: 0 !important; }
+    .payslip-print { box-shadow: none !important; border: 1px solid #e8dcc4; }
+  }
+
   /* RTL adjustments */
   [dir="rtl"] .rtl-flip { transform: scaleX(-1); }
 </style>
@@ -401,6 +443,9 @@ function isAdmin() { return currentUser()?.role === 'admin'; }
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
+  if (emp.photo) {
+    return `<span class="avatar" style="width:${size}px;height:${size}px;background:${emp.avatarColor||'#64748b'}"><img src="${escapeHTML(emp.photo)}" alt=""></span>`;
+  }
   return `<span class="avatar" style="width:${size}px;height:${size}px;background:${emp.avatarColor||'#64748b'};font-size:${size*0.4}px">${escapeHTML(initials)}</span>`;
 }
 function statusBadge(status) {
@@ -438,8 +483,8 @@ window.addEventListener('hashchange', render);
 function renderLogin() {
   const lang = state.settings.lang;
   return `
-  <div class="min-h-screen flex items-center justify-center p-6"
-       style="background: linear-gradient(135deg,#eef5ff 0%,#dbeafe 50%,#eef5ff 100%);">
+  <div class="min-h-screen flex items-center justify-center p-6 relative"
+       style="background: linear-gradient(135deg, rgba(42,31,21,0.55), rgba(110,66,32,0.35) 60%, rgba(42,31,21,0.55)), url('bg-coffee.jpg') center/cover no-repeat, linear-gradient(135deg,#fbf7f1 0%,#f4e8d4 50%,#fbf6ef 100%);">
     <div class="absolute top-4 ${lang==='ar'?'left-4':'right-4'} flex gap-2">
       <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm">
         ${icon('globe','w-4 h-4')} ${lang==='en'?'العربية':'English'}
@@ -529,7 +574,7 @@ function renderShell(routeContent) {
     { key:'settings',   icon:'settings',  label:t('settings'),  show:admin },
   ];
   const sidebar = `
-    <aside class="w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen sticky top-0">
+    <aside class="app-sidebar w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen md:sticky md:top-0">
       <div class="px-4 h-16 flex items-center gap-2.5 border-b border-slate-100">
         <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden shrink-0 border border-slate-100">
           <img src="logo.png" alt="logo" class="w-full h-full object-contain" onerror="this.style.display='none'; this.parentElement.classList.add('bg-brand-600'); this.parentElement.innerHTML='<span class=\\'text-white\\'>${ICONS.clock.replace(/'/g,'&apos;').replace(/"/g,'&quot;')}</span>';" />
@@ -541,7 +586,7 @@ function renderShell(routeContent) {
       </div>
       <nav class="flex-1 overflow-y-auto p-3 space-y-1">
         ${navItems.filter(n=>n.show).map(n=>`
-          <a href="#/${n.key}" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
+          <a href="#/${n.key}" onclick="toggleSidebar(false)" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
             <span class="icon w-5 h-5 text-slate-400">${ICONS[n.icon]}</span>
             <span>${escapeHTML(n.label)}</span>
           </a>
@@ -561,19 +606,22 @@ function renderShell(routeContent) {
       </div>
     </aside>`;
   const topbar = `
-    <header class="h-16 bg-white border-b border-slate-200 px-6 flex items-center gap-4 sticky top-0 z-10">
-      <div class="flex-1">
-        <div class="text-xs text-slate-400 uppercase tracking-wider">${escapeHTML(state.settings.companyName)}</div>
-        <div class="text-base font-semibold text-slate-900">${escapeHTML(t(route))}</div>
+    <header class="h-16 bg-white border-b border-slate-200 px-4 md:px-6 flex items-center gap-3 md:gap-4 sticky top-0 z-20">
+      <button onclick="toggleSidebar()" class="md:hidden p-2 -ms-2 rounded-lg hover:bg-slate-100 text-slate-700" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-slate-400 uppercase tracking-wider truncate">${escapeHTML(state.settings.companyName)}</div>
+        <div class="text-base font-semibold text-slate-900 truncate">${escapeHTML(t(route))}</div>
       </div>
-      <div class="relative w-72 hidden md:block">
+      <div class="topbar-search relative w-72 hidden md:block">
         <span class="absolute top-1/2 -translate-y-1/2 ${lang==='ar'?'right-3':'left-3'} text-slate-400">${icon('search','w-4 h-4')}</span>
         <input id="topbar-search" placeholder="${escapeHTML(t('search'))}" class="input ${lang==='ar'?'pr-10':'pl-10'}" oninput="globalSearch(this.value)" />
       </div>
-      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm" title="Language">
+      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm hidden sm:inline-flex" title="Language">
         ${icon('globe','w-4 h-4')} ${lang==='en'?'AR':'EN'}
       </button>
-      <button class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" onclick="toggleNotifications()">
+      <button class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" onclick="toggleNotifications()" aria-label="Notifications">
         ${icon('bell','w-5 h-5')}
         ${state.leaveRequests.filter(r=>r.status==='pending').length>0 && admin ? '<span class="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500"></span>' : ''}
       </button>
@@ -581,13 +629,18 @@ function renderShell(routeContent) {
 
   return `
     <div class="flex min-h-screen ${lang==='ar'?'flex-row-reverse':''}">
+      <div class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
       ${sidebar}
       <main class="flex-1 min-w-0">
         ${topbar}
-        <div class="p-6 fade-in" id="route-content">${routeContent}</div>
+        <div class="p-4 md:p-6 fade-in" id="route-content">${routeContent}</div>
       </main>
     </div>
   `;
+}
+function toggleSidebar(force) {
+  const open = typeof force === 'boolean' ? force : !document.body.classList.contains('sidebar-open');
+  document.body.classList.toggle('sidebar-open', open);
 }
 function globalSearch(q) {
   // simple — only highlights employees route results
@@ -678,7 +731,7 @@ function renderDashboard() {
           ${last7.map(d => `
             <div class="flex-1 flex flex-col items-center gap-2">
               <div class="text-xs font-semibold text-slate-700">${d.count}</div>
-              <div class="w-full rounded-t-lg" style="height:${(d.count/maxC)*100}%;background:linear-gradient(180deg,#59a8ff,#1e6ef2);min-height:4px"></div>
+              <div class="w-full rounded-t-lg" style="height:${(d.count/maxC)*100}%;background:linear-gradient(180deg,#c2914a,#6e4220);min-height:4px"></div>
               <div class="text-xs text-slate-500">${escapeHTML(d.label)}</div>
             </div>
           `).join('')}
@@ -803,9 +856,27 @@ function deleteEmployee(id) {
   saveState(); render();
   toast('Employee removed', 'success');
 }
+let _pendingPhoto = null;
 function openEmployeeModal(id) {
   const editing = id ? getEmployee(id) : null;
+  _pendingPhoto = editing?.photo || null;
   const form = `
+    <div class="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
+      <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${editing?.avatarColor || '#a87035'}">
+        ${editing?.photo ? `<img src="${escapeHTML(editing.photo)}" class="w-full h-full object-cover" alt="">` : escapeHTML((editing?.firstName?.[0]||'?')+(editing?.lastName?.[0]||''))}
+      </div>
+      <div class="flex-1">
+        <div class="text-sm font-semibold text-slate-700 mb-1">Profile photo</div>
+        <div class="text-xs text-slate-500 mb-2">JPG or PNG, ideally square. Stays in your browser only.</div>
+        <div class="flex gap-2">
+          <label class="btn btn-ghost btn-sm cursor-pointer">
+            ${icon('plus','w-4 h-4')} Choose photo
+            <input type="file" accept="image/*" class="hidden" onchange="handlePhotoUpload(event)" />
+          </label>
+          ${editing?.photo ? '<button type="button" onclick="clearPendingPhoto()" class="btn btn-danger btn-sm">Remove</button>' : ''}
+        </div>
+      </div>
+    </div>
     <div class="grid grid-cols-2 gap-4">
       <div><label class="label">First name</label><input id="m-fn" class="input" value="${escapeHTML(editing?.firstName||'')}"></div>
       <div><label class="label">Last name</label><input id="m-ln" class="input" value="${escapeHTML(editing?.lastName||'')}"></div>
@@ -839,21 +910,41 @@ function openEmployeeModal(id) {
     };
     if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
     if (editing) {
-      Object.assign(editing, data); toast('Employee updated', 'success');
+      Object.assign(editing, data, { photo: _pendingPhoto });
+      toast('Employee updated', 'success');
     } else {
-      const newE = { id: 'e'+uid(), ...data, avatarColor: pickColor() };
+      const newE = { id: 'e'+uid(), ...data, photo: _pendingPhoto, avatarColor: pickColor() };
       state.employees.push(newE);
       state.leaveBalances[newE.id] = { annual: 21, sick: 10, personal: 5 };
       // create matching user account
       state.users.push({ id:'u'+uid(), username: data.firstName.toLowerCase(), password: 'changeme', role:'employee', employeeId: newE.id });
       toast('Employee added (default password: changeme)', 'success');
     }
+    _pendingPhoto = null;
     saveState(); render();
     return true;
   });
 }
+function handlePhotoUpload(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) { toast('Image too large (max 2MB)', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    _pendingPhoto = e.target.result;
+    const preview = document.getElementById('m-photo-preview');
+    if (preview) preview.innerHTML = `<img src="${escapeHTML(_pendingPhoto)}" class="w-full h-full object-cover" alt="">`;
+  };
+  reader.readAsDataURL(file);
+}
+function clearPendingPhoto() {
+  _pendingPhoto = null;
+  const preview = document.getElementById('m-photo-preview');
+  if (preview) preview.innerHTML = '?';
+  toast('Photo will be removed on save');
+}
 function pickColor() {
-  const palette = ['#1e6ef2','#7c3aed','#059669','#db2777','#ea580c','#0891b2','#16a34a','#9333ea','#c026d3','#475569'];
+  const palette = ['#6e4220','#a87035','#c44a4a','#7c3aed','#059669','#db2777','#ea580c','#0891b2','#9333ea','#475569'];
   return palette[Math.floor(Math.random()*palette.length)];
 }
 
@@ -1078,9 +1169,9 @@ function renderLeave() {
 
   const balanceCards = `
     <div class="grid grid-cols-3 gap-4 mb-6">
-      ${balanceCard('Annual',   balances.annual,   21, '#1e6ef2')}
+      ${balanceCard('Annual',   balances.annual,   21, '#6e4220')}
       ${balanceCard('Sick',     balances.sick,     10, '#059669')}
-      ${balanceCard('Personal', balances.personal, 5,  '#7c3aed')}
+      ${balanceCard('Personal', balances.personal, 5,  '#c44a4a')}
     </div>
   `;
   const requestBtn = `
@@ -1232,9 +1323,9 @@ function renderPayroll() {
       </div>
       <div class="overflow-x-auto">
         <table class="data">
-          <thead><tr>${admin?'<th>Employee</th>':''}<th>Period</th><th>Base</th><th>Bonus</th><th>Deductions</th><th>Net</th><th>Status</th><th>Paid on</th></tr></thead>
+          <thead><tr>${admin?'<th>Employee</th>':''}<th>Period</th><th>Base</th><th>Bonus</th><th>Deductions</th><th>Net</th><th>Status</th><th>Paid on</th><th class="!text-end">Payslip</th></tr></thead>
           <tbody>
-            ${records.length===0 ? `<tr><td colspan="${admin?8:7}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+            ${records.length===0 ? `<tr><td colspan="${admin?9:8}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
               records.map(p => {
                 const e = getEmployee(p.employeeId);
                 return `
@@ -1247,6 +1338,9 @@ function renderPayroll() {
                   <td class="font-bold">${fmtMoney(p.net)}</td>
                   <td>${statusBadge(p.status)}</td>
                   <td class="text-slate-500 text-xs">${fmtDate(p.paidAt)}</td>
+                  <td class="!text-end whitespace-nowrap">
+                    <button onclick="openPayslip('${p.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Download payslip">${icon('download','w-4 h-4')}</button>
+                  </td>
                 </tr>`;
               }).join('')}
           </tbody>
@@ -1255,6 +1349,80 @@ function renderPayroll() {
     </div>
   `;
 }
+function openPayslip(payrollId) {
+  const p = state.payroll.find(x => x.id===payrollId);
+  if (!p) return;
+  const e = getEmployee(p.employeeId);
+  const c = state.settings;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Payslip ${p.period} - ${e.firstName} ${e.lastName}</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; color: #2a1f15; padding: 40px; background: #fbf7f1; max-width: 800px; margin: 0 auto; }
+    .head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 24px; border-bottom: 2px solid #6e4220; margin-bottom: 24px; }
+    .head img { width: 70px; height: 70px; object-fit: contain; }
+    .head h1 { margin: 0; font-size: 22px; color: #6e4220; }
+    .head .sub { font-size: 12px; color: #6b5a3f; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0; }
+    .field-label { font-size: 11px; text-transform: uppercase; color: #6b5a3f; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .field-value { font-size: 15px; color: #2a1f15; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th { text-align: left; padding: 10px 14px; background: #fbf6ef; color: #6b5a3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #e8dcc4; }
+    td { padding: 12px 14px; border-bottom: 1px solid #f4e8d4; font-size: 14px; }
+    tr.total td { font-weight: 700; font-size: 16px; background: #fbf6ef; color: #6e4220; border-top: 2px solid #6e4220; border-bottom: none; }
+    .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e8dcc4; font-size: 11px; color: #6b5a3f; text-align: center; }
+    .actions { margin-bottom: 24px; }
+    .btn { background: #6e4220; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; }
+    @media print { .actions { display: none; } body { padding: 20px; background: white; } }
+  </style></head><body>
+  <div class="actions">
+    <button class="btn" onclick="window.print()">Print or Save as PDF</button>
+  </div>
+  <div class="head">
+    <div>
+      <h1>${escapeHTML(c.companyName)}</h1>
+      <div class="sub">Payslip — ${escapeHTML(p.period)}</div>
+    </div>
+    <img src="logo.png" alt="${escapeHTML(c.companyName)}" onerror="this.style.display='none'" />
+  </div>
+  <div class="grid">
+    <div>
+      <div class="field-label">Employee</div>
+      <div class="field-value">${escapeHTML(e.firstName + ' ' + e.lastName)}</div>
+      <div style="font-size:13px;color:#6b5a3f;margin-top:2px">${escapeHTML(e.role)} • ${escapeHTML(e.department)}</div>
+    </div>
+    <div>
+      <div class="field-label">Pay period</div>
+      <div class="field-value">${escapeHTML(p.period)}</div>
+      <div style="font-size:13px;color:#6b5a3f;margin-top:2px">Paid on ${fmtDate(p.paidAt)}</div>
+    </div>
+    <div>
+      <div class="field-label">Email</div>
+      <div class="field-value">${escapeHTML(e.email)}</div>
+    </div>
+    <div>
+      <div class="field-label">Status</div>
+      <div class="field-value" style="color:#047857;text-transform:uppercase">${escapeHTML(p.status)}</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>
+      <tr><td>Base salary</td><td style="text-align:right">${fmtMoney(p.base)}</td></tr>
+      <tr><td>Bonus</td><td style="text-align:right;color:#047857">+${fmtMoney(p.bonus||0)}</td></tr>
+      <tr><td>Deductions</td><td style="text-align:right;color:#b91c1c">-${fmtMoney(p.deductions||0)}</td></tr>
+      <tr class="total"><td>Net pay</td><td style="text-align:right">${fmtMoney(p.net)}</td></tr>
+    </tbody>
+  </table>
+  <div class="footer">
+    This is a computer-generated payslip and does not require a signature.<br>
+    ${escapeHTML(c.companyName)} • Generated ${new Date().toLocaleDateString()}
+  </div>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('Pop-up blocked. Allow pop-ups for this site.', 'error'); return; }
+  w.document.write(html);
+  w.document.close();
+}
+
 function runPayroll() {
   const ym = new Date().toISOString().slice(0,7);
   if (state.payroll.some(p => p.period===ym)) {
