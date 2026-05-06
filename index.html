@@ -443,11 +443,15 @@ function getEmpExtras(id) {
       schedule: defaultSchedule(),
       iqama:    { number: '', expiry: '' },
       baladiya: { number: '', expiry: '' },
+      branch:      '',
+      nationality: '',
     };
   }
   const x = state.empExtras[id];
   if (!x.iqama) x.iqama = { number:'', expiry:'' };
   if (!x.baladiya) x.baladiya = { number:'', expiry:'' };
+  if (typeof x.branch !== 'string')      x.branch = '';
+  if (typeof x.nationality !== 'string') x.nationality = '';
 
   // Migrate legacy shape (shiftStart/shiftEnd/offDays) → schedule{0..6:{off,start,end}}
   if (!x.schedule) {
@@ -510,6 +514,12 @@ function logoURL() {
   try { return new URL('logo.png', window.location.href).href; }
   catch(e) { return 'logo.png'; }
 }
+const COMMON_NATIONALITIES = [
+  'Saudi', 'Yemeni', 'Egyptian', 'Pakistani', 'Indian', 'Filipino',
+  'Bangladeshi', 'Sri Lankan', 'Sudanese', 'Ethiopian', 'Indonesian',
+  'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
+];
+const SUGGESTED_BRANCHES = ['Khobar', 'Rayyan', 'Faisaliyah'];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -1301,6 +1311,75 @@ function renderDashboard() {
       </div>`;
     })()}
 
+    <!-- Branch breakdown — large hero widget -->
+    ${(() => {
+      const branchGroups = {};
+      state.employees.forEach(e => {
+        const ex = getEmpExtras(e.id);
+        const b = ex.branch || 'Unassigned';
+        if (!branchGroups[b]) branchGroups[b] = { total:0, present:0, late:0, absent:0, onLeave:0 };
+        branchGroups[b].total++;
+        const att = state.attendance.find(a => a.employeeId===e.id && a.date===today);
+        if (att) {
+          if (att.status==='present') branchGroups[b].present++;
+          else if (att.status==='late') branchGroups[b].late++;
+        } else {
+          const onLeaveToday = state.leaveRequests.find(r => r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
+          if (onLeaveToday) branchGroups[b].onLeave++;
+          else branchGroups[b].absent++;
+        }
+      });
+      const sortedBranches = Object.entries(branchGroups).sort((a,b)=>b[1].total-a[1].total);
+      // Pull suggested branches into the view even if empty
+      SUGGESTED_BRANCHES.forEach(s => {
+        if (!branchGroups[s]) sortedBranches.push([s, { total:0, present:0, late:0, absent:0, onLeave:0 }]);
+      });
+      const totalAll = state.employees.length;
+      const colors = ['#6e4220','#a87035','#c2914a','#d6b475','#475569','#7c3aed','#059669'];
+      return `
+      <div class="bg-white rounded-2xl shadow-card p-6 mt-5">
+        <div class="flex items-center justify-between mb-5 flex-wrap gap-2">
+          <div>
+            <h3 class="font-display text-lg font-semibold text-slate-900">${icon('building','w-5 h-5 inline text-brand-600')} Headcount by Branch</h3>
+            <div class="text-xs text-slate-500 mt-0.5">${sortedBranches.filter(b=>b[1].total>0).length} branch(es) · ${totalAll} employees total</div>
+          </div>
+          <a href="#/employees" class="btn btn-ghost btn-sm">View employees →</a>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          ${sortedBranches.map(([name, stats], idx) => {
+            const pct = totalAll ? Math.round(stats.total*100/totalAll) : 0;
+            const color = colors[idx % colors.length];
+            const isUnassigned = name === 'Unassigned';
+            return `
+              <a href="#/employees" onclick="empFilter={dept:'all',branch:'${escapeHTML(name)}',nationality:'all',q:''}" class="block bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-xl p-4 hover:shadow-pop hover:-translate-y-0.5 transition-all">
+                <div class="flex items-start justify-between mb-3">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold flex-shrink-0" style="background:${color}">${escapeHTML(name[0]?.toUpperCase()||'?')}</div>
+                    <div class="min-w-0">
+                      <div class="font-semibold text-slate-900 truncate">${escapeHTML(name)}</div>
+                      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Branch</div>
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-display text-2xl font-semibold text-slate-900 tabular-nums leading-none">${stats.total}</div>
+                    <div class="text-[10px] text-slate-400">${pct}%</div>
+                  </div>
+                </div>
+                ${stats.total>0 ? `
+                <div class="space-y-1">
+                  <div class="progress-bar"><div class="progress-fill" style="width:${pct}%; background:${color}"></div></div>
+                  <div class="grid grid-cols-3 gap-1 text-[10px] mt-2">
+                    <div class="bg-emerald-50 text-emerald-700 rounded px-2 py-1 text-center"><div class="font-bold">${stats.present+stats.late}</div><div class="opacity-70">in today</div></div>
+                    <div class="bg-blue-50 text-blue-700 rounded px-2 py-1 text-center"><div class="font-bold">${stats.onLeave}</div><div class="opacity-70">on leave</div></div>
+                    <div class="bg-rose-50 text-rose-700 rounded px-2 py-1 text-center"><div class="font-bold">${stats.absent}</div><div class="opacity-70">absent</div></div>
+                  </div>
+                </div>` : `<div class="text-xs text-slate-400 py-2 text-center bg-slate-50 rounded">${isUnassigned?'Employees without a branch assigned':'No employees yet — add one to start'}</div>`}
+              </a>`;
+          }).join('')}
+        </div>
+      </div>`;
+    })()}
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
       <div class="bg-white rounded-2xl shadow-card p-6">
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-4">By Department</h3>
@@ -1308,6 +1387,7 @@ function renderDashboard() {
           const groups = {};
           state.employees.forEach(e => groups[e.department] = (groups[e.department]||0)+1);
           const total = state.employees.length;
+          if (total === 0) return '<div class="text-sm text-slate-400">No employees yet.</div>';
           return Object.entries(groups).map(([k,v]) => `
             <div class="mb-3">
               <div class="flex justify-between text-sm mb-1">
@@ -1386,33 +1466,70 @@ function statCard(label, value, caption, dir, ico) {
 }
 
 /* -------------------- EMPLOYEES -------------------- */
-let empFilter = { dept: 'all' };
+let empFilter = { dept: 'all', branch: 'all', nationality: 'all', q: '' };
 function renderEmployees() {
-  const emps = state.employees.filter(e => empFilter.dept==='all' || e.department===empFilter.dept);
+  const emps = state.employees.filter(e => {
+    if (empFilter.dept !== 'all' && e.department !== empFilter.dept) return false;
+    const ex = getEmpExtras(e.id);
+    if (empFilter.branch !== 'all' && (ex.branch||'') !== empFilter.branch) return false;
+    if (empFilter.nationality !== 'all' && (ex.nationality||'') !== empFilter.nationality) return false;
+    if (empFilter.q) {
+      const q = empFilter.q.toLowerCase();
+      const hay = `${e.firstName} ${e.lastName} ${e.email} ${e.phone||''} ${e.role} ${e.department} ${ex.branch||''} ${ex.nationality||''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
   const depts = [...new Set(state.employees.map(e=>e.department))];
+  // Discover branch & nationality values across all employees + suggested branches
+  const branchSet = new Set();
+  state.employees.forEach(e => { const x = getEmpExtras(e.id); if (x.branch) branchSet.add(x.branch); });
+  SUGGESTED_BRANCHES.forEach(b => branchSet.add(b));
+  (state.branches||[]).forEach(b => branchSet.add(b.name));
+  const branches = [...branchSet].sort();
+  const natSet = new Set();
+  state.employees.forEach(e => { const x = getEmpExtras(e.id); if (x.nationality) natSet.add(x.nationality); });
+  const nationalities = [...natSet].sort();
+  const activeFilters = (empFilter.dept!=='all'?1:0) + (empFilter.branch!=='all'?1:0) + (empFilter.nationality!=='all'?1:0) + (empFilter.q?1:0);
+
   return `
     <div class="bg-white rounded-2xl shadow-card">
       <div class="flex items-center justify-between gap-3 p-5 border-b border-slate-100 flex-wrap">
         <div>
           <h2 class="font-semibold text-slate-900">${escapeHTML(t('employees'))}</h2>
-          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${state.employees.length} employees</div>
+          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${state.employees.length} employees${activeFilters?` · <button onclick="empFilter={dept:'all',branch:'all',nationality:'all',q:''}; render();" class="text-brand-600 hover:underline">clear filters</button>`:''}</div>
         </div>
         <div class="flex gap-2 flex-wrap">
-          <select class="input !py-2" onchange="empFilter.dept=this.value; render();">
-            <option value="all" ${empFilter.dept==='all'?'selected':''}>All departments</option>
-            ${depts.map(d=>`<option value="${escapeHTML(d)}" ${empFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
-          </select>
           <button onclick="exportCSV('employees')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
           <button onclick="openEmployeeModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
         </div>
       </div>
+      <!-- Filter row -->
+      <div class="px-5 py-3 border-b border-slate-100 bg-slate-50 flex gap-2 flex-wrap items-center">
+        <div class="relative flex-1 min-w-[200px] max-w-sm">
+          <span class="absolute top-1/2 -translate-y-1/2 left-3 text-slate-400">${icon('search','w-4 h-4')}</span>
+          <input class="input !py-2 pl-9" placeholder="Search name, email, phone..." value="${escapeHTML(empFilter.q||'')}" oninput="empFilter.q=this.value; clearTimeout(window._empSearchT); window._empSearchT=setTimeout(render,150);">
+        </div>
+        <select class="input !py-2" onchange="empFilter.dept=this.value; render();">
+          <option value="all">All departments</option>
+          ${depts.map(d=>`<option value="${escapeHTML(d)}" ${empFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
+        </select>
+        <select class="input !py-2" onchange="empFilter.branch=this.value; render();">
+          <option value="all">All branches</option>
+          ${branches.map(b=>`<option value="${escapeHTML(b)}" ${empFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+        </select>
+        <select class="input !py-2" onchange="empFilter.nationality=this.value; render();">
+          <option value="all">All nationalities</option>
+          ${nationalities.map(n=>`<option value="${escapeHTML(n)}" ${empFilter.nationality===n?'selected':''}>${escapeHTML(n)}</option>`).join('')}
+        </select>
+      </div>
       <div class="overflow-x-auto">
         <table class="data">
           <thead><tr>
-            <th>Employee</th><th>Role</th><th>Department</th><th>Shift</th><th>Joining date</th><th>Salary</th><th>Status</th><th class="!text-end">${escapeHTML(t('actions'))}</th>
+            <th>Employee</th><th>Role</th><th>Department</th><th>Branch</th><th>Nationality</th><th>Shift</th><th>Joining date</th><th>Salary</th><th>Status</th><th class="!text-end">${escapeHTML(t('actions'))}</th>
           </tr></thead>
           <tbody id="emp-tbody">
-            ${emps.length===0 ? `<tr><td colspan="8" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+            ${emps.length===0 ? `<tr><td colspan="10" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
               emps.map(e => {
                 const ex = getEmpExtras(e.id);
                 const offSummary = (ex.offDays||[]).map(i=>dayNames()[i]).join(', ') || 'None';
@@ -1432,6 +1549,8 @@ function renderEmployees() {
                 <td><div class="flex items-center gap-3">${avatarHTML(e,36)}<div><a href="#/employee/${e.id}" class="font-medium text-slate-900 hover:text-brand-700 hover:underline">${escapeHTML(e.firstName+' '+e.lastName)}</a><div class="text-xs text-slate-500">${escapeHTML(e.email)}</div></div></div></td>
                 <td>${escapeHTML(e.role)}</td>
                 <td><span class="badge badge-slate">${escapeHTML(e.department)}</span></td>
+                <td>${ex.branch ? `<span class="badge badge-blue">${escapeHTML(ex.branch)}</span>` : '<span class="text-xs text-slate-400">—</span>'}</td>
+                <td class="text-slate-600 text-sm">${escapeHTML(ex.nationality || '—')}</td>
                 <td class="text-slate-600 text-xs"><div class="font-medium text-slate-700">${escapeHTML(typical)}${escapeHTML(variesNote)}</div><div class="text-slate-400">Off: ${escapeHTML(offSummary)}</div></td>
                 <td class="text-slate-600">${fmtDate(e.hireDate)}</td>
                 <td class="font-medium">${fmtMoney(e.salary)}</td>
@@ -1544,9 +1663,11 @@ function renderEmployeeProfile(empId) {
               ${joinDate ? `<span class="text-xs text-slate-500">·  ${yearsAtCompany} yr at company</span>` : ''}
             </div>
           </div>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2 text-sm">
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-2 text-sm">
             <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Email</div><div class="text-slate-900 truncate max-w-[180px]">${escapeHTML(e.email||'—')}</div></div>
             <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Phone</div><div class="text-slate-900">${escapeHTML(e.phone||'—')}</div></div>
+            <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Branch</div><div class="text-slate-900">${ex.branch ? `<span class="badge badge-blue">${escapeHTML(ex.branch)}</span>` : '—'}</div></div>
+            <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Nationality</div><div class="text-slate-900">${escapeHTML(ex.nationality||'—')}</div></div>
             <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Joining date</div><div class="text-slate-900">${fmtDate(e.hireDate)}</div></div>
             <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Monthly salary</div><div class="text-slate-900 font-semibold">${fmtMoney(e.salary)}</div></div>
           </div>
@@ -1834,13 +1955,25 @@ function openEmployeeModal(id) {
         <div><label class="label">Last name</label><input id="m-ln" class="input" value="${escapeHTML(editing?.lastName||'')}"></div>
         <div class="col-span-2"><label class="label">Email</label><input id="m-em" class="input" type="email" value="${escapeHTML(editing?.email||'')}"></div>
         <div><label class="label">Phone</label><input id="m-ph" class="input" value="${escapeHTML(editing?.phone||'')}"></div>
+        <div><label class="label">Nationality</label>
+          <input id="m-nat" class="input" list="nat-list" value="${escapeHTML(ex.nationality||'')}" placeholder="e.g. Saudi">
+          <datalist id="nat-list">
+            ${[...new Set([...COMMON_NATIONALITIES, ...Object.values(state.empExtras||{}).map(x=>x.nationality).filter(Boolean)])].map(n=>`<option value="${escapeHTML(n)}">`).join('')}
+          </datalist>
+        </div>
         <div><label class="label">Role</label><input id="m-ro" class="input" value="${escapeHTML(editing?.role||'')}"></div>
         <div><label class="label">Department</label><input id="m-dp" class="input" list="dept-list" value="${escapeHTML(editing?.department||'')}">
           <datalist id="dept-list">${[...new Set(state.employees.map(e=>e.department))].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
         </div>
+        <div><label class="label">Branch</label>
+          <input id="m-br" class="input" list="branch-list" value="${escapeHTML(ex.branch||'')}" placeholder="e.g. Khobar">
+          <datalist id="branch-list">
+            ${[...new Set([...(state.branches||[]).map(b=>b.name), ...SUGGESTED_BRANCHES, ...Object.values(state.empExtras||{}).map(x=>x.branch).filter(Boolean)])].map(b=>`<option value="${escapeHTML(b)}">`).join('')}
+          </datalist>
+        </div>
         <div><label class="label">Joining date</label><input id="m-hd" class="input" type="date" value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
         <div><label class="label">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" value="${editing?.salary||0}"></div>
-        <div><label class="label">Status</label>
+        <div class="col-span-2"><label class="label">Status</label>
           <select id="m-st" class="input">
             <option value="active" ${editing?.status==='active'?'selected':''}>Active</option>
             <option value="on_leave" ${editing?.status==='on_leave'?'selected':''}>On leave</option>
@@ -1930,11 +2063,14 @@ function openEmployeeModal(id) {
       const iqamaExp = $('#m-iqama-exp')?.value || '';
       const balNo    = $('#m-bal-no')?.value.trim() || '';
       const balExp   = $('#m-bal-exp')?.value || '';
+      const branch      = $('#m-br')?.value.trim()  || '';
+      const nationality = $('#m-nat')?.value.trim() || '';
       // Keep raw object (no derived getters); will be re-decorated by getEmpExtras on next read
       state.empExtras[savedId] = {
         schedule,
         iqama:    { number: iqamaNo, expiry: iqamaExp },
         baladiya: { number: balNo,   expiry: balExp   },
+        branch, nationality,
       };
       saveLocalData();
     }
@@ -3246,8 +3382,11 @@ function downloadBackup() {
 function exportCSV(kind) {
   let rows = [], filename = kind+'.csv';
   if (kind==='employees') {
-    rows = [['Name','Email','Phone','Role','Department','Joining date','Salary','Status']];
-    state.employees.forEach(e => rows.push([e.firstName+' '+e.lastName, e.email, e.phone, e.role, e.department, e.hireDate, e.salary, e.status]));
+    rows = [['Name','Email','Phone','Role','Department','Branch','Nationality','Joining date','Salary','Status']];
+    state.employees.forEach(e => {
+      const ex = getEmpExtras(e.id);
+      rows.push([e.firstName+' '+e.lastName, e.email, e.phone, e.role, e.department, ex.branch||'', ex.nationality||'', e.hireDate, e.salary, e.status]);
+    });
   } else if (kind==='my-attendance') {
     const me = currentEmployee();
     rows = [['Date','Clock In','Clock Out','Hours','Status']];
