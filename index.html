@@ -536,7 +536,7 @@ const COMMON_NATIONALITIES = [
   'Bangladeshi', 'Sri Lankan', 'Sudanese', 'Ethiopian', 'Indonesian',
   'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
 ];
-const SUGGESTED_BRANCHES = ['HASSAD KHOBAR', 'HASSAD RAYYAN', 'HASSAD FAISALIYAH'];
+const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH'];
 const SUGGESTED_DEPARTMENTS = ['Barista', 'Cashier', 'Operations'];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
@@ -1498,17 +1498,9 @@ function renderEmployees() {
     }
     return true;
   });
-  const depts = [...new Set([...SUGGESTED_DEPARTMENTS, ...state.employees.map(e=>e.department).filter(Boolean)])].sort();
-  // Discover branch & nationality values across all employees + suggested branches
-  const branchSet = new Set();
-  state.employees.forEach(e => { const x = getEmpExtras(e.id); if (x.branch) branchSet.add(x.branch); });
-  SUGGESTED_BRANCHES.forEach(b => branchSet.add(b));
-  (state.branches||[]).forEach(b => branchSet.add(b.name));
-  const branches = [...branchSet].sort();
-  const natSet = new Set();
-  state.employees.forEach(e => { const x = getEmpExtras(e.id); if (x.nationality) natSet.add(x.nationality); });
-  const nationalities = [...natSet].sort();
-  const activeFilters = (empFilter.dept!=='all'?1:0) + (empFilter.branch!=='all'?1:0) + (empFilter.nationality!=='all'?1:0) + (empFilter.q?1:0);
+  // Branch filter: only the 3 official branches
+  const branches = SUGGESTED_BRANCHES.slice();
+  const activeFilters = (empFilter.branch!=='all'?1:0) + (empFilter.q?1:0);
 
   return `
     <div class="bg-white rounded-2xl shadow-card">
@@ -1528,17 +1520,9 @@ function renderEmployees() {
           <span class="absolute top-1/2 -translate-y-1/2 left-2.5 text-slate-400">${icon('search','w-3.5 h-3.5')}</span>
           <input class="pill pill-search w-56" placeholder="Search..." value="${escapeHTML(empFilter.q||'')}" oninput="empFilter.q=this.value; clearTimeout(window._empSearchT); window._empSearchT=setTimeout(render,150);">
         </div>
-        <select class="pill ${empFilter.dept!=='all'?'active':''}" onchange="empFilter.dept=this.value; render();" title="Department">
-          <option value="all">${empFilter.dept==='all'?'Department':'Dept: '+empFilter.dept}</option>
-          ${depts.map(d=>`<option value="${escapeHTML(d)}" ${empFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
-        </select>
         <select class="pill ${empFilter.branch!=='all'?'active':''}" onchange="empFilter.branch=this.value; render();" title="Branch">
-          <option value="all">${empFilter.branch==='all'?'Branch':'Branch: '+empFilter.branch}</option>
+          <option value="all">${empFilter.branch==='all'?'Branches':'Branch: '+empFilter.branch}</option>
           ${branches.map(b=>`<option value="${escapeHTML(b)}" ${empFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
-        </select>
-        <select class="pill ${empFilter.nationality!=='all'?'active':''}" onchange="empFilter.nationality=this.value; render();" title="Nationality">
-          <option value="all">${empFilter.nationality==='all'?'Nationality':'Nat: '+empFilter.nationality}</option>
-          ${nationalities.map(n=>`<option value="${escapeHTML(n)}" ${empFilter.nationality===n?'selected':''}>${escapeHTML(n)}</option>`).join('')}
         </select>
       </div>
       <div class="overflow-x-auto">
@@ -1985,15 +1969,13 @@ function openEmployeeModal(id) {
         </div>
         <div><label class="label">Branch</label>
           ${(() => {
-            const branchOptions = [...new Set([...SUGGESTED_BRANCHES, ...(state.branches||[]).map(b=>b.name), ...Object.values(state.empExtras||{}).map(x=>x.branch).filter(Boolean)])];
             const cur = ex.branch || '';
-            const isCustom = cur && !branchOptions.includes(cur);
+            const isCustom = cur && !SUGGESTED_BRANCHES.includes(cur);
             return `
-              <select id="m-br" class="input" onchange="if(this.value==='__other__'){const v=prompt('Enter custom branch name:'); if(v){const o=document.createElement('option'); o.value=v; o.text=v; o.selected=true; this.add(o,this.options[this.options.length-1]);} else { this.value=''; }}">
+              <select id="m-br" class="input">
                 <option value="">— Select branch —</option>
-                ${branchOptions.map(b=>`<option value="${escapeHTML(b)}" ${cur===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
-                ${isCustom?`<option value="${escapeHTML(cur)}" selected>${escapeHTML(cur)}</option>`:''}
-                <option value="__other__">+ Add custom branch…</option>
+                ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${cur===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+                ${isCustom?`<option value="${escapeHTML(cur)}" selected>${escapeHTML(cur)} (legacy)</option>`:''}
               </select>
             `;
           })()}
