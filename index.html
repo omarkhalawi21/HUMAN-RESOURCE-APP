@@ -200,6 +200,16 @@ const ICONS = {
   building: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/><path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/><path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/></svg>`,
   eye:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
   eyeOff:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`,
+  warning:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+  award:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>`,
+  cash:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>`,
+  archive:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>`,
+  idcard:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="9" cy="11" r="2.5"/><path d="M5 17.5c.7-1.7 2.4-2.8 4-2.8s3.3 1.1 4 2.8"/><line x1="14" y1="9" x2="19" y2="9"/><line x1="14" y1="13" x2="18" y2="13"/></svg>`,
+  shield:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
+  refresh:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>`,
+  file:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  upload:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
+  star:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
 };
 
 const icon = (name, className='w-5 h-5') => `<span class="inline-block ${className}">${ICONS[name]||''}</span>`;
@@ -256,6 +266,26 @@ const I18N = {
     no_data: "No records yet",
     confirm_delete: "Are you sure you want to delete this?",
     welcome_back: "Welcome back",
+    warnings: "Warnings",
+    advances: "Salary Advances",
+    certificates: "Certificates",
+    archive: "Archive",
+    documents: "Documents",
+    iqama: "IQAMA",
+    baladiya: "Baladiya",
+    expiring_soon: "Expiring Soon",
+    issue_warning: "Issue Warning",
+    request_advance: "Request Advance",
+    issue_certificate: "Issue Certificate",
+    upload_document: "Upload Document",
+    download: "Download",
+    view: "View",
+    renew: "Renew",
+    expires: "Expires",
+    amount: "Amount",
+    severity: "Severity",
+    type: "Type",
+    reason: "Reason",
   },
   ar: {
     login_welcome: "مرحبًا بك في",
@@ -307,6 +337,26 @@ const I18N = {
     no_data: "لا توجد سجلات بعد",
     confirm_delete: "هل أنت متأكد من الحذف؟",
     welcome_back: "أهلاً بعودتك",
+    warnings: "إنذارات",
+    advances: "سُلف الرواتب",
+    certificates: "الشهادات",
+    archive: "الأرشيف",
+    documents: "المستندات",
+    iqama: "الإقامة",
+    baladiya: "البلدية",
+    expiring_soon: "تنتهي قريباً",
+    issue_warning: "إصدار إنذار",
+    request_advance: "طلب سلفة",
+    issue_certificate: "إصدار شهادة",
+    upload_document: "رفع مستند",
+    download: "تحميل",
+    view: "عرض",
+    renew: "تجديد",
+    expires: "تنتهي في",
+    amount: "المبلغ",
+    severity: "الدرجة",
+    type: "النوع",
+    reason: "السبب",
   }
 };
 const t = (key) => (I18N[state.settings.lang] && I18N[state.settings.lang][key]) || I18N.en[key] || key;
@@ -335,8 +385,81 @@ function emptyState() {
     session: null,
     activity: [],
     companyId: null,
+    /* New v2 features — persisted in localStorage (no Supabase migration required) */
+    warnings: [],       // [{ id, employeeId, severity, type, date, reason, notes, issuedBy, issuedAt, fileData }]
+    advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
+    certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
+    archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
+    empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
   };
 }
+
+/* -------------------- LOCAL STORAGE FOR NEW FEATURES -------------------- */
+const LS_KEY_PREFIX = 'hassad_hr_v2_';
+function lsKey() { return LS_KEY_PREFIX + (state.companyId || 'default'); }
+function loadLocalData() {
+  try {
+    const raw = localStorage.getItem(lsKey());
+    if (!raw) return;
+    const data = JSON.parse(raw) || {};
+    state.warnings    = Array.isArray(data.warnings)    ? data.warnings    : [];
+    state.advances    = Array.isArray(data.advances)    ? data.advances    : [];
+    state.certificates= Array.isArray(data.certificates)? data.certificates: [];
+    state.archive     = Array.isArray(data.archive)     ? data.archive     : [];
+    state.empExtras   = (data.empExtras && typeof data.empExtras === 'object') ? data.empExtras : {};
+  } catch(e) { console.warn('Local data parse failed', e); }
+}
+function saveLocalData() {
+  try {
+    const payload = {
+      warnings:     state.warnings,
+      advances:     state.advances,
+      certificates: state.certificates,
+      archive:      state.archive,
+      empExtras:    state.empExtras,
+    };
+    localStorage.setItem(lsKey(), JSON.stringify(payload));
+  } catch(e) {
+    console.warn('Local save failed (storage may be full):', e);
+    toast('Storage full — some data may not persist', 'error');
+  }
+}
+function getEmpExtras(id) {
+  if (!state.empExtras[id]) {
+    state.empExtras[id] = {
+      shiftStart: state.settings.workStart || '09:00',
+      shiftEnd:   state.settings.workEnd   || '17:00',
+      offDays:    [5],   // 0=Sun, 1=Mon, ... 5=Fri, 6=Sat (Friday default off)
+      iqama:    { number: '', expiry: '' },
+      baladiya: { number: '', expiry: '' },
+    };
+  }
+  // backfill any missing keys (legacy records)
+  const x = state.empExtras[id];
+  if (!x.iqama) x.iqama = { number:'', expiry:'' };
+  if (!x.baladiya) x.baladiya = { number:'', expiry:'' };
+  if (!Array.isArray(x.offDays)) x.offDays = [5];
+  if (!x.shiftStart) x.shiftStart = state.settings.workStart || '09:00';
+  if (!x.shiftEnd)   x.shiftEnd   = state.settings.workEnd   || '17:00';
+  return x;
+}
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const target = new Date(dateStr); target.setHours(0,0,0,0);
+  const today  = new Date(); today.setHours(0,0,0,0);
+  return Math.round((target - today) / 86400000);
+}
+function expiryStatus(dateStr) {
+  const d = daysUntil(dateStr);
+  if (d === null || isNaN(d)) return { label: 'Not set',   cls: 'badge-slate', days: null };
+  if (d < 0)                  return { label: `Expired ${-d}d ago`, cls: 'badge-red',   days: d };
+  if (d <= 30)                return { label: `${d}d left`,         cls: 'badge-amber', days: d };
+  if (d <= 60)                return { label: `${d}d left`,         cls: 'badge-blue',  days: d };
+  return                            { label: `${d}d left`,         cls: 'badge-green', days: d };
+}
+const DAY_NAMES_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DAY_NAMES_AR = ['أحد','إثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+function dayNames() { return state.settings.lang === 'ar' ? DAY_NAMES_AR : DAY_NAMES_EN; }
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -457,6 +580,8 @@ async function loadAll() {
     state.users = state.employees.filter(e => e.user_id).map(e => ({
       id: 'u-'+e.id, username: e.email, role: e.isAdmin?'admin':'employee', employeeId: e.id, user_id: e.user_id
     }));
+    /* Load v2 features from localStorage (warnings, advances, certificates, archive, empExtras) */
+    loadLocalData();
   } catch(e) {
     console.error('Load failed:', e);
     toast('Failed to load data: '+e.message, 'error');
@@ -566,7 +691,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'reports', 'settings', 'account'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'reports', 'settings', 'account'];
 function getRoute() {
   const h = location.hash.replace('#/', '') || 'dashboard';
   return routes.includes(h) ? h : 'dashboard';
@@ -745,6 +870,7 @@ async function afterAuth(user) {
 }
 async function logout() {
   await sb.auth.signOut();
+  // Keep localStorage data — it's tied to companyId, will reload after next login
   state = emptyState();
   authMode = 'login';
   location.hash = '';
@@ -765,13 +891,20 @@ function renderShell(routeContent) {
   const admin = isAdmin();
   const lang = state.settings.lang;
   const navItems = [
-    { key:'dashboard',  icon:'dashboard', label:t('dashboard'), show:true },
-    { key:'employees',  icon:'users',     label:t('employees'), show:admin },
-    { key:'attendance', icon:'clock',     label:t('attendance'),show:true },
-    { key:'leave',      icon:'calendar',  label:t('leave'),     show:true },
-    { key:'payroll',    icon:'wallet',    label:t('payroll'),   show:true },
-    { key:'reports',    icon:'report',    label:t('reports'),   show:admin },
-    { key:'settings',   icon:'settings',  label:t('settings'),  show:admin },
+    { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
+    { key:'employees',    icon:'users',     label:t('employees'),    show:admin, group:'main' },
+    { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main' },
+    { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main' },
+    { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main' },
+    /* People management */
+    { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
+    { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
+    { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
+    { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
+    /* Company resources */
+    { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
+    { key:'reports',      icon:'report',    label:t('reports'),      show:admin, group:'company' },
+    { key:'settings',     icon:'settings',  label:t('settings'),     show:admin, group:'company' },
   ];
   const sidebar = `
     <aside class="app-sidebar w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen md:sticky md:top-0">
@@ -785,12 +918,45 @@ function renderShell(routeContent) {
         </div>
       </div>
       <nav class="flex-1 overflow-y-auto p-3 space-y-1">
-        ${navItems.filter(n=>n.show).map(n=>`
-          <a href="#/${n.key}" onclick="toggleSidebar(false)" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
-            <span class="icon w-5 h-5 text-slate-400">${ICONS[n.icon]}</span>
-            <span>${escapeHTML(n.label)}</span>
-          </a>
-        `).join('')}
+        ${(() => {
+          const visible = navItems.filter(n=>n.show);
+          const groupLabels = {
+            main:    state.settings.lang==='ar' ? 'الرئيسية' : 'Operations',
+            people:  state.settings.lang==='ar' ? 'شؤون الموظفين' : 'People Care',
+            company: state.settings.lang==='ar' ? 'الشركة' : 'Company',
+          };
+          let html = '';
+          let lastGroup = null;
+          visible.forEach(n => {
+            if (n.group !== lastGroup) {
+              if (lastGroup !== null) html += '<div class="h-px bg-slate-100 my-2"></div>';
+              html += `<div class="px-3 pt-1 pb-1 text-[10px] uppercase tracking-[0.18em] text-slate-400 font-semibold">${escapeHTML(groupLabels[n.group]||'')}</div>`;
+              lastGroup = n.group;
+            }
+            // Inline alert-count chips on certain nav items
+            let chip = '';
+            if (n.key === 'warnings' && admin) {
+              const open = (state.warnings||[]).length;
+              if (open) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600 font-semibold">${open}</span>`;
+            } else if (n.key === 'advances' && admin) {
+              const pend = (state.advances||[]).filter(a=>a.status==='pending').length;
+              if (pend) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">${pend}</span>`;
+            } else if (n.key === 'documents' && admin) {
+              const exp = state.employees.reduce((s,e)=>{
+                const x = getEmpExtras(e.id);
+                const i = daysUntil(x.iqama?.expiry); const b = daysUntil(x.baladiya?.expiry);
+                if ((i!==null && i<=30) || (b!==null && b<=30)) s++;
+                return s;
+              },0);
+              if (exp) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">${exp}</span>`;
+            }
+            html += `<a href="#/${n.key}" onclick="toggleSidebar(false)" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
+              <span class="icon w-5 h-5 text-slate-400">${ICONS[n.icon]}</span>
+              <span>${escapeHTML(n.label)}</span>${chip}
+            </a>`;
+          });
+          return html;
+        })()}
       </nav>
       <div class="p-3 border-t border-slate-100">
         <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="location.hash='#/account'" title="My Account">
@@ -964,6 +1130,118 @@ function renderDashboard() {
     </div>
 
     ${admin ? `
+    <!-- Compliance & alerts row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
+      ${(() => {
+        const totalWarnings = (state.warnings||[]).length;
+        const finalWarnings = (state.warnings||[]).filter(w=>w.severity==='final').length;
+        const cls = finalWarnings>0 ? 'text-rose-600 bg-rose-50' : totalWarnings>0 ? 'text-amber-600 bg-amber-50' : 'text-emerald-600 bg-emerald-50';
+        return `
+        <a href="#/warnings" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl ${cls} flex items-center justify-center">${icon('warning','w-5 h-5')}</div>
+            ${finalWarnings>0?`<span class="badge badge-red">${finalWarnings} final</span>`:''}
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">Warning Letters</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${totalWarnings}</div>
+          <div class="text-xs text-slate-400 mt-1">${(state.warnings||[]).filter(w => daysUntil(w.issuedAt)>=-30).length} in last 30 days</div>
+        </a>`;
+      })()}
+      ${(() => {
+        const pendAdv = (state.advances||[]).filter(a=>a.status==='pending');
+        const out = (state.advances||[]).filter(a=>a.status==='approved' && !a.repaidAt);
+        const outTotal = out.reduce((s,a)=>s+Number(a.amount||0),0);
+        return `
+        <a href="#/advances" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center">${icon('cash','w-5 h-5')}</div>
+            ${pendAdv.length?`<span class="badge badge-amber">${pendAdv.length} pending</span>`:''}
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">Outstanding Advances</div>
+          <div class="font-display text-2xl font-semibold text-slate-900 mt-1 tabular-nums">${fmtMoney(outTotal)}</div>
+          <div class="text-xs text-slate-400 mt-1">${out.length} unpaid advance(s)</div>
+        </a>`;
+      })()}
+      ${(() => {
+        let exp30=0, expSoon60=0, expired=0;
+        state.employees.forEach(e => {
+          const x = getEmpExtras(e.id);
+          [x.iqama?.expiry, x.baladiya?.expiry].forEach(d => {
+            const days = daysUntil(d);
+            if (days === null) return;
+            if (days < 0) expired++;
+            else if (days <= 30) exp30++;
+            else if (days <= 60) expSoon60++;
+          });
+        });
+        const cls = expired>0 ? 'text-rose-600 bg-rose-50' : exp30>0 ? 'text-amber-600 bg-amber-50' : 'text-emerald-600 bg-emerald-50';
+        return `
+        <a href="#/documents" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl ${cls} flex items-center justify-center">${icon('idcard','w-5 h-5')}</div>
+            ${expired>0?`<span class="badge badge-red">${expired} expired</span>`:exp30>0?`<span class="badge badge-amber">${exp30} ≤30d</span>`:`<span class="badge badge-green">All clear</span>`}
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">IQAMA / Baladiya</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${exp30+expired}</div>
+          <div class="text-xs text-slate-400 mt-1">${expSoon60} expiring in 60d</div>
+        </a>`;
+      })()}
+      ${(() => {
+        const certs = (state.certificates||[]).length;
+        return `
+        <a href="#/certificates" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">${icon('award','w-5 h-5')}</div>
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">Certificates Issued</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${certs}</div>
+          <div class="text-xs text-slate-400 mt-1">${(state.certificates||[]).filter(c=>c.type==='employee_of_month').length} EOTM awards</div>
+        </a>`;
+      })()}
+    </div>
+
+    <!-- Document expiry watchlist -->
+    ${(() => {
+      const items = [];
+      state.employees.forEach(e => {
+        const x = getEmpExtras(e.id);
+        if (x.iqama?.expiry) {
+          const d = daysUntil(x.iqama.expiry);
+          if (d !== null && d <= 60) items.push({ e, doc:'IQAMA', expiry:x.iqama.expiry, days:d });
+        }
+        if (x.baladiya?.expiry) {
+          const d = daysUntil(x.baladiya.expiry);
+          if (d !== null && d <= 60) items.push({ e, doc:'Baladiya', expiry:x.baladiya.expiry, days:d });
+        }
+      });
+      items.sort((a,b)=>a.days-b.days);
+      if (items.length === 0) return '';
+      return `
+      <div class="bg-white rounded-2xl shadow-card p-6 mt-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="font-display text-lg font-semibold text-slate-900">${icon('warning','w-5 h-5 inline text-amber-600')} Document Expiry Watchlist</h3>
+            <div class="text-xs text-slate-500 mt-0.5">Documents expiring in the next 60 days, or already expired</div>
+          </div>
+          <a href="#/documents" class="btn btn-ghost btn-sm">View all</a>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          ${items.slice(0,8).map(({e,doc,expiry,days}) => {
+            const cls = days<0 ? 'border-rose-200 bg-rose-50' : days<=30 ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50';
+            const badge = days<0 ? `<span class="badge badge-red">Expired ${-days}d ago</span>` : days<=30 ? `<span class="badge badge-amber">${days}d left</span>` : `<span class="badge badge-blue">${days}d left</span>`;
+            return `<div class="flex items-center gap-3 p-3 rounded-lg border ${cls}">
+              ${avatarHTML(e,32)}
+              <div class="flex-1 min-w-0">
+                <div class="font-medium text-slate-900 text-sm truncate">${escapeHTML(e.firstName+' '+e.lastName)}</div>
+                <div class="text-xs text-slate-500">${doc} · ${fmtDate(expiry)}</div>
+              </div>
+              ${badge}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    })()}
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
       <div class="bg-white rounded-2xl shadow-card p-6">
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-4">By Department</h3>
@@ -987,12 +1265,52 @@ function renderDashboard() {
         <div class="grid grid-cols-2 gap-3">
           <button onclick="openEmployeeModal()" class="btn btn-ghost justify-center !py-4">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
           <button onclick="openLeaveModal()" class="btn btn-ghost justify-center !py-4">${icon('calendar','w-4 h-4')} ${escapeHTML(t('request_leave'))}</button>
+          <button onclick="openWarningModal()" class="btn btn-ghost justify-center !py-4">${icon('warning','w-4 h-4')} ${escapeHTML(t('issue_warning'))}</button>
+          <button onclick="openCertificateModal('employee_of_month')" class="btn btn-ghost justify-center !py-4">${icon('award','w-4 h-4')} ${escapeHTML(t('issue_certificate'))}</button>
           <button onclick="location.hash='#/payroll'" class="btn btn-ghost justify-center !py-4">${icon('wallet','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
-          <button onclick="location.hash='#/reports'" class="btn btn-ghost justify-center !py-4">${icon('report','w-4 h-4')} ${escapeHTML(t('reports'))}</button>
+          <button onclick="location.hash='#/archive'" class="btn btn-ghost justify-center !py-4">${icon('archive','w-4 h-4')} ${escapeHTML(t('archive'))}</button>
         </div>
       </div>
     </div>
-    ` : ''}
+    ` : `
+    <!-- Employee personal stats row -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
+      ${(() => {
+        const myEx = getEmpExtras(me.id);
+        const iqamaSt = expiryStatus(myEx.iqama?.expiry);
+        const balSt   = expiryStatus(myEx.baladiya?.expiry);
+        const myWarnings = (state.warnings||[]).filter(w=>w.employeeId===me.id).length;
+        const myCerts    = (state.certificates||[]).filter(c=>c.employeeId===me.id).length;
+        const myAdvances = (state.advances||[]).filter(a=>a.employeeId===me.id && a.status==='pending').length;
+        return `
+        <a href="#/documents" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center">${icon('idcard','w-5 h-5')}</div>
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">My Documents</div>
+          <div class="text-sm text-slate-700 mt-2">IQAMA: <span class="badge ${iqamaSt.cls}">${escapeHTML(iqamaSt.label)}</span></div>
+          <div class="text-sm text-slate-700 mt-1">Baladiya: <span class="badge ${balSt.cls}">${escapeHTML(balSt.label)}</span></div>
+        </a>
+        <a href="#/certificates" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">${icon('award','w-5 h-5')}</div>
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">My Certificates</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${myCerts}</div>
+          <div class="text-xs text-slate-400 mt-1">awards earned</div>
+        </a>
+        <a href="#/advances" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all block">
+          <div class="flex items-center justify-between mb-3">
+            <div class="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">${icon('cash','w-5 h-5')}</div>
+            ${myAdvances?`<span class="badge badge-amber">${myAdvances} pending</span>`:''}
+          </div>
+          <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">Salary Advance</div>
+          <div class="font-display text-base font-semibold text-slate-900 mt-1">Request an advance →</div>
+          <div class="text-xs text-slate-400 mt-1">${myWarnings? `${myWarnings} warning(s) on record`: 'Clean record'}</div>
+        </a>`;
+      })()}
+    </div>
+    `}
   `;
 }
 function statCard(label, value, caption, dir, ico) {
@@ -1032,16 +1350,19 @@ function renderEmployees() {
       <div class="overflow-x-auto">
         <table class="data">
           <thead><tr>
-            <th>Employee</th><th>Role</th><th>Department</th><th>Email</th><th>Hire date</th><th>Salary</th><th>Status</th><th class="!text-end">${escapeHTML(t('actions'))}</th>
+            <th>Employee</th><th>Role</th><th>Department</th><th>Shift</th><th>Hire date</th><th>Salary</th><th>Status</th><th class="!text-end">${escapeHTML(t('actions'))}</th>
           </tr></thead>
           <tbody id="emp-tbody">
             ${emps.length===0 ? `<tr><td colspan="8" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
-              emps.map(e => `
+              emps.map(e => {
+                const ex = getEmpExtras(e.id);
+                const offSummary = (ex.offDays||[]).map(i=>dayNames()[i]).join(', ') || '—';
+                return `
               <tr class="hover-row">
-                <td><div class="flex items-center gap-3">${avatarHTML(e,36)}<div><div class="font-medium text-slate-900">${escapeHTML(e.firstName+' '+e.lastName)}</div><div class="text-xs text-slate-500">${escapeHTML(e.phone||'')}</div></div></div></td>
+                <td><div class="flex items-center gap-3">${avatarHTML(e,36)}<div><div class="font-medium text-slate-900">${escapeHTML(e.firstName+' '+e.lastName)}</div><div class="text-xs text-slate-500">${escapeHTML(e.email)}</div></div></div></td>
                 <td>${escapeHTML(e.role)}</td>
                 <td><span class="badge badge-slate">${escapeHTML(e.department)}</span></td>
-                <td class="text-slate-600">${escapeHTML(e.email)}</td>
+                <td class="text-slate-600 text-xs"><div class="font-medium text-slate-700">${escapeHTML(ex.shiftStart)}–${escapeHTML(ex.shiftEnd)}</div><div class="text-slate-400">Off: ${escapeHTML(offSummary)}</div></td>
                 <td class="text-slate-600">${fmtDate(e.hireDate)}</td>
                 <td class="font-medium">${fmtMoney(e.salary)}</td>
                 <td>${statusBadge(e.status)}</td>
@@ -1049,7 +1370,7 @@ function renderEmployees() {
                   <button onclick="openEmployeeModal('${e.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
                   <button onclick="deleteEmployee('${e.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                 </td>
-              </tr>`).join('')}
+              </tr>`;}).join('')}
           </tbody>
         </table>
       </div>
@@ -1069,6 +1390,14 @@ let _pendingPhoto = null;
 function openEmployeeModal(id) {
   const editing = id ? getEmployee(id) : null;
   _pendingPhoto = editing?.photo || null;
+  const ex = editing ? getEmpExtras(editing.id) : { shiftStart: state.settings.workStart, shiftEnd: state.settings.workEnd, offDays:[5], iqama:{number:'',expiry:''}, baladiya:{number:'',expiry:''} };
+  const dn = dayNames();
+  const dayChips = dn.map((d,i)=>`
+    <label class="cursor-pointer">
+      <input type="checkbox" class="m-off-day hidden peer" data-idx="${i}" ${ex.offDays.includes(i)?'checked':''}>
+      <span class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-200 bg-slate-50 text-slate-600 peer-checked:bg-brand-700 peer-checked:text-white peer-checked:border-brand-700 transition">${escapeHTML(d)}</span>
+    </label>
+  `).join('');
   const form = `
     <div class="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
       <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${editing?.avatarColor || '#a87035'}">
@@ -1086,22 +1415,61 @@ function openEmployeeModal(id) {
         </div>
       </div>
     </div>
-    <div class="grid grid-cols-2 gap-4">
-      <div><label class="label">First name</label><input id="m-fn" class="input" value="${escapeHTML(editing?.firstName||'')}"></div>
-      <div><label class="label">Last name</label><input id="m-ln" class="input" value="${escapeHTML(editing?.lastName||'')}"></div>
-      <div class="col-span-2"><label class="label">Email</label><input id="m-em" class="input" type="email" value="${escapeHTML(editing?.email||'')}"></div>
-      <div><label class="label">Phone</label><input id="m-ph" class="input" value="${escapeHTML(editing?.phone||'')}"></div>
-      <div><label class="label">Role</label><input id="m-ro" class="input" value="${escapeHTML(editing?.role||'')}"></div>
-      <div><label class="label">Department</label><input id="m-dp" class="input" list="dept-list" value="${escapeHTML(editing?.department||'')}">
-        <datalist id="dept-list">${[...new Set(state.employees.map(e=>e.department))].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
+
+    <!-- Tabs inside modal -->
+    <div class="flex gap-1 border-b border-slate-200 mb-4 -mx-1">
+      <div class="tab active" id="emp-tab-basic" onclick="switchEmpTab('basic')">Basic info</div>
+      <div class="tab" id="emp-tab-shift" onclick="switchEmpTab('shift')">Shift &amp; Off-days</div>
+      <div class="tab" id="emp-tab-docs" onclick="switchEmpTab('docs')">IQAMA &amp; Baladiya</div>
+    </div>
+
+    <div id="emp-pane-basic">
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="label">First name</label><input id="m-fn" class="input" value="${escapeHTML(editing?.firstName||'')}"></div>
+        <div><label class="label">Last name</label><input id="m-ln" class="input" value="${escapeHTML(editing?.lastName||'')}"></div>
+        <div class="col-span-2"><label class="label">Email</label><input id="m-em" class="input" type="email" value="${escapeHTML(editing?.email||'')}"></div>
+        <div><label class="label">Phone</label><input id="m-ph" class="input" value="${escapeHTML(editing?.phone||'')}"></div>
+        <div><label class="label">Role</label><input id="m-ro" class="input" value="${escapeHTML(editing?.role||'')}"></div>
+        <div><label class="label">Department</label><input id="m-dp" class="input" list="dept-list" value="${escapeHTML(editing?.department||'')}">
+          <datalist id="dept-list">${[...new Set(state.employees.map(e=>e.department))].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
+        </div>
+        <div><label class="label">Hire date</label><input id="m-hd" class="input" type="date" value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
+        <div><label class="label">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" value="${editing?.salary||0}"></div>
+        <div><label class="label">Status</label>
+          <select id="m-st" class="input">
+            <option value="active" ${editing?.status==='active'?'selected':''}>Active</option>
+            <option value="on_leave" ${editing?.status==='on_leave'?'selected':''}>On leave</option>
+          </select>
+        </div>
       </div>
-      <div><label class="label">Hire date</label><input id="m-hd" class="input" type="date" value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
-      <div><label class="label">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" value="${editing?.salary||0}"></div>
-      <div><label class="label">Status</label>
-        <select id="m-st" class="input">
-          <option value="active" ${editing?.status==='active'?'selected':''}>Active</option>
-          <option value="on_leave" ${editing?.status==='on_leave'?'selected':''}>On leave</option>
-        </select>
+    </div>
+
+    <div id="emp-pane-shift" style="display:none">
+      <div class="bg-brand-50 border border-brand-100 rounded-xl p-3 text-xs text-brand-800 mb-4">
+        ${icon('clock','w-4 h-4 inline')} Each employee can have their own shift hours and off-days. Late detection on clock-in uses these hours instead of the company default.
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="label">Shift start</label><input id="m-shift-start" class="input" type="time" value="${escapeHTML(ex.shiftStart)}"></div>
+        <div><label class="label">Shift end</label><input id="m-shift-end" class="input" type="time" value="${escapeHTML(ex.shiftEnd)}"></div>
+      </div>
+      <div class="mt-5">
+        <label class="label">Off-days (rest days)</label>
+        <div class="flex flex-wrap gap-2">${dayChips}</div>
+        <div class="text-xs text-slate-500 mt-2">Tap each day to toggle. Off-days count as expected rest, not absence.</div>
+      </div>
+    </div>
+
+    <div id="emp-pane-docs" style="display:none">
+      <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 mb-4">
+        ${icon('warning','w-4 h-4 inline')} Track resident ID (IQAMA) and health card (Baladiya) numbers and expiry dates. The system will alert you when documents are expiring within 30 days.
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-1">${escapeHTML(t('iqama'))} — Resident ID</div></div>
+        <div><label class="label">IQAMA number</label><input id="m-iqama-no" class="input" value="${escapeHTML(ex.iqama.number||'')}" placeholder="2123456789"></div>
+        <div><label class="label">IQAMA expires on</label><input id="m-iqama-exp" class="input" type="date" value="${escapeHTML(ex.iqama.expiry||'')}"></div>
+        <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-3">${escapeHTML(t('baladiya'))} — Health Card</div></div>
+        <div><label class="label">Baladiya number</label><input id="m-bal-no" class="input" value="${escapeHTML(ex.baladiya.number||'')}" placeholder="HC-XXXX-XXXX"></div>
+        <div><label class="label">Baladiya expires on</label><input id="m-bal-exp" class="input" type="date" value="${escapeHTML(ex.baladiya.expiry||'')}"></div>
       </div>
     </div>
   `;
@@ -1119,6 +1487,7 @@ function openEmployeeModal(id) {
     };
     if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
     const dbRow = { ...employeeToDb(data), photo: _pendingPhoto, avatar_color: editing?.avatarColor || pickColor() };
+    let savedId = editing?.id;
     if (editing) {
       const { data: row, error } = await sb.from('employees').update(dbRow).eq('id', editing.id).select().single();
       if (error) { toast(error.message, 'error'); return false; }
@@ -1131,11 +1500,37 @@ function openEmployeeModal(id) {
       const newE = mapEmployeeFromDb(row);
       state.employees.push(newE);
       state.leaveBalances[newE.id] = { annual: newE.leave_annual, sick: newE.leave_sick, personal: newE.leave_personal };
+      savedId = newE.id;
       toast('Employee added. Share the signup link with them so they can create a password.', 'success');
+    }
+    /* Persist shift / off-days / IQAMA / Baladiya to localStorage */
+    if (savedId) {
+      const shiftStart = $('#m-shift-start')?.value || state.settings.workStart;
+      const shiftEnd   = $('#m-shift-end')?.value   || state.settings.workEnd;
+      const offDays = Array.from(document.querySelectorAll('.m-off-day')).filter(el=>el.checked).map(el=>parseInt(el.dataset.idx,10));
+      const iqamaNo  = $('#m-iqama-no')?.value.trim() || '';
+      const iqamaExp = $('#m-iqama-exp')?.value || '';
+      const balNo    = $('#m-bal-no')?.value.trim() || '';
+      const balExp   = $('#m-bal-exp')?.value || '';
+      state.empExtras[savedId] = {
+        shiftStart, shiftEnd, offDays,
+        iqama:    { number: iqamaNo, expiry: iqamaExp },
+        baladiya: { number: balNo,   expiry: balExp   },
+      };
+      saveLocalData();
     }
     _pendingPhoto = null;
     render();
     return true;
+  });
+}
+function switchEmpTab(which) {
+  ['basic','shift','docs'].forEach(name => {
+    const tab = document.getElementById('emp-tab-'+name);
+    const pane= document.getElementById('emp-pane-'+name);
+    if (!tab || !pane) return;
+    if (name === which) { tab.classList.add('active'); pane.style.display=''; }
+    else { tab.classList.remove('active'); pane.style.display='none'; }
   });
 }
 function handlePhotoUpload(ev) {
@@ -1177,7 +1572,11 @@ function renderAttendance() {
       <div class="tab ${attTab==='history'?'active':''}" onclick="attTab='history'; render();">All History</div>
     </div>` : '';
 
-  // clock-in tile
+  // clock-in tile — show employee shift hours and off-days
+  const myEx = getEmpExtras(me.id);
+  const offTodayDow = new Date().getDay();
+  const isOffToday  = Array.isArray(myEx.offDays) && myEx.offDays.includes(offTodayDow);
+  const offDayLabels = (myEx.offDays||[]).map(i=>dayNames()[i]).join(', ') || '—';
   const clockTile = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-6">
       <div class="flex items-center justify-between gap-4 flex-wrap">
@@ -1187,6 +1586,11 @@ function renderAttendance() {
             <div class="text-sm text-slate-500">${new Date().toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</div>
             <div class="text-2xl font-bold text-slate-900 mt-1">${escapeHTML(me.firstName+' '+me.lastName)}</div>
             <div class="text-sm text-slate-500">${escapeHTML(me.role)} • ${escapeHTML(me.department)}</div>
+            <div class="text-xs text-slate-500 mt-1.5 flex items-center gap-3 flex-wrap">
+              <span class="inline-flex items-center gap-1">${icon('clock','w-3.5 h-3.5')} Shift ${escapeHTML(myEx.shiftStart)}–${escapeHTML(myEx.shiftEnd)}</span>
+              <span class="inline-flex items-center gap-1">${icon('calendar','w-3.5 h-3.5')} Off: ${escapeHTML(offDayLabels)}</span>
+              ${isOffToday ? '<span class="badge badge-blue">Off-day today</span>' : ''}
+            </div>
           </div>
         </div>
         <div class="flex items-center gap-6">
@@ -1332,7 +1736,14 @@ async function clockIn() {
   const me = currentEmployee();
   if (!me) { toast('Not signed in', 'error'); return; }
   const now = nowHHMM();
-  const lateMin = diffMinutes(state.settings.workStart, now);
+  /* Use employee's individual shift; warn (but allow) if today is an off-day */
+  const ex = getEmpExtras(me.id);
+  const todayDow = new Date().getDay();
+  if (Array.isArray(ex.offDays) && ex.offDays.includes(todayDow)) {
+    if (!confirm(`Today (${dayNames()[todayDow]}) is your scheduled off-day. Continue with clock-in anyway?`)) return;
+  }
+  const shiftStart = ex.shiftStart || state.settings.workStart;
+  const lateMin = diffMinutes(shiftStart, now);
   const status = lateMin > 5 ? 'late' : 'present';
   let location = null;
   let branch = null;
@@ -1550,54 +1961,89 @@ async function decideLeave(id, decision) {
 }
 
 /* -------------------- PAYROLL -------------------- */
+let payrollMonthFilter = ''; // '' = all months
 function renderPayroll() {
   const admin = isAdmin();
   const me = currentEmployee();
-  const records = (admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id))
+  const allRecords = (admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id));
+  const filtered = (payrollMonthFilter ? allRecords.filter(p => p.period === payrollMonthFilter) : allRecords)
     .slice().sort((a,b)=>b.period.localeCompare(a.period));
-  const totalPaid = records.reduce((s,p)=>s+p.net,0);
+
+  // Build month list (last 18 months + any existing periods)
+  const monthsSet = new Set(allRecords.map(p => p.period));
+  for (let i=0; i<18; i++) {
+    const d = new Date(); d.setMonth(d.getMonth()-i);
+    monthsSet.add(d.toISOString().slice(0,7));
+  }
+  const months = [...monthsSet].sort().reverse();
+
+  const totalPaid = filtered.reduce((s,p)=>s+(p.net||0),0);
+  const totalBase = filtered.reduce((s,p)=>s+(p.base||0),0);
+  const totalBonus = filtered.reduce((s,p)=>s+(p.bonus||0),0);
+  const totalDeductions = filtered.reduce((s,p)=>s+(p.deductions||0),0);
+
+  const monthLabel = m => {
+    if (!m) return 'All months';
+    const [y,mo] = m.split('-');
+    return new Date(+y, +mo-1, 1).toLocaleDateString(undefined, { month:'long', year:'numeric' });
+  };
 
   return `
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-      <div class="bg-white rounded-2xl shadow-card p-5">
-        <div class="text-xs text-slate-500 uppercase tracking-wider">Total Paid</div>
-        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(totalPaid)}</div>
-        <div class="text-xs text-slate-400 mt-1">${records.length} payslip(s)</div>
-      </div>
-      <div class="bg-white rounded-2xl shadow-card p-5">
-        <div class="text-xs text-slate-500 uppercase tracking-wider">Avg / Person</div>
-        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(records.length?totalPaid/state.employees.length:0)}</div>
-      </div>
-      ${admin ? `
-      <div class="bg-white rounded-2xl shadow-card p-5 flex items-center justify-between">
-        <div>
-          <div class="text-xs text-slate-500 uppercase tracking-wider">Run new cycle</div>
-          <div class="text-sm text-slate-700 mt-1">Generate payslips for this month</div>
+    ${admin ? `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="flex-1 min-w-[200px]">
+          <label class="label">View payroll for</label>
+          <select class="input !py-2" onchange="payrollMonthFilter=this.value; render();">
+            <option value="">All months</option>
+            ${months.map(m=>`<option value="${m}" ${payrollMonthFilter===m?'selected':''}>${escapeHTML(monthLabel(m))} ${monthsSet.has(m)&&allRecords.some(p=>p.period===m)?'':'(no data)'}</option>`).join('')}
+          </select>
         </div>
-        <button onclick="runPayroll()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
+        <div class="flex gap-2 self-end flex-wrap">
+          ${payrollMonthFilter ? `<button onclick="generatePayrollReport('${payrollMonthFilter}')" class="btn btn-ghost">${icon('report','w-4 h-4')} Open Report</button>` : ''}
+          <button onclick="runPayroll()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('run_payroll'))} (this month)</button>
+        </div>
       </div>
-      ` : `
+    </div>` : ''}
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <div class="bg-white rounded-2xl shadow-card p-5">
-        <div class="text-xs text-slate-500 uppercase tracking-wider">Base Salary</div>
-        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(me.salary)}</div>
-        <div class="text-xs text-slate-400 mt-1">monthly</div>
-      </div>`}
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Net Paid</div>
+        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(totalPaid)}</div>
+        <div class="text-xs text-slate-400 mt-1">${filtered.length} payslip(s) ${payrollMonthFilter?'· '+escapeHTML(monthLabel(payrollMonthFilter)):''}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Base Total</div>
+        <div class="text-2xl font-bold text-slate-900 mt-1">${fmtMoney(totalBase)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Bonuses</div>
+        <div class="text-2xl font-bold text-emerald-600 mt-1">+${fmtMoney(totalBonus)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs text-slate-500 uppercase tracking-wider">Deductions</div>
+        <div class="text-2xl font-bold text-rose-600 mt-1">-${fmtMoney(totalDeductions)}</div>
+      </div>
     </div>
+
     <div class="bg-white rounded-2xl shadow-card overflow-hidden">
       <div class="flex items-center justify-between p-5 border-b border-slate-100">
-        <h3 class="font-display text-lg font-semibold text-slate-900">${admin?'Payroll History':'My Payslips'}</h3>
+        <div>
+          <h3 class="font-display text-lg font-semibold text-slate-900">${admin?'Payroll History':'My Payslips'}</h3>
+          <div class="text-xs text-slate-500 mt-0.5">${payrollMonthFilter?escapeHTML(monthLabel(payrollMonthFilter)):'All time'}</div>
+        </div>
         <button onclick="exportCSV('payroll')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
       </div>
       <div class="overflow-x-auto">
         <table class="data">
           <thead><tr>${admin?'<th>Employee</th>':''}<th>Period</th><th>Base</th><th>Bonus</th><th>Deductions</th><th>Net</th><th>Status</th><th>Paid on</th><th class="!text-end">Payslip</th></tr></thead>
           <tbody>
-            ${records.length===0 ? `<tr><td colspan="${admin?9:8}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
-              records.map(p => {
+            ${filtered.length===0 ? `<tr><td colspan="${admin?9:8}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              filtered.map(p => {
                 const e = getEmployee(p.employeeId);
                 return `
                 <tr class="hover-row">
-                  ${admin?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>`:''}
+                  ${admin?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e?.firstName+' '+e?.lastName||'')}</span></div></td>`:''}
                   <td class="font-medium">${escapeHTML(p.period)}</td>
                   <td>${fmtMoney(p.base)}</td>
                   <td class="text-emerald-600">+${fmtMoney(p.bonus||0)}</td>
@@ -1615,6 +2061,113 @@ function renderPayroll() {
       </div>
     </div>
   `;
+}
+function generatePayrollReport(period) {
+  const records = state.payroll.filter(p => p.period === period).sort((a,b)=>{
+    const ea=getEmployee(a.employeeId), eb=getEmployee(b.employeeId);
+    return (ea?.department||'').localeCompare(eb?.department||'') || (ea?.firstName||'').localeCompare(eb?.firstName||'');
+  });
+  if (records.length===0) { toast('No payroll data for that period', 'error'); return; }
+  const c = state.settings;
+  const [y,mo] = period.split('-');
+  const monthName = new Date(+y, +mo-1, 1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  const totals = records.reduce((s,p)=>{ s.base+=p.base; s.bonus+=p.bonus||0; s.ded+=p.deductions||0; s.net+=p.net; return s; }, {base:0,bonus:0,ded:0,net:0});
+
+  // Department breakdown
+  const byDept = {};
+  records.forEach(p => {
+    const e = getEmployee(p.employeeId);
+    const k = e?.department || 'General';
+    if (!byDept[k]) byDept[k] = { count:0, base:0, bonus:0, ded:0, net:0 };
+    byDept[k].count++;
+    byDept[k].base += p.base;
+    byDept[k].bonus += p.bonus||0;
+    byDept[k].ded   += p.deductions||0;
+    byDept[k].net   += p.net;
+  });
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Payroll Report — ${escapeHTML(monthName)}</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; color:#2a1f15; padding:36px; background:#fbf7f1; max-width:1100px; margin:0 auto; }
+    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:18px; border-bottom:2px solid #6e4220; margin-bottom:24px; }
+    .head h1 { margin:0; font-size:22px; color:#6e4220; }
+    .head .sub { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.12em; margin-top:4px; }
+    .head img { width:64px; height:64px; object-fit:contain; }
+    .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0; }
+    .stat { background:white; border:1px solid #e8dcc4; border-radius:10px; padding:14px; }
+    .stat .lbl { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.06em; }
+    .stat .val { font-size:22px; color:#2a1f15; font-weight:700; margin-top:4px; }
+    table { width:100%; border-collapse:collapse; background:white; margin-bottom:24px; border-radius:10px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.03); }
+    th { text-align:left; padding:10px 14px; background:#fbf6ef; color:#6b5a3f; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid #e8dcc4; }
+    td { padding:11px 14px; border-bottom:1px solid #f4e8d4; font-size:13px; }
+    tr.total td { font-weight:700; background:#fbf6ef; color:#6e4220; border-top:2px solid #6e4220; border-bottom:none; font-size:14px; }
+    .pos { color:#047857; }
+    .neg { color:#b91c1c; }
+    h2 { color:#6e4220; font-size:16px; margin:30px 0 12px; padding-bottom:6px; border-bottom:1px solid #e8dcc4; }
+    .footer { margin-top:24px; padding-top:14px; border-top:1px solid #e8dcc4; font-size:11px; color:#6b5a3f; text-align:center; }
+    .actions { margin-bottom:18px; }
+    .btn { background:#6e4220; color:white; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:inherit; margin-right:8px; }
+    .btn-ghost { background:white; color:#6e4220; border:1px solid #6e4220; }
+    @media print { .actions { display:none; } body { padding:24px; background:white; } @page { size:A4; margin:14mm; } }
+    .right { text-align:right; }
+  </style></head><body>
+  <div class="actions">
+    <button class="btn" onclick="window.print()">Print or Save as PDF</button>
+    <button class="btn btn-ghost" onclick="window.close()">Close</button>
+  </div>
+  <div class="head">
+    <div>
+      <h1>${escapeHTML(c.companyName)}</h1>
+      <div class="sub">Payroll Report — ${escapeHTML(monthName)}</div>
+    </div>
+    <img src="${window.location.href.replace(/[^/]*$/,'')}logo.png" alt="" onerror="this.style.display='none'" />
+  </div>
+
+  <div class="summary">
+    <div class="stat"><div class="lbl">Employees paid</div><div class="val">${records.length}</div></div>
+    <div class="stat"><div class="lbl">Total base</div><div class="val">${fmtMoney(totals.base)}</div></div>
+    <div class="stat"><div class="lbl">Total bonus</div><div class="val pos">+${fmtMoney(totals.bonus)}</div></div>
+    <div class="stat"><div class="lbl">Total net</div><div class="val">${fmtMoney(totals.net)}</div></div>
+  </div>
+
+  <h2>Department breakdown</h2>
+  <table>
+    <thead><tr><th>Department</th><th>Headcount</th><th class="right">Base</th><th class="right">Bonus</th><th class="right">Deductions</th><th class="right">Net</th></tr></thead>
+    <tbody>
+      ${Object.entries(byDept).map(([k,v])=>`
+        <tr><td>${escapeHTML(k)}</td><td>${v.count}</td><td class="right">${fmtMoney(v.base)}</td><td class="right pos">+${fmtMoney(v.bonus)}</td><td class="right neg">-${fmtMoney(v.ded)}</td><td class="right"><strong>${fmtMoney(v.net)}</strong></td></tr>
+      `).join('')}
+      <tr class="total"><td>Total</td><td>${records.length}</td><td class="right">${fmtMoney(totals.base)}</td><td class="right">+${fmtMoney(totals.bonus)}</td><td class="right">-${fmtMoney(totals.ded)}</td><td class="right">${fmtMoney(totals.net)}</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Detailed payslips</h2>
+  <table>
+    <thead><tr><th>#</th><th>Employee</th><th>Department</th><th>Role</th><th class="right">Base</th><th class="right">Bonus</th><th class="right">Deductions</th><th class="right">Net</th><th>Paid on</th></tr></thead>
+    <tbody>
+      ${records.map((p,i)=>{
+        const e = getEmployee(p.employeeId);
+        return `<tr>
+          <td>${i+1}</td>
+          <td><strong>${escapeHTML(e?.firstName+' '+e?.lastName||'—')}</strong></td>
+          <td>${escapeHTML(e?.department||'')}</td>
+          <td>${escapeHTML(e?.role||'')}</td>
+          <td class="right">${fmtMoney(p.base)}</td>
+          <td class="right pos">+${fmtMoney(p.bonus||0)}</td>
+          <td class="right neg">-${fmtMoney(p.deductions||0)}</td>
+          <td class="right"><strong>${fmtMoney(p.net)}</strong></td>
+          <td>${fmtDate(p.paidAt)}</td>
+        </tr>`;
+      }).join('')}
+      <tr class="total"><td colspan="4">Total — ${records.length} payslip(s)</td><td class="right">${fmtMoney(totals.base)}</td><td class="right">+${fmtMoney(totals.bonus)}</td><td class="right">-${fmtMoney(totals.ded)}</td><td class="right">${fmtMoney(totals.net)}</td><td></td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">${escapeHTML(c.companyName)} • Payroll report for ${escapeHTML(monthName)} • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  win.document.write(html); win.document.close();
 }
 function openPayslip(payrollId) {
   const p = state.payroll.find(x => x.id===payrollId);
@@ -1691,21 +2244,52 @@ function openPayslip(payrollId) {
 }
 
 async function runPayroll() {
-  const ym = new Date().toISOString().slice(0,7);
+  const defaultYm = new Date().toISOString().slice(0,7);
+  const ym = prompt(`Run payroll for which month? (YYYY-MM)`, defaultYm);
+  if (!ym) return;
+  if (!/^\d{4}-\d{2}$/.test(ym)) { toast('Invalid format. Use YYYY-MM', 'error'); return; }
   if (state.payroll.some(p => p.period===ym)) {
     if (!confirm(`Payroll for ${ym} already exists. Run again (will duplicate)?`)) return;
   }
-  const rows = state.employees.map(e => ({
-    employee_id: e.id, period: ym,
-    base: e.salary, bonus: 0, deductions: 0,
-    net: e.salary, status: 'paid', paid_at: todayISO()
-  }));
+  const advancesUsed = []; // track which advances we mark as paid back
+  const rows = state.employees.map(e => {
+    // Sum any approved, not-yet-repaid advances for this employee that should be deducted
+    const empAdvances = (state.advances||[]).filter(a =>
+      a.employeeId === e.id &&
+      a.status === 'approved' &&
+      !a.repaidAt &&
+      (a.deductFromPayroll === 'next' || a.deductFromPayroll === 'installments')
+    );
+    const advanceDeduction = empAdvances.reduce((s,a)=>{
+      // For installments, take half of amount; for 'next', take full amount
+      return s + (a.deductFromPayroll==='installments' ? Number(a.amount)/2 : Number(a.amount));
+    },0);
+    empAdvances.forEach(a => advancesUsed.push(a.id));
+    const base = e.salary;
+    const bonus = 0;
+    const deductions = Math.round(advanceDeduction*100)/100;
+    const net = Math.max(0, base + bonus - deductions);
+    return {
+      employee_id: e.id, period: ym,
+      base, bonus, deductions,
+      net, status: 'paid', paid_at: todayISO()
+    };
+  });
   if (rows.length === 0) { toast('No employees to pay', 'error'); return; }
   const { data, error } = await sb.from('payroll').insert(rows).select();
   if (error) { toast(error.message, 'error'); return; }
   (data || []).forEach(r => state.payroll.unshift(mapPayrollFromDb(r)));
+
+  // Mark "deduct from next payroll" advances as repaid
+  state.advances.forEach(a => {
+    if (advancesUsed.includes(a.id) && a.deductFromPayroll === 'next' && !a.repaidAt) {
+      a.repaidAt = todayISO();
+    }
+  });
+  saveLocalData();
   render();
-  toast(`Payroll run for ${ym} — ${rows.length} payslips generated`, 'success');
+  toast(`Payroll run for ${ym} — ${rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:''), 'success');
+  if (confirm('Open the payroll report for this period?')) generatePayrollReport(ym);
 }
 
 /* -------------------- REPORTS -------------------- */
@@ -2224,6 +2808,943 @@ function exportCSV(kind) {
   toast('Exported '+filename, 'success');
 }
 
+/* ============================================================
+   ============== V2 FEATURES =================================
+   Warnings • Salary Advances • Certificates • Documents (IQAMA/Baladiya) • Archive • Payroll Report
+   All persisted to localStorage via saveLocalData().
+============================================================ */
+
+/* -------------------- WARNINGS -------------------- */
+let warningFilter = { emp:'all', severity:'all' };
+function renderWarnings() {
+  const admin = isAdmin();
+  const me = currentEmployee();
+  const list = (state.warnings||[]).slice().sort((a,b)=>b.issuedAt.localeCompare(a.issuedAt));
+  const visible = admin
+    ? list.filter(w => (warningFilter.emp==='all'||w.employeeId===warningFilter.emp) && (warningFilter.severity==='all'||w.severity===warningFilter.severity))
+    : list.filter(w => w.employeeId===me.id);
+
+  // Per-employee count summary (admin only)
+  const countByEmp = {};
+  list.forEach(w => { countByEmp[w.employeeId] = (countByEmp[w.employeeId]||0)+1; });
+  const topOffenders = state.employees
+    .map(e => ({ e, count: countByEmp[e.id]||0 }))
+    .filter(x => x.count > 0)
+    .sort((a,b)=>b.count-a.count)
+    .slice(0,5);
+
+  const myCount = list.filter(w=>w.employeeId===me.id).length;
+  const sevColors = { verbal:'badge-slate', written:'badge-amber', final:'badge-red' };
+
+  return `
+    <!-- Header / hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c44a4a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-rose-700 font-semibold flex items-center gap-2">${icon('warning','w-3.5 h-3.5')} Disciplinary Records</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('warnings'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">${admin ? 'Issue, review, and track formal warnings across the team.' : 'Your record of any formal warnings issued to you.'}</p>
+        </div>
+        ${admin ? `<button onclick="openWarningModal()" class="btn btn-accent">${icon('plus','w-4 h-4')} ${escapeHTML(t('issue_warning'))}</button>` : ''}
+      </div>
+    </div>
+
+    ${admin ? `
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Total warnings</div>
+        <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${list.length}</div>
+        <div class="text-xs text-slate-400 mt-1">${list.filter(w=>w.severity==='final').length} final</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Last 30 days</div>
+        <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${list.filter(w => daysUntil(w.issuedAt) >= -30).length}</div>
+        <div class="text-xs text-slate-400 mt-1">issued recently</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Top by count</div>
+        <div class="space-y-2 mt-2">
+          ${topOffenders.length === 0 ? '<div class="text-sm text-slate-400">No warnings yet — nice work, team.</div>' :
+            topOffenders.map(x => `
+            <div class="flex items-center gap-2">
+              ${avatarHTML(x.e,24)}
+              <span class="text-sm text-slate-700 flex-1 truncate">${escapeHTML(x.e.firstName+' '+x.e.lastName)}</span>
+              <span class="badge badge-red">${x.count}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>
+    ` : `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">${icon('warning','w-6 h-6')}</div>
+      <div class="flex-1">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Your warnings</div>
+        <div class="font-display text-2xl font-semibold text-slate-900">${myCount}</div>
+      </div>
+      ${myCount === 0 ? '<span class="badge badge-green">Clean record ✓</span>' : ''}
+    </div>
+    `}
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="flex items-center justify-between p-5 border-b border-slate-100 flex-wrap gap-3">
+        <h3 class="font-display text-lg font-semibold text-slate-900">${admin ? 'All warnings' : 'My warnings'}</h3>
+        ${admin ? `
+        <div class="flex gap-2 flex-wrap">
+          <select class="input !py-2" onchange="warningFilter.emp=this.value; render();">
+            <option value="all">All employees</option>
+            ${state.employees.map(e=>`<option value="${e.id}" ${warningFilter.emp===e.id?'selected':''}>${escapeHTML(e.firstName+' '+e.lastName)}</option>`).join('')}
+          </select>
+          <select class="input !py-2" onchange="warningFilter.severity=this.value; render();">
+            <option value="all">All severities</option>
+            <option value="verbal" ${warningFilter.severity==='verbal'?'selected':''}>Verbal</option>
+            <option value="written" ${warningFilter.severity==='written'?'selected':''}>Written</option>
+            <option value="final" ${warningFilter.severity==='final'?'selected':''}>Final</option>
+          </select>
+        </div>` : ''}
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>${admin?'<th>Employee</th>':''}<th>${escapeHTML(t('type'))}</th><th>${escapeHTML(t('severity'))}</th><th>Date</th><th>Reason</th><th>Issued by</th>${admin?'<th class="!text-end">Actions</th>':'<th class="!text-end">View</th>'}</tr></thead>
+          <tbody>
+            ${visible.length===0 ? `<tr><td colspan="${admin?7:6}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              visible.map(w => {
+                const e = getEmployee(w.employeeId);
+                const issuer = getEmployee(w.issuedBy);
+                return `
+                <tr class="hover-row">
+                  ${admin?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e?.firstName+' '+e?.lastName||'Unknown')}</span></div></td>`:''}
+                  <td class="text-slate-700">${escapeHTML(w.type||'General')}</td>
+                  <td><span class="badge ${sevColors[w.severity]||'badge-slate'}">${escapeHTML(w.severity||'verbal')}</span></td>
+                  <td class="text-slate-600">${fmtDate(w.date)}</td>
+                  <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML(w.reason||'')}">${escapeHTML(w.reason||'—')}</td>
+                  <td class="text-slate-500 text-xs">${escapeHTML(issuer?(issuer.firstName+' '+issuer.lastName):'—')}</td>
+                  <td class="!text-end whitespace-nowrap">
+                    <button onclick="printWarningLetter('${w.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Print letter">${icon('file','w-4 h-4')}</button>
+                    ${admin ? `<button onclick="deleteWarning('${w.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
+                  </td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function openWarningModal() {
+  const me = currentEmployee();
+  const form = `
+    <div class="grid grid-cols-2 gap-4">
+      <div class="col-span-2">
+        <label class="label">Employee</label>
+        <select id="w-emp" class="input">
+          ${state.employees.map(e=>`<option value="${e.id}">${escapeHTML(e.firstName+' '+e.lastName)} — ${escapeHTML(e.role)}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="label">Severity</label>
+        <select id="w-sev" class="input">
+          <option value="verbal">Verbal warning</option>
+          <option value="written" selected>Written warning</option>
+          <option value="final">Final written warning</option>
+        </select>
+      </div>
+      <div>
+        <label class="label">Type / Category</label>
+        <input id="w-type" class="input" list="w-types" placeholder="e.g. Tardiness">
+        <datalist id="w-types">
+          <option value="Tardiness"><option value="Absenteeism"><option value="Misconduct">
+          <option value="Insubordination"><option value="Performance"><option value="Policy violation">
+          <option value="Safety violation"><option value="Other">
+        </datalist>
+      </div>
+      <div>
+        <label class="label">Date of incident</label>
+        <input id="w-date" class="input" type="date" value="${todayISO()}">
+      </div>
+      <div>
+        <label class="label">Issued by</label>
+        <input class="input" disabled value="${escapeHTML(me.firstName+' '+me.lastName)}">
+      </div>
+      <div class="col-span-2">
+        <label class="label">Reason / Description</label>
+        <textarea id="w-reason" class="input" rows="3" placeholder="Describe the incident clearly and factually..."></textarea>
+      </div>
+      <div class="col-span-2">
+        <label class="label">Notes / Corrective action</label>
+        <textarea id="w-notes" class="input" rows="2" placeholder="Expected behavior going forward, consequences if repeated..."></textarea>
+      </div>
+    </div>
+  `;
+  openModal(t('issue_warning'), form, () => {
+    const w = {
+      id: uid(),
+      employeeId: $('#w-emp').value,
+      severity:   $('#w-sev').value,
+      type:       $('#w-type').value.trim() || 'General',
+      date:       $('#w-date').value || todayISO(),
+      reason:     $('#w-reason').value.trim(),
+      notes:      $('#w-notes').value.trim(),
+      issuedBy:   me.id,
+      issuedAt:   new Date().toISOString(),
+    };
+    if (!w.employeeId || !w.reason) { toast('Employee and reason are required', 'error'); return false; }
+    state.warnings.push(w);
+    saveLocalData();
+    render();
+    toast('Warning issued', 'success');
+    if (confirm('Open the warning letter for printing?')) printWarningLetter(w.id);
+    return true;
+  });
+}
+function deleteWarning(id) {
+  if (!confirm('Delete this warning record? This action cannot be undone.')) return;
+  state.warnings = state.warnings.filter(w => w.id !== id);
+  saveLocalData();
+  render();
+  toast('Warning deleted', 'success');
+}
+function printWarningLetter(id) {
+  const w = (state.warnings||[]).find(x => x.id===id);
+  if (!w) return;
+  const e = getEmployee(w.employeeId);
+  const issuer = getEmployee(w.issuedBy);
+  const c = state.settings;
+  const sevTitle = { verbal:'Verbal Warning', written:'Written Warning', final:'Final Written Warning' }[w.severity] || 'Warning Notice';
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Warning — ${escapeHTML(e.firstName+' '+e.lastName)}</title>
+  <style>
+    body { font-family: 'Times New Roman', Georgia, serif; color:#2a1f15; padding:48px; background:#fbf7f1; max-width:780px; margin:0 auto; line-height:1.6; }
+    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:18px; border-bottom:3px double #6e4220; margin-bottom:24px; }
+    .head img { width:64px; height:64px; object-fit:contain; }
+    .head h1 { margin:0; font-size:22px; color:#6e4220; letter-spacing:1px; }
+    .head .sub { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.12em; margin-top:4px; }
+    .stamp { display:inline-block; padding:8px 18px; border:2px solid #b91c1c; color:#b91c1c; font-weight:700; font-size:12px; letter-spacing:0.18em; text-transform:uppercase; transform:rotate(-3deg); }
+    .meta { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin:24px 0; padding:16px; background:white; border:1px solid #e8dcc4; border-radius:8px; }
+    .meta .lbl { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.06em; }
+    .meta .val { font-size:14px; color:#2a1f15; font-weight:600; margin-top:2px; }
+    h2 { color:#6e4220; font-size:18px; margin:24px 0 8px; }
+    .body { background:white; padding:20px; border:1px solid #e8dcc4; border-radius:8px; }
+    .sign { margin-top:48px; display:grid; grid-template-columns:1fr 1fr; gap:48px; }
+    .sign .line { border-top:1.5px solid #2a1f15; padding-top:6px; font-size:12px; color:#6b5a3f; }
+    .footer { margin-top:36px; padding-top:12px; border-top:1px solid #e8dcc4; font-size:11px; color:#6b5a3f; text-align:center; }
+    .actions { margin-bottom:18px; }
+    .btn { background:#6e4220; color:white; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:Inter,sans-serif; }
+    @media print { .actions { display:none; } body { padding:24px; background:white; } }
+  </style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="head">
+    <div>
+      <h1>${escapeHTML(c.companyName)}</h1>
+      <div class="sub">Human Resources Department</div>
+    </div>
+    <img src="${window.location.href.replace(/[^/]*$/,'')}logo.png" alt="" onerror="this.style.display='none'" />
+  </div>
+  <div style="text-align:center; margin:8px 0 18px"><span class="stamp">${escapeHTML(sevTitle)}</span></div>
+  <div class="meta">
+    <div><div class="lbl">Issued to</div><div class="val">${escapeHTML(e.firstName+' '+e.lastName)}</div><div style="font-size:12px;color:#6b5a3f">${escapeHTML(e.role)} · ${escapeHTML(e.department)}</div></div>
+    <div><div class="lbl">Date of incident</div><div class="val">${fmtDate(w.date)}</div></div>
+    <div><div class="lbl">Category</div><div class="val">${escapeHTML(w.type)}</div></div>
+    <div><div class="lbl">Issued on</div><div class="val">${fmtDate(w.issuedAt.slice(0,10))}</div></div>
+  </div>
+  <p>Dear ${escapeHTML(e.firstName)},</p>
+  <p>This letter serves as a formal <strong>${escapeHTML(sevTitle.toLowerCase())}</strong> regarding the following incident:</p>
+  <h2>Description of incident</h2>
+  <div class="body">${escapeHTML(w.reason).replace(/\n/g,'<br>')}</div>
+  ${w.notes ? `<h2>Expected corrective action</h2><div class="body">${escapeHTML(w.notes).replace(/\n/g,'<br>')}</div>` : ''}
+  <p style="margin-top:18px">Please consider this notice as an opportunity to address and improve the matter described above. Continued occurrences of this nature may result in further disciplinary action, up to and including termination of employment.</p>
+  <p>If you wish to provide a written response, please submit it to the HR department within five (5) working days of receipt.</p>
+  <div class="sign">
+    <div><div class="line">${escapeHTML((issuer?(issuer.firstName+' '+issuer.lastName):'') + ' — Issuing manager')}</div></div>
+    <div><div class="line">Employee acknowledgment &amp; signature</div></div>
+  </div>
+  <div class="footer">${escapeHTML(c.companyName)} • Confidential personnel record • Generated ${new Date().toLocaleDateString()}</div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  win.document.write(html); win.document.close();
+}
+
+/* -------------------- SALARY ADVANCES -------------------- */
+let advTab = 'mine';
+function renderAdvances() {
+  const me = currentEmployee();
+  const admin = isAdmin();
+  if (!admin) advTab = 'mine';
+  const all = (state.advances||[]).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
+  const mine = all.filter(a => a.employeeId === me.id);
+  const pending = all.filter(a => a.status==='pending');
+  const rows = advTab==='mine' ? mine : advTab==='pending' ? pending : all;
+  const myApproved = mine.filter(a => a.status==='approved').reduce((s,a)=>s+Number(a.amount||0),0);
+  const myPending  = mine.filter(a => a.status==='pending') .reduce((s,a)=>s+Number(a.amount||0),0);
+  const totalOutstanding = all.filter(a => a.status==='approved' && !a.repaidAt).reduce((s,a)=>s+Number(a.amount||0),0);
+
+  const tabs = admin ? `
+    <div class="flex gap-1 border-b border-slate-200 mb-5">
+      <div class="tab ${advTab==='mine'?'active':''}" onclick="advTab='mine'; render();">My Advances</div>
+      <div class="tab ${advTab==='pending'?'active':''}" onclick="advTab='pending'; render();">Pending ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</div>
+      <div class="tab ${advTab==='all'?'active':''}" onclick="advTab='all'; render();">All History</div>
+    </div>` : '';
+
+  const stats = admin ? `
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      ${miniStat('Total outstanding', fmtMoney(totalOutstanding), 'cash', 'amber')}
+      ${miniStat('Pending requests', pending.length, 'clock', 'amber')}
+      ${miniStat('Approved (all-time)', all.filter(a=>a.status==='approved').length, 'check', 'green')}
+      ${miniStat('Rejected (all-time)', all.filter(a=>a.status==='rejected').length, 'close', 'red')}
+    </div>
+  ` : `
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+      ${miniStat('My approved', fmtMoney(myApproved), 'cash', 'green')}
+      ${miniStat('My pending',  fmtMoney(myPending),  'clock', 'amber')}
+      ${miniStat('Salary',      fmtMoney(me.salary),  'wallet', 'blue')}
+    </div>
+  `;
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Salary Advances</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('advances'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">${admin ? 'Review and approve employee advance requests. Approved advances can be deducted from the next payroll cycle.' : 'Need a portion of your salary early? Submit a request below.'}</p>
+        </div>
+        <button onclick="openAdvanceModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('request_advance'))}</button>
+      </div>
+    </div>
+
+    ${tabs}
+    ${stats}
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="p-5 border-b border-slate-100 flex justify-between items-center">
+        <h3 class="font-display text-lg font-semibold text-slate-900">${advTab==='mine'?'My Requests':advTab==='pending'?'Pending Approvals':'All Requests'}</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>${admin && advTab!=='mine'?'<th>Employee</th>':''}<th>${escapeHTML(t('amount'))}</th><th>${escapeHTML(t('reason'))}</th><th>Requested</th><th>Status</th><th>Decision</th><th>Repaid</th>${admin?'<th class="!text-end">Action</th>':''}</tr></thead>
+          <tbody>
+            ${rows.length===0 ? `<tr><td colspan="${admin?8:6}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              rows.map(a => {
+                const e = getEmployee(a.employeeId);
+                return `
+                <tr class="hover-row">
+                  ${admin && advTab!=='mine'?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e?.firstName+' '+e?.lastName)}</span></div></td>`:''}
+                  <td class="font-bold text-slate-900">${fmtMoney(a.amount)}</td>
+                  <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML(a.reason||'')}">${escapeHTML(a.reason||'—')}</td>
+                  <td class="text-slate-500 text-xs">${fmtDate(a.requestedAt)}</td>
+                  <td>${statusBadge(a.status)}</td>
+                  <td class="text-slate-500 text-xs">${a.decidedAt?fmtDate(a.decidedAt):'—'}</td>
+                  <td>${a.repaidAt ? `<span class="badge badge-green">Repaid ${fmtDate(a.repaidAt)}</span>` : a.status==='approved' ? '<span class="badge badge-amber">Outstanding</span>' : '—'}</td>
+                  ${admin ? `<td class="!text-end whitespace-nowrap">
+                    ${a.status==='pending'?`
+                      <button onclick="decideAdvance('${a.id}','approved')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} ${escapeHTML(t('approve'))}</button>
+                      <button onclick="decideAdvance('${a.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
+                    `: a.status==='approved' && !a.repaidAt ? `<button onclick="markAdvanceRepaid('${a.id}')" class="btn btn-sm btn-ghost">${icon('check','w-4 h-4')} Mark repaid</button>` : '<span class="text-xs text-slate-400">—</span>'}
+                  </td>`:''}
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function openAdvanceModal() {
+  const me = currentEmployee();
+  const admin = isAdmin();
+  const form = `
+    ${admin ? `
+    <div class="mb-4">
+      <label class="label">Employee</label>
+      <select id="adv-emp" class="input">
+        <option value="${me.id}">${escapeHTML(me.firstName+' '+me.lastName)} (me)</option>
+        ${state.employees.filter(e=>e.id!==me.id).map(e=>`<option value="${e.id}">${escapeHTML(e.firstName+' '+e.lastName)} — salary ${fmtMoney(e.salary)}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="label">Amount (${state.settings.currency})</label>
+        <input id="adv-amt" class="input" type="number" min="50" step="50" placeholder="500">
+        <div class="text-xs text-slate-500 mt-1">Suggestion: max 50% of monthly salary</div>
+      </div>
+      <div>
+        <label class="label">Repayment plan</label>
+        <select id="adv-deduct" class="input">
+          <option value="next" selected>Deduct from next payroll</option>
+          <option value="installments">Spread over 2 months</option>
+          <option value="manual">Manual repayment</option>
+        </select>
+      </div>
+      <div class="col-span-2">
+        <label class="label">Reason</label>
+        <textarea id="adv-reason" class="input" rows="3" placeholder="Briefly describe what the advance is for..."></textarea>
+      </div>
+    </div>
+    <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 mt-4">
+      ${icon('warning','w-4 h-4 inline')} The amount will be tracked and (when configured) automatically deducted from the next payroll run after approval.
+    </div>
+  `;
+  openModal(t('request_advance'), form, () => {
+    const empId = admin ? ($('#adv-emp')?.value || me.id) : me.id;
+    const amount = Number($('#adv-amt').value)||0;
+    const deduct = $('#adv-deduct').value;
+    const reason = $('#adv-reason').value.trim();
+    if (amount <= 0) { toast('Enter a valid amount', 'error'); return false; }
+    if (!reason) { toast('Please provide a reason', 'error'); return false; }
+    const a = {
+      id: uid(), employeeId: empId, amount, reason,
+      requestedAt: todayISO(), status: 'pending',
+      deductFromPayroll: deduct, decidedBy: null, decidedAt: null, repaidAt: null,
+    };
+    state.advances.push(a);
+    saveLocalData();
+    render();
+    toast('Advance request submitted', 'success');
+    return true;
+  });
+}
+function decideAdvance(id, decision) {
+  const a = state.advances.find(x => x.id===id);
+  if (!a) return;
+  const me = currentEmployee();
+  a.status = decision;
+  a.decidedBy = me.id;
+  a.decidedAt = todayISO();
+  saveLocalData();
+  render();
+  toast(`Advance ${decision}`, 'success');
+}
+function markAdvanceRepaid(id) {
+  const a = state.advances.find(x => x.id===id);
+  if (!a) return;
+  a.repaidAt = todayISO();
+  saveLocalData();
+  render();
+  toast('Marked as repaid', 'success');
+}
+
+/* -------------------- CERTIFICATES -------------------- */
+function renderCertificates() {
+  const me = currentEmployee();
+  const admin = isAdmin();
+  const list = (state.certificates||[]).slice().sort((a,b)=>b.issuedAt.localeCompare(a.issuedAt));
+  const visible = admin ? list : list.filter(c => c.employeeId===me.id);
+
+  // Find this month's "Employee of the Month" (if any)
+  const ym = new Date().toISOString().slice(0,7);
+  const eotm = list.find(c => c.type==='employee_of_month' && (c.period||'').slice(0,7) === ym);
+  const eotmEmp = eotm ? getEmployee(eotm.employeeId) : null;
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #d6b475 0%, transparent 70%);"></div>
+      <div class="relative grid grid-cols-1 md:grid-cols-3 gap-5 items-center">
+        <div class="md:col-span-2">
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('award','w-3.5 h-3.5')} Recognition</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('certificates'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">${admin ? 'Recognize great work — issue printable certificates for your team.' : 'Your certificates and achievements. Download them anytime as PDF.'}</p>
+          ${admin ? `<div class="mt-4 flex gap-2 flex-wrap">
+            <button onclick="openCertificateModal('employee_of_month')" class="btn btn-primary">${icon('star','w-4 h-4')} Employee of the Month</button>
+            <button onclick="openCertificateModal('appreciation')" class="btn btn-ghost">${icon('award','w-4 h-4')} Certificate of Appreciation</button>
+            <button onclick="openCertificateModal('completion')" class="btn btn-ghost">${icon('check','w-4 h-4')} Certificate of Completion</button>
+            <button onclick="openCertificateModal('custom')" class="btn btn-ghost">${icon('plus','w-4 h-4')} Custom</button>
+          </div>` : ''}
+        </div>
+        ${eotmEmp ? `
+          <div class="bg-gradient-to-br from-brand-100 to-brand-50 rounded-2xl p-5 border border-brand-200 text-center">
+            <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${new Date().toLocaleDateString(undefined,{month:'long',year:'numeric'})}</div>
+            <div class="text-sm text-slate-500 mt-1">Employee of the Month</div>
+            <div class="mt-3 flex flex-col items-center">
+              ${avatarHTML(eotmEmp, 64)}
+              <div class="font-display text-xl font-semibold text-slate-900 mt-2">${escapeHTML(eotmEmp.firstName+' '+eotmEmp.lastName)}</div>
+              <div class="text-xs text-slate-500">${escapeHTML(eotmEmp.role)}</div>
+              <button onclick="printCertificate('${eotm.id}')" class="btn btn-sm btn-primary mt-3">${icon('download','w-4 h-4')} ${escapeHTML(t('download'))}</button>
+            </div>
+          </div>` : `
+          <div class="bg-slate-50 rounded-2xl p-5 border border-slate-200 text-center">
+            <div class="text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">${new Date().toLocaleDateString(undefined,{month:'long',year:'numeric'})}</div>
+            <div class="text-sm text-slate-500 mt-1">Employee of the Month</div>
+            <div class="mt-6 mb-4 text-slate-300">${icon('star','w-12 h-12 mx-auto')}</div>
+            <div class="text-xs text-slate-400">Not yet announced</div>
+          </div>`}
+      </div>
+    </div>
+
+    <!-- Cards grid -->
+    ${visible.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('award','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">No certificates yet</h3>
+        <p class="text-sm text-slate-500 mt-1">${admin ? 'Issue your first certificate to recognize someone on the team.' : 'When you receive a certificate, it will appear here.'}</p>
+      </div>
+    ` : `
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        ${visible.map(c => {
+          const e = getEmployee(c.employeeId);
+          const typeLabels = { employee_of_month:'Employee of the Month', appreciation:'Certificate of Appreciation', completion:'Certificate of Completion', custom:'Custom Certificate' };
+          const typeLabel = typeLabels[c.type] || 'Certificate';
+          return `
+            <div class="bg-white rounded-2xl shadow-card overflow-hidden hover:shadow-pop transition-all hover:-translate-y-0.5">
+              <div class="p-5 border-b-2 border-brand-100" style="background:linear-gradient(135deg,#fbf6ef 0%,#f4e8d4 100%)">
+                <div class="flex items-start justify-between">
+                  <div>
+                    <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${escapeHTML(typeLabel)}</div>
+                    <div class="font-display text-lg font-semibold text-slate-900 mt-1">${escapeHTML(c.title || typeLabel)}</div>
+                  </div>
+                  <div class="w-10 h-10 rounded-full bg-brand-200/50 text-brand-700 flex items-center justify-center">${icon(c.type==='employee_of_month'?'star':'award','w-5 h-5')}</div>
+                </div>
+              </div>
+              <div class="p-5">
+                <div class="flex items-center gap-3 mb-3">
+                  ${avatarHTML(e,40)}
+                  <div class="min-w-0">
+                    <div class="font-medium text-slate-900 truncate">${escapeHTML(e?.firstName+' '+e?.lastName)}</div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML(e?.role||'')}</div>
+                  </div>
+                </div>
+                <div class="text-xs text-slate-500 mb-3">${c.period? 'For '+escapeHTML(c.period)+' · ' : ''}Issued ${fmtDate(c.issuedAt)}</div>
+                <div class="flex gap-2">
+                  <button onclick="printCertificate('${c.id}')" class="btn btn-sm btn-primary flex-1 justify-center">${icon('download','w-4 h-4')} ${escapeHTML(t('download'))}</button>
+                  ${admin ? `<button onclick="deleteCertificate('${c.id}')" class="btn btn-sm btn-ghost">${icon('trash','w-4 h-4')}</button>` : ''}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `}
+  `;
+}
+function openCertificateModal(type) {
+  const me = currentEmployee();
+  const titles = {
+    employee_of_month: 'Employee of the Month',
+    appreciation:      'Certificate of Appreciation',
+    completion:        'Certificate of Completion',
+    custom:            'Custom Certificate',
+  };
+  const defaultMessages = {
+    employee_of_month: 'In recognition of outstanding performance, dedication, and exceptional contribution to the team.',
+    appreciation:      'For going above and beyond in your role and consistently delivering excellence.',
+    completion:        'For successfully completing the training program with distinction.',
+    custom:            '',
+  };
+  const ym = new Date().toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  const form = `
+    <div class="grid grid-cols-2 gap-4">
+      <div class="col-span-2">
+        <label class="label">Award to</label>
+        <select id="cert-emp" class="input">
+          ${state.employees.map(e=>`<option value="${e.id}">${escapeHTML(e.firstName+' '+e.lastName)} — ${escapeHTML(e.role)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="col-span-2">
+        <label class="label">Certificate title</label>
+        <input id="cert-title" class="input" value="${escapeHTML(titles[type]||'Certificate')}">
+      </div>
+      <div>
+        <label class="label">Type</label>
+        <select id="cert-type" class="input">
+          <option value="employee_of_month" ${type==='employee_of_month'?'selected':''}>Employee of the Month</option>
+          <option value="appreciation" ${type==='appreciation'?'selected':''}>Certificate of Appreciation</option>
+          <option value="completion" ${type==='completion'?'selected':''}>Certificate of Completion</option>
+          <option value="custom" ${type==='custom'?'selected':''}>Custom</option>
+        </select>
+      </div>
+      <div>
+        <label class="label">Period (optional)</label>
+        <input id="cert-period" class="input" value="${type==='employee_of_month'?escapeHTML(ym):''}" placeholder="e.g. May 2026">
+      </div>
+      <div class="col-span-2">
+        <label class="label">Message / Citation</label>
+        <textarea id="cert-msg" class="input" rows="3">${escapeHTML(defaultMessages[type]||'')}</textarea>
+      </div>
+    </div>
+  `;
+  openModal(t('issue_certificate')+': '+(titles[type]||''), form, () => {
+    const c = {
+      id: uid(),
+      employeeId: $('#cert-emp').value,
+      type:       $('#cert-type').value,
+      title:      $('#cert-title').value.trim(),
+      period:     $('#cert-period').value.trim(),
+      message:    $('#cert-msg').value.trim(),
+      issuedBy:   me.id,
+      issuedAt:   todayISO(),
+    };
+    if (!c.employeeId || !c.title) { toast('Recipient and title required', 'error'); return false; }
+    state.certificates.push(c);
+    saveLocalData();
+    render();
+    toast('Certificate issued', 'success');
+    if (confirm('Open the certificate now?')) printCertificate(c.id);
+    return true;
+  });
+}
+function deleteCertificate(id) {
+  if (!confirm('Delete this certificate?')) return;
+  state.certificates = state.certificates.filter(c => c.id !== id);
+  saveLocalData();
+  render();
+  toast('Certificate deleted', 'success');
+}
+function printCertificate(id) {
+  const c = (state.certificates||[]).find(x => x.id===id);
+  if (!c) return;
+  const e = getEmployee(c.employeeId);
+  const issuer = getEmployee(c.issuedBy);
+  const company = state.settings.companyName;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Certificate — ${escapeHTML(e.firstName+' '+e.lastName)}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Cinzel:wght@400;500;600;700&family=Dancing+Script:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family:'Cormorant Garamond', Georgia, serif; margin:0; padding:0; background:#3b2613; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .actions { position:fixed; top:18px; right:18px; z-index:5; }
+    .btn { background:#fbf7f1; color:#3b2613; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:Inter,sans-serif; box-shadow:0 4px 14px rgba(0,0,0,0.25); }
+    .cert {
+      width: 1000px; max-width:96vw; aspect-ratio: 1.414/1;
+      background: linear-gradient(135deg,#fbf6ef 0%,#f4e8d4 100%);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.4);
+      position:relative; padding: 60px 80px;
+      box-sizing:border-box;
+    }
+    .frame { position:absolute; inset:24px; border:3px double #6e4220; pointer-events:none; }
+    .corner { position:absolute; width:60px; height:60px; border:3px solid #c44a4a; }
+    .c-tl { top:36px; left:36px; border-right:none; border-bottom:none; }
+    .c-tr { top:36px; right:36px; border-left:none; border-bottom:none; }
+    .c-bl { bottom:36px; left:36px; border-right:none; border-top:none; }
+    .c-br { bottom:36px; right:36px; border-left:none; border-top:none; }
+    .seal { position:absolute; right:80px; bottom:130px; width:130px; height:130px; border:5px double #c44a4a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:Cinzel,serif; color:#c44a4a; font-size:11px; text-align:center; line-height:1.2; transform:rotate(-6deg); background:rgba(196,74,74,0.05); }
+    .header { text-align:center; }
+    .badge { display:inline-block; padding:6px 22px; border:1.5px solid #6e4220; color:#6e4220; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.4em; text-transform:uppercase; }
+    h1 { font-family:Cinzel,serif; font-size:54px; color:#6e4220; margin:18px 0 6px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
+    .sub { font-family:'Cormorant Garamond',serif; font-size:22px; color:#8a5728; font-style:italic; margin-bottom:24px; }
+    .presented { text-align:center; margin:30px 0 18px; font-size:18px; color:#6b5a3f; letter-spacing:0.2em; text-transform:uppercase; font-family:Cinzel,serif; }
+    .name { text-align:center; font-family:'Dancing Script',cursive; font-size:80px; color:#3b2613; margin:0 0 8px; line-height:1; }
+    .name-rule { width:280px; height:1px; background:#a87035; margin:0 auto 18px; }
+    .body { text-align:center; max-width:680px; margin:0 auto; font-size:18px; color:#2a1f15; line-height:1.6; }
+    .period { text-align:center; margin-top:24px; font-family:Cinzel,serif; font-size:13px; color:#8a5728; letter-spacing:0.3em; text-transform:uppercase; }
+    .signs { display:grid; grid-template-columns:1fr 1fr; gap:80px; margin-top:60px; padding:0 60px; }
+    .sign { text-align:center; }
+    .sign-line { border-top:1.5px solid #2a1f15; padding-top:6px; font-size:13px; color:#6b5a3f; font-family:Inter,sans-serif; }
+    .sign-name { font-family:'Dancing Script',cursive; font-size:28px; color:#3b2613; margin-bottom:-4px; }
+    .company { position:absolute; top:80px; right:100px; text-align:right; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.3em; color:#8a5728; }
+    @media print {
+      .actions { display:none; }
+      body { background:white; min-height:auto; }
+      .cert { box-shadow:none; max-width:none; width:100%; }
+      @page { size: A4 landscape; margin:0; }
+    }
+  </style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="cert">
+    <div class="frame"></div>
+    <div class="corner c-tl"></div><div class="corner c-tr"></div>
+    <div class="corner c-bl"></div><div class="corner c-br"></div>
+    <div class="company">${escapeHTML(company)}</div>
+    <div class="header" style="margin-top:30px">
+      <div class="badge">${escapeHTML(c.type==='employee_of_month'?'Employee of the Month':c.type==='appreciation'?'Appreciation':c.type==='completion'?'Completion':'Recognition')}</div>
+      <h1>${escapeHTML(c.title || 'Certificate')}</h1>
+      <div class="sub">— is hereby awarded to —</div>
+    </div>
+    <div class="name">${escapeHTML(e.firstName+' '+e.lastName)}</div>
+    <div class="name-rule"></div>
+    <div class="presented">In Recognition</div>
+    <div class="body">${escapeHTML(c.message||'For exemplary service and outstanding contribution.')}</div>
+    ${c.period ? `<div class="period">For the period of ${escapeHTML(c.period)}</div>` : ''}
+    <div class="signs">
+      <div class="sign"><div class="sign-name">${escapeHTML(issuer? issuer.firstName+' '+issuer.lastName:'')}</div><div class="sign-line">Issuing Authority</div></div>
+      <div class="sign"><div class="sign-name">${new Date(c.issuedAt).toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'})}</div><div class="sign-line">Date of Issue</div></div>
+    </div>
+    <div class="seal">${escapeHTML(company.split(' ').map(w=>w[0]||'').join('').slice(0,3).toUpperCase())}<br>OFFICIAL<br>SEAL</div>
+  </div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  win.document.write(html); win.document.close();
+}
+
+/* -------------------- DOCUMENTS (IQAMA & Baladiya tracker) -------------------- */
+let docFilter = 'all'; // all | expiring | expired
+function renderDocuments() {
+  const me = currentEmployee();
+  const admin = isAdmin();
+  // Build per-employee summary (admin) or self-only (employee)
+  const sources = admin ? state.employees : state.employees.filter(e => e.id===me.id);
+  const rows = sources.map(e => {
+    const x = getEmpExtras(e.id);
+    const iqamaSt = expiryStatus(x.iqama?.expiry);
+    const balSt   = expiryStatus(x.baladiya?.expiry);
+    const minDays = [iqamaSt.days, balSt.days].filter(d=>d!==null).reduce((a,b)=>a===null?b:Math.min(a,b), null);
+    return { e, x, iqamaSt, balSt, minDays };
+  }).sort((a,b)=> {
+    if (a.minDays === null) return 1;
+    if (b.minDays === null) return -1;
+    return a.minDays - b.minDays;
+  });
+  const filtered = rows.filter(r => {
+    if (docFilter==='all') return true;
+    const min = r.minDays;
+    if (docFilter==='expired') return min !== null && min < 0;
+    if (docFilter==='expiring') return min !== null && min >= 0 && min <= 30;
+    return true;
+  });
+  const expiringCount = rows.filter(r => r.minDays !== null && r.minDays <= 30 && r.minDays >= 0).length;
+  const expiredCount  = rows.filter(r => r.minDays !== null && r.minDays < 0).length;
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c44a4a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-rose-700 font-semibold flex items-center gap-2">${icon('idcard','w-3.5 h-3.5')} Identity &amp; Health Cards</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('documents'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Track resident IDs (IQAMA) and health cards (Baladiya). The system flags documents expiring within 30 days.</p>
+        </div>
+        ${admin ? `<a href="#/employees" class="btn btn-ghost">${icon('users','w-4 h-4')} Manage employees</a>` : ''}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      ${miniStat('Tracked employees', rows.length, 'users', 'blue')}
+      ${miniStat('Expiring (≤30d)', expiringCount, 'warning', 'amber')}
+      ${miniStat('Expired', expiredCount, 'close', 'red')}
+      ${miniStat('All clear', rows.length-expiringCount-expiredCount, 'check', 'green')}
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="flex items-center justify-between p-5 border-b border-slate-100 flex-wrap gap-3">
+        <h3 class="font-display text-lg font-semibold text-slate-900">${admin?'All employees':'My documents'}</h3>
+        <div class="flex gap-2">
+          <button onclick="docFilter='all'; render();" class="btn btn-sm ${docFilter==='all'?'btn-primary':'btn-ghost'}">All</button>
+          <button onclick="docFilter='expiring'; render();" class="btn btn-sm ${docFilter==='expiring'?'btn-primary':'btn-ghost'}">Expiring soon</button>
+          <button onclick="docFilter='expired'; render();" class="btn btn-sm ${docFilter==='expired'?'btn-primary':'btn-ghost'}">Expired</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>
+            <th>Employee</th>
+            <th>${escapeHTML(t('iqama'))} #</th>
+            <th>IQAMA expiry</th>
+            <th>${escapeHTML(t('baladiya'))} #</th>
+            <th>Baladiya expiry</th>
+            <th class="!text-end">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${filtered.length===0 ? `<tr><td colspan="6" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              filtered.map(({e,x,iqamaSt,balSt}) => `
+              <tr class="hover-row">
+                <td><div class="flex items-center gap-3">${avatarHTML(e,32)}<div><div class="font-medium text-slate-900">${escapeHTML(e.firstName+' '+e.lastName)}</div><div class="text-xs text-slate-500">${escapeHTML(e.role)}</div></div></div></td>
+                <td class="font-mono text-sm text-slate-600">${escapeHTML(x.iqama?.number||'—')}</td>
+                <td>${x.iqama?.expiry ? `<div>${fmtDate(x.iqama.expiry)}</div><span class="badge ${iqamaSt.cls}">${escapeHTML(iqamaSt.label)}</span>` : '<span class="badge badge-slate">Not set</span>'}</td>
+                <td class="font-mono text-sm text-slate-600">${escapeHTML(x.baladiya?.number||'—')}</td>
+                <td>${x.baladiya?.expiry ? `<div>${fmtDate(x.baladiya.expiry)}</div><span class="badge ${balSt.cls}">${escapeHTML(balSt.label)}</span>` : '<span class="badge badge-slate">Not set</span>'}</td>
+                <td class="!text-end whitespace-nowrap">
+                  ${admin || e.id===me.id ? `<button onclick="openRenewModal('${e.id}')" class="btn btn-sm btn-ghost">${icon('refresh','w-4 h-4')} ${escapeHTML(t('renew'))}</button>` : ''}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function openRenewModal(empId) {
+  const e = getEmployee(empId);
+  if (!e) return;
+  const x = getEmpExtras(empId);
+  const form = `
+    <div class="text-sm text-slate-600 mb-4">Renewing documents for <strong>${escapeHTML(e.firstName+' '+e.lastName)}</strong>.</div>
+    <div class="grid grid-cols-2 gap-4">
+      <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-1">${escapeHTML(t('iqama'))} — Resident ID</div></div>
+      <div><label class="label">IQAMA number</label><input id="r-iqama-no" class="input" value="${escapeHTML(x.iqama?.number||'')}"></div>
+      <div><label class="label">New expiry date</label><input id="r-iqama-exp" class="input" type="date" value="${escapeHTML(x.iqama?.expiry||'')}"></div>
+      <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-3">${escapeHTML(t('baladiya'))} — Health Card</div></div>
+      <div><label class="label">Baladiya number</label><input id="r-bal-no" class="input" value="${escapeHTML(x.baladiya?.number||'')}"></div>
+      <div><label class="label">New expiry date</label><input id="r-bal-exp" class="input" type="date" value="${escapeHTML(x.baladiya?.expiry||'')}"></div>
+    </div>
+    <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-xs text-emerald-800 mt-4">
+      ${icon('check','w-4 h-4 inline')} Updating an expiry date here counts as a renewal — the previous date is replaced.
+    </div>
+  `;
+  openModal('Renew documents', form, () => {
+    const ex = getEmpExtras(empId);
+    ex.iqama    = { number: $('#r-iqama-no').value.trim(), expiry: $('#r-iqama-exp').value };
+    ex.baladiya = { number: $('#r-bal-no').value.trim(),   expiry: $('#r-bal-exp').value   };
+    saveLocalData();
+    render();
+    toast('Document records updated', 'success');
+    return true;
+  });
+}
+
+/* -------------------- ARCHIVE (templates & company docs) -------------------- */
+let archiveFilter = 'all';
+function renderArchive() {
+  const admin = isAdmin();
+  const docs = (state.archive||[]).slice().sort((a,b)=>b.uploadedAt.localeCompare(a.uploadedAt));
+  const filtered = archiveFilter==='all' ? docs : docs.filter(d=>d.category===archiveFilter);
+  const cats = {
+    'warning_template':   { label: 'Warning Templates',   icon: 'warning', color: 'rose' },
+    'certificate_template':{ label: 'Certificate Templates', icon: 'award',   color: 'amber' },
+    'policy':             { label: 'Policies',             icon: 'shield',  color: 'blue' },
+    'contract':           { label: 'Contracts',            icon: 'file',    color: 'slate' },
+    'training':           { label: 'Training Material',    icon: 'file',    color: 'emerald' },
+    'other':              { label: 'Other',                icon: 'archive', color: 'slate' },
+  };
+  const counts = Object.fromEntries(Object.keys(cats).map(k => [k, docs.filter(d=>d.category===k).length]));
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('archive','w-3.5 h-3.5')} Company Library</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('archive'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Upload warning &amp; certificate templates, policies, contracts, and other company documents. Everyone on the team can read; only admins can upload or delete.</p>
+        </div>
+        ${admin ? `<button onclick="openArchiveUploadModal()" class="btn btn-primary">${icon('upload','w-4 h-4')} ${escapeHTML(t('upload_document'))}</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Category chips -->
+    <div class="flex flex-wrap gap-2 mb-5">
+      <button onclick="archiveFilter='all'; render();" class="btn btn-sm ${archiveFilter==='all'?'btn-primary':'btn-ghost'}">All <span class="ml-1 opacity-70">${docs.length}</span></button>
+      ${Object.entries(cats).map(([k,c]) => `
+        <button onclick="archiveFilter='${k}'; render();" class="btn btn-sm ${archiveFilter===k?'btn-primary':'btn-ghost'}">${escapeHTML(c.label)} <span class="ml-1 opacity-70">${counts[k]||0}</span></button>
+      `).join('')}
+    </div>
+
+    ${filtered.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('archive','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">No documents in this section yet</h3>
+        <p class="text-sm text-slate-500 mt-1">${admin ? 'Upload your first template or document to start the archive.' : 'Documents added by your admin will show up here.'}</p>
+      </div>
+    ` : `
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        ${filtered.map(d => {
+          const meta = cats[d.category] || cats.other;
+          const uploader = getEmployee(d.uploadedBy);
+          const sizeKb = d.size ? (d.size/1024).toFixed(1)+' KB' : '';
+          return `
+          <div class="bg-white rounded-2xl shadow-card overflow-hidden hover:shadow-pop transition-all">
+            <div class="p-4 flex items-start gap-3 border-b border-slate-100">
+              <div class="w-12 h-12 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(meta.icon,'w-6 h-6')}</div>
+              <div class="flex-1 min-w-0">
+                <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(meta.label)}</div>
+                <div class="font-medium text-slate-900 truncate" title="${escapeHTML(d.name)}">${escapeHTML(d.name)}</div>
+                <div class="text-xs text-slate-500 mt-0.5">${escapeHTML(d.mime||'file')} ${sizeKb?'· '+sizeKb:''}</div>
+              </div>
+            </div>
+            ${d.description ? `<div class="px-4 pt-3 text-sm text-slate-600 line-clamp-2">${escapeHTML(d.description)}</div>` : ''}
+            <div class="px-4 py-3 flex items-center justify-between">
+              <div class="text-xs text-slate-500">${fmtDate(d.uploadedAt)} · ${escapeHTML(uploader?.firstName||'—')}</div>
+              <div class="flex gap-1">
+                <button onclick="downloadArchiveDoc('${d.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Download">${icon('download','w-4 h-4')}</button>
+                <button onclick="previewArchiveDoc('${d.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Preview">${icon('eye','w-4 h-4')}</button>
+                ${admin?`<button onclick="deleteArchiveDoc('${d.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100" title="Delete">${icon('trash','w-4 h-4')}</button>`:''}
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+  `;
+}
+let _archiveFile = null;
+function openArchiveUploadModal() {
+  _archiveFile = null;
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Document name</label>
+        <input id="ar-name" class="input" placeholder="e.g. Standard Warning Letter Template">
+      </div>
+      <div>
+        <label class="label">Category</label>
+        <select id="ar-cat" class="input">
+          <option value="warning_template">Warning Letter Template</option>
+          <option value="certificate_template">Certificate Template</option>
+          <option value="policy">Policy</option>
+          <option value="contract">Contract / Employment doc</option>
+          <option value="training">Training material</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label class="label">Description (optional)</label>
+        <textarea id="ar-desc" class="input" rows="2" placeholder="Briefly describe what this document is for..."></textarea>
+      </div>
+      <div>
+        <label class="label">File</label>
+        <input id="ar-file" type="file" class="input" onchange="handleArchiveFile(event)">
+        <div class="text-xs text-slate-500 mt-1">Max 5MB. PDFs, Word, images, and most document types are supported.</div>
+        <div id="ar-preview" class="mt-2 text-sm text-slate-700"></div>
+      </div>
+    </div>
+  `;
+  openModal(t('upload_document'), form, () => {
+    const me = currentEmployee();
+    const name = $('#ar-name').value.trim();
+    const cat  = $('#ar-cat').value;
+    const desc = $('#ar-desc').value.trim();
+    if (!name) { toast('Document name required', 'error'); return false; }
+    if (!_archiveFile) { toast('Please choose a file', 'error'); return false; }
+    state.archive.push({
+      id: uid(), name, category: cat, description: desc,
+      mime: _archiveFile.mime, size: _archiveFile.size,
+      dataUrl: _archiveFile.dataUrl,
+      uploadedBy: me.id, uploadedAt: todayISO(),
+    });
+    saveLocalData();
+    _archiveFile = null;
+    render();
+    toast('Document uploaded to archive', 'success');
+    return true;
+  });
+}
+function handleArchiveFile(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  if (file.size > 5*1024*1024) { toast('File too large (max 5MB)', 'error'); ev.target.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    _archiveFile = { name: file.name, mime: file.type, size: file.size, dataUrl: e.target.result };
+    const p = document.getElementById('ar-preview');
+    if (p) p.innerHTML = `${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)`;
+  };
+  reader.readAsDataURL(file);
+}
+function downloadArchiveDoc(id) {
+  const d = (state.archive||[]).find(x => x.id===id);
+  if (!d) return;
+  const a = document.createElement('a');
+  a.href = d.dataUrl; a.download = d.name;
+  a.click();
+}
+function previewArchiveDoc(id) {
+  const d = (state.archive||[]).find(x => x.id===id);
+  if (!d) return;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked.', 'error'); return; }
+  const isImage = (d.mime||'').startsWith('image/');
+  const isPdf   = (d.mime||'').includes('pdf');
+  if (isImage) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${d.dataUrl}" style="max-width:100%;max-height:100vh"></body>`);
+  else if (isPdf) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${d.dataUrl}" style="width:100vw;height:100vh"></body>`);
+  else win.location.href = d.dataUrl;
+  win.document.close();
+}
+function deleteArchiveDoc(id) {
+  if (!confirm('Delete this document permanently?')) return;
+  state.archive = state.archive.filter(d => d.id !== id);
+  saveLocalData();
+  render();
+  toast('Document deleted', 'success');
+}
+
 /* -------------------- MODAL SYSTEM -------------------- */
 let modalOnSave = null;
 function openModal(title, bodyHTML, onSave) {
@@ -2262,15 +3783,20 @@ function render() {
   const route = getRoute();
   let content = '';
   switch (route) {
-    case 'dashboard':  content = renderDashboard(); break;
-    case 'employees':  content = isAdmin() ? renderEmployees() : renderDashboard(); break;
-    case 'attendance': content = renderAttendance(); break;
-    case 'leave':      content = renderLeave(); break;
-    case 'payroll':    content = renderPayroll(); break;
-    case 'reports':    content = isAdmin() ? renderReports() : renderDashboard(); break;
-    case 'settings':   content = isAdmin() ? renderSettings() : renderDashboard(); break;
-    case 'account':    content = renderAccount(); break;
-    default:           content = renderDashboard();
+    case 'dashboard':    content = renderDashboard(); break;
+    case 'employees':    content = isAdmin() ? renderEmployees() : renderDashboard(); break;
+    case 'attendance':   content = renderAttendance(); break;
+    case 'leave':        content = renderLeave(); break;
+    case 'payroll':      content = renderPayroll(); break;
+    case 'warnings':     content = renderWarnings(); break;
+    case 'advances':     content = renderAdvances(); break;
+    case 'certificates': content = renderCertificates(); break;
+    case 'documents':    content = renderDocuments(); break;
+    case 'archive':      content = renderArchive(); break;
+    case 'reports':      content = isAdmin() ? renderReports() : renderDashboard(); break;
+    case 'settings':     content = isAdmin() ? renderSettings() : renderDashboard(); break;
+    case 'account':      content = renderAccount(); break;
+    default:             content = renderDashboard();
   }
   app.innerHTML = renderShell(content);
 }
