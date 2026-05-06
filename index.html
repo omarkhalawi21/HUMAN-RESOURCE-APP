@@ -520,6 +520,7 @@ const COMMON_NATIONALITIES = [
   'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
 ];
 const SUGGESTED_BRANCHES = ['Khobar', 'Rayyan', 'Faisaliyah'];
+const SUGGESTED_DEPARTMENTS = ['Barista', 'Cashier', 'Operations'];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -1480,7 +1481,7 @@ function renderEmployees() {
     }
     return true;
   });
-  const depts = [...new Set(state.employees.map(e=>e.department))];
+  const depts = [...new Set([...SUGGESTED_DEPARTMENTS, ...state.employees.map(e=>e.department).filter(Boolean)])].sort();
   // Discover branch & nationality values across all employees + suggested branches
   const branchSet = new Set();
   state.employees.forEach(e => { const x = getEmpExtras(e.id); if (x.branch) branchSet.add(x.branch); });
@@ -1962,8 +1963,8 @@ function openEmployeeModal(id) {
           </datalist>
         </div>
         <div><label class="label">Role</label><input id="m-ro" class="input" value="${escapeHTML(editing?.role||'')}"></div>
-        <div><label class="label">Department</label><input id="m-dp" class="input" list="dept-list" value="${escapeHTML(editing?.department||'')}">
-          <datalist id="dept-list">${[...new Set(state.employees.map(e=>e.department))].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
+        <div><label class="label">Department</label><input id="m-dp" class="input" list="dept-list" value="${escapeHTML(editing?.department||'')}" placeholder="e.g. Barista">
+          <datalist id="dept-list">${[...new Set([...SUGGESTED_DEPARTMENTS, ...state.employees.map(e=>e.department).filter(Boolean)])].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
         </div>
         <div><label class="label">Branch</label>
           <input id="m-br" class="input" list="branch-list" value="${escapeHTML(ex.branch||'')}" placeholder="e.g. Khobar">
