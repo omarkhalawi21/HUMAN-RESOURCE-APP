@@ -87,6 +87,23 @@
   .hover-row:hover { background: #fbf6ef; }
   .input { width: 100%; border: 1px solid #e8dcc4; border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; transition: border .15s, box-shadow .15s; background: white; color: #2a1f15; }
   .input:focus { border-color: #a87035; box-shadow: 0 0 0 3px rgba(168,112,53,0.18); }
+  /* Compact pill-style dropdown for filter rows */
+  .pill {
+    width: auto; min-width: 0;
+    border: 1px solid #e8dcc4; border-radius: 999px;
+    padding: 5px 28px 5px 12px; font-size: 12px; font-weight: 500;
+    background: white; color: #4a3922;
+    cursor: pointer; outline: none;
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5a3f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center; background-size: 10px;
+    transition: all .15s;
+  }
+  .pill:hover { border-color: #c8b390; background-color: #fbf6ef; }
+  .pill:focus { border-color: #a87035; box-shadow: 0 0 0 3px rgba(168,112,53,0.18); }
+  .pill.active { background: #6e4220; color: white; border-color: #6e4220; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); }
+  /* Compact pill-style search */
+  .pill-search { border-radius: 999px; padding: 5px 12px 5px 32px; font-size: 12px; background-position: 10px center; }
   .label { font-size: 12px; font-weight: 600; color: #6b5a3f; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; transition: all .15s; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
   .btn-primary { background: #6e4220; color: white; }
@@ -519,7 +536,7 @@ const COMMON_NATIONALITIES = [
   'Bangladeshi', 'Sri Lankan', 'Sudanese', 'Ethiopian', 'Indonesian',
   'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
 ];
-const SUGGESTED_BRANCHES = ['Khobar', 'Rayyan', 'Faisaliyah'];
+const SUGGESTED_BRANCHES = ['HASSAD KHOBAR', 'HASSAD RAYYAN', 'HASSAD FAISALIYAH'];
 const SUGGESTED_DEPARTMENTS = ['Barista', 'Cashier', 'Operations'];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
@@ -1505,22 +1522,22 @@ function renderEmployees() {
           <button onclick="openEmployeeModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
         </div>
       </div>
-      <!-- Filter row -->
+      <!-- Filter row (compact pills) -->
       <div class="px-5 py-3 border-b border-slate-100 bg-slate-50 flex gap-2 flex-wrap items-center">
-        <div class="relative flex-1 min-w-[200px] max-w-sm">
-          <span class="absolute top-1/2 -translate-y-1/2 left-3 text-slate-400">${icon('search','w-4 h-4')}</span>
-          <input class="input !py-2 pl-9" placeholder="Search name, email, phone..." value="${escapeHTML(empFilter.q||'')}" oninput="empFilter.q=this.value; clearTimeout(window._empSearchT); window._empSearchT=setTimeout(render,150);">
+        <div class="relative">
+          <span class="absolute top-1/2 -translate-y-1/2 left-2.5 text-slate-400">${icon('search','w-3.5 h-3.5')}</span>
+          <input class="pill pill-search w-56" placeholder="Search..." value="${escapeHTML(empFilter.q||'')}" oninput="empFilter.q=this.value; clearTimeout(window._empSearchT); window._empSearchT=setTimeout(render,150);">
         </div>
-        <select class="input !py-2" onchange="empFilter.dept=this.value; render();">
-          <option value="all">All departments</option>
+        <select class="pill ${empFilter.dept!=='all'?'active':''}" onchange="empFilter.dept=this.value; render();" title="Department">
+          <option value="all">${empFilter.dept==='all'?'Department':'Dept: '+empFilter.dept}</option>
           ${depts.map(d=>`<option value="${escapeHTML(d)}" ${empFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
         </select>
-        <select class="input !py-2" onchange="empFilter.branch=this.value; render();">
-          <option value="all">All branches</option>
+        <select class="pill ${empFilter.branch!=='all'?'active':''}" onchange="empFilter.branch=this.value; render();" title="Branch">
+          <option value="all">${empFilter.branch==='all'?'Branch':'Branch: '+empFilter.branch}</option>
           ${branches.map(b=>`<option value="${escapeHTML(b)}" ${empFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
         </select>
-        <select class="input !py-2" onchange="empFilter.nationality=this.value; render();">
-          <option value="all">All nationalities</option>
+        <select class="pill ${empFilter.nationality!=='all'?'active':''}" onchange="empFilter.nationality=this.value; render();" title="Nationality">
+          <option value="all">${empFilter.nationality==='all'?'Nationality':'Nat: '+empFilter.nationality}</option>
           ${nationalities.map(n=>`<option value="${escapeHTML(n)}" ${empFilter.nationality===n?'selected':''}>${escapeHTML(n)}</option>`).join('')}
         </select>
       </div>
@@ -1967,10 +1984,19 @@ function openEmployeeModal(id) {
           <datalist id="dept-list">${[...new Set([...SUGGESTED_DEPARTMENTS, ...state.employees.map(e=>e.department).filter(Boolean)])].map(d=>`<option value="${escapeHTML(d)}">`).join('')}</datalist>
         </div>
         <div><label class="label">Branch</label>
-          <input id="m-br" class="input" list="branch-list" value="${escapeHTML(ex.branch||'')}" placeholder="e.g. Khobar">
-          <datalist id="branch-list">
-            ${[...new Set([...(state.branches||[]).map(b=>b.name), ...SUGGESTED_BRANCHES, ...Object.values(state.empExtras||{}).map(x=>x.branch).filter(Boolean)])].map(b=>`<option value="${escapeHTML(b)}">`).join('')}
-          </datalist>
+          ${(() => {
+            const branchOptions = [...new Set([...SUGGESTED_BRANCHES, ...(state.branches||[]).map(b=>b.name), ...Object.values(state.empExtras||{}).map(x=>x.branch).filter(Boolean)])];
+            const cur = ex.branch || '';
+            const isCustom = cur && !branchOptions.includes(cur);
+            return `
+              <select id="m-br" class="input" onchange="if(this.value==='__other__'){const v=prompt('Enter custom branch name:'); if(v){const o=document.createElement('option'); o.value=v; o.text=v; o.selected=true; this.add(o,this.options[this.options.length-1]);} else { this.value=''; }}">
+                <option value="">— Select branch —</option>
+                ${branchOptions.map(b=>`<option value="${escapeHTML(b)}" ${cur===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+                ${isCustom?`<option value="${escapeHTML(cur)}" selected>${escapeHTML(cur)}</option>`:''}
+                <option value="__other__">+ Add custom branch…</option>
+              </select>
+            `;
+          })()}
         </div>
         <div><label class="label">Joining date</label><input id="m-hd" class="input" type="date" value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
         <div><label class="label">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" value="${editing?.salary||0}"></div>
