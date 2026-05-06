@@ -460,6 +460,11 @@ function expiryStatus(dateStr) {
 const DAY_NAMES_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_NAMES_AR = ['أحد','إثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
 function dayNames() { return state.settings.lang === 'ar' ? DAY_NAMES_AR : DAY_NAMES_EN; }
+function logoURL() {
+  // Absolute URL so it loads correctly inside a popup window with about:blank
+  try { return new URL('logo.png', window.location.href).href; }
+  catch(e) { return 'logo.png'; }
+}
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -2088,39 +2093,51 @@ function generatePayrollReport(period) {
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Payroll Report — ${escapeHTML(monthName)}</title>
   <style>
-    body { font-family: Inter, system-ui, sans-serif; color:#2a1f15; padding:36px; background:#fbf7f1; max-width:1100px; margin:0 auto; }
-    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:18px; border-bottom:2px solid #6e4220; margin-bottom:24px; }
-    .head h1 { margin:0; font-size:22px; color:#6e4220; }
-    .head .sub { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.12em; margin-top:4px; }
+    body { font-family: Inter, system-ui, sans-serif; color:#1a1a1a; padding:0; margin:0; background:#f3f4f6; }
+    .page { background:#ffffff; max-width:1100px; margin:24px auto; padding:42px 56px; box-shadow:0 6px 24px rgba(15,23,42,0.08); border-radius:4px; }
+    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:22px; border-bottom:1px solid #e5e7eb; margin-bottom:22px; }
+    .head .brand { display:flex; align-items:center; gap:14px; }
+    .head h1 { margin:0; font-size:22px; color:#111827; font-weight:700; }
+    .head .sub { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.14em; margin-top:4px; }
     .head img { width:64px; height:64px; object-fit:contain; }
+    .head .doc-id { text-align:right; font-size:11px; color:#6b7280; }
+    .head .doc-id .num { font-size:14px; color:#111827; font-weight:700; margin-top:2px; }
     .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0; }
-    .stat { background:white; border:1px solid #e8dcc4; border-radius:10px; padding:14px; }
-    .stat .lbl { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.06em; }
-    .stat .val { font-size:22px; color:#2a1f15; font-weight:700; margin-top:4px; }
-    table { width:100%; border-collapse:collapse; background:white; margin-bottom:24px; border-radius:10px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.03); }
-    th { text-align:left; padding:10px 14px; background:#fbf6ef; color:#6b5a3f; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid #e8dcc4; }
-    td { padding:11px 14px; border-bottom:1px solid #f4e8d4; font-size:13px; }
-    tr.total td { font-weight:700; background:#fbf6ef; color:#6e4220; border-top:2px solid #6e4220; border-bottom:none; font-size:14px; }
+    .stat { background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
+    .stat .lbl { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; }
+    .stat .val { font-size:22px; color:#111827; font-weight:700; margin-top:4px; }
+    table { width:100%; border-collapse:collapse; background:#ffffff; margin-bottom:24px; border-radius:8px; overflow:hidden; border:1px solid #e5e7eb; }
+    th { text-align:left; padding:11px 14px; background:#f9fafb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid #e5e7eb; font-weight:600; }
+    td { padding:11px 14px; border-bottom:1px solid #f3f4f6; font-size:13px; color:#111827; }
+    tr:last-child td { border-bottom:none; }
+    tr.total td { font-weight:700; background:#f9fafb; color:#6e4220; border-top:2px solid #6e4220; font-size:14px; }
     .pos { color:#047857; }
     .neg { color:#b91c1c; }
-    h2 { color:#6e4220; font-size:16px; margin:30px 0 12px; padding-bottom:6px; border-bottom:1px solid #e8dcc4; }
-    .footer { margin-top:24px; padding-top:14px; border-top:1px solid #e8dcc4; font-size:11px; color:#6b5a3f; text-align:center; }
-    .actions { margin-bottom:18px; }
-    .btn { background:#6e4220; color:white; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:inherit; margin-right:8px; }
-    .btn-ghost { background:white; color:#6e4220; border:1px solid #6e4220; }
-    @media print { .actions { display:none; } body { padding:24px; background:white; } @page { size:A4; margin:14mm; } }
+    h2 { color:#111827; font-size:16px; margin:28px 0 12px; padding-bottom:6px; border-bottom:1px solid #e5e7eb; font-weight:700; }
+    .footer { margin-top:24px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:10px; color:#9ca3af; text-align:center; letter-spacing:0.04em; }
+    .actions { position:sticky; top:0; padding:14px 24px; background:#1f2937; text-align:right; z-index:10; }
+    .btn { background:#fff; color:#1f2937; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:inherit; margin-left:8px; }
+    .btn-ghost { background:transparent; color:#fff; border:1px solid #4b5563; }
+    @media print { .actions { display:none; } body { background:#fff; } .page { box-shadow:none; margin:0; max-width:none; padding:14mm 18mm; } @page { size:A4; margin:0; } }
     .right { text-align:right; }
   </style></head><body>
   <div class="actions">
-    <button class="btn" onclick="window.print()">Print or Save as PDF</button>
     <button class="btn btn-ghost" onclick="window.close()">Close</button>
+    <button class="btn" onclick="window.print()">🖨️ Print or Save as PDF</button>
   </div>
+  <div class="page">
   <div class="head">
-    <div>
-      <h1>${escapeHTML(c.companyName)}</h1>
-      <div class="sub">Payroll Report — ${escapeHTML(monthName)}</div>
+    <div class="brand">
+      <img src="${logoURL()}" alt="" onerror="this.style.display='none'" />
+      <div>
+        <h1>${escapeHTML(c.companyName)}</h1>
+        <div class="sub">Payroll Report — ${escapeHTML(monthName)}</div>
+      </div>
     </div>
-    <img src="${window.location.href.replace(/[^/]*$/,'')}logo.png" alt="" onerror="this.style.display='none'" />
+    <div class="doc-id">
+      Period<br>
+      <span class="num">${escapeHTML(period)}</span>
+    </div>
   </div>
 
   <div class="summary">
@@ -2164,6 +2181,7 @@ function generatePayrollReport(period) {
   </table>
 
   <div class="footer">${escapeHTML(c.companyName)} • Payroll report for ${escapeHTML(monthName)} • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
+  </div>
   </body></html>`;
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
@@ -2176,43 +2194,55 @@ function openPayslip(payrollId) {
   const c = state.settings;
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Payslip ${p.period} - ${e.firstName} ${e.lastName}</title>
   <style>
-    body { font-family: Inter, system-ui, sans-serif; color: #2a1f15; padding: 40px; background: #fbf7f1; max-width: 800px; margin: 0 auto; }
-    .head { display: flex; justify-content: space-between; align-items: center; padding-bottom: 24px; border-bottom: 2px solid #6e4220; margin-bottom: 24px; }
-    .head img { width: 70px; height: 70px; object-fit: contain; }
-    .head h1 { margin: 0; font-size: 22px; color: #6e4220; }
-    .head .sub { font-size: 12px; color: #6b5a3f; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0; }
-    .field-label { font-size: 11px; text-transform: uppercase; color: #6b5a3f; letter-spacing: 0.06em; margin-bottom: 4px; }
-    .field-value { font-size: 15px; color: #2a1f15; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-    th { text-align: left; padding: 10px 14px; background: #fbf6ef; color: #6b5a3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #e8dcc4; }
-    td { padding: 12px 14px; border-bottom: 1px solid #f4e8d4; font-size: 14px; }
-    tr.total td { font-weight: 700; font-size: 16px; background: #fbf6ef; color: #6e4220; border-top: 2px solid #6e4220; border-bottom: none; }
-    .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e8dcc4; font-size: 11px; color: #6b5a3f; text-align: center; }
-    .actions { margin-bottom: 24px; }
-    .btn { background: #6e4220; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; cursor: pointer; font-family: inherit; }
-    @media print { .actions { display: none; } body { padding: 20px; background: white; } }
+    body { font-family: Inter, system-ui, sans-serif; color:#1a1a1a; padding:0; margin:0; background:#f3f4f6; }
+    .page { background:#ffffff; max-width:820px; margin:24px auto; padding:48px 56px; box-shadow:0 6px 24px rgba(15,23,42,0.08); border-radius:4px; }
+    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:22px; border-bottom:1px solid #e5e7eb; margin-bottom:22px; }
+    .head .brand { display:flex; align-items:center; gap:14px; }
+    .head img { width:64px; height:64px; object-fit:contain; }
+    .head h1 { margin:0; font-size:22px; color:#111827; font-weight:700; }
+    .head .sub { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.14em; margin-top:4px; }
+    .head .doc-id { text-align:right; font-size:11px; color:#6b7280; }
+    .head .doc-id .num { font-size:14px; color:#111827; font-weight:700; margin-top:2px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin:20px 0; padding:18px 22px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; }
+    .field-label { font-size:11px; text-transform:uppercase; color:#6b7280; letter-spacing:0.06em; margin-bottom:4px; }
+    .field-value { font-size:15px; color:#111827; font-weight:600; }
+    table { width:100%; border-collapse:collapse; margin-top:14px; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; }
+    th { text-align:left; padding:12px 16px; background:#f9fafb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid #e5e7eb; font-weight:600; }
+    td { padding:13px 16px; border-bottom:1px solid #f3f4f6; font-size:14px; color:#111827; }
+    tr:last-child td { border-bottom:none; }
+    tr.total td { font-weight:700; font-size:16px; background:#f9fafb; color:#6e4220; border-top:2px solid #6e4220; }
+    .footer { margin-top:28px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:10px; color:#9ca3af; text-align:center; letter-spacing:0.04em; }
+    .actions { position:sticky; top:0; padding:14px 24px; background:#1f2937; text-align:right; z-index:10; }
+    .btn { background:#fff; color:#1f2937; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:inherit; }
+    @media print { .actions { display:none; } body { background:#fff; } .page { box-shadow:none; margin:0; max-width:none; padding:14mm 18mm; } @page { size:A4; margin:0; } }
   </style></head><body>
   <div class="actions">
-    <button class="btn" onclick="window.print()">Print or Save as PDF</button>
+    <button class="btn" onclick="window.print()">🖨️ Print or Save as PDF</button>
   </div>
+  <div class="page">
   <div class="head">
-    <div>
-      <h1>${escapeHTML(c.companyName)}</h1>
-      <div class="sub">Payslip — ${escapeHTML(p.period)}</div>
+    <div class="brand">
+      <img src="${logoURL()}" alt="${escapeHTML(c.companyName)}" onerror="this.style.display='none'" />
+      <div>
+        <h1>${escapeHTML(c.companyName)}</h1>
+        <div class="sub">Payslip — ${escapeHTML(p.period)}</div>
+      </div>
     </div>
-    <img src="logo.png" alt="${escapeHTML(c.companyName)}" onerror="this.style.display='none'" />
+    <div class="doc-id">
+      Payslip Number<br>
+      <span class="num">PS-${escapeHTML(p.id.slice(-6).toUpperCase())}</span>
+    </div>
   </div>
   <div class="grid">
     <div>
       <div class="field-label">Employee</div>
       <div class="field-value">${escapeHTML(e.firstName + ' ' + e.lastName)}</div>
-      <div style="font-size:13px;color:#6b5a3f;margin-top:2px">${escapeHTML(e.role)} • ${escapeHTML(e.department)}</div>
+      <div style="font-size:13px;color:#6b7280;margin-top:2px">${escapeHTML(e.role)} • ${escapeHTML(e.department)}</div>
     </div>
     <div>
       <div class="field-label">Pay period</div>
       <div class="field-value">${escapeHTML(p.period)}</div>
-      <div style="font-size:13px;color:#6b5a3f;margin-top:2px">Paid on ${fmtDate(p.paidAt)}</div>
+      <div style="font-size:13px;color:#6b7280;margin-top:2px">Paid on ${fmtDate(p.paidAt)}</div>
     </div>
     <div>
       <div class="field-label">Email</div>
@@ -2235,6 +2265,7 @@ function openPayslip(payrollId) {
   <div class="footer">
     This is a computer-generated payslip and does not require a signature.<br>
     ${escapeHTML(c.companyName)} • Generated ${new Date().toLocaleDateString()}
+  </div>
   </div>
   </body></html>`;
   const w = window.open('', '_blank');
@@ -3013,51 +3044,64 @@ function printWarningLetter(id) {
   const sevTitle = { verbal:'Verbal Warning', written:'Written Warning', final:'Final Written Warning' }[w.severity] || 'Warning Notice';
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Warning — ${escapeHTML(e.firstName+' '+e.lastName)}</title>
   <style>
-    body { font-family: 'Times New Roman', Georgia, serif; color:#2a1f15; padding:48px; background:#fbf7f1; max-width:780px; margin:0 auto; line-height:1.6; }
-    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:18px; border-bottom:3px double #6e4220; margin-bottom:24px; }
-    .head img { width:64px; height:64px; object-fit:contain; }
-    .head h1 { margin:0; font-size:22px; color:#6e4220; letter-spacing:1px; }
-    .head .sub { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.12em; margin-top:4px; }
-    .stamp { display:inline-block; padding:8px 18px; border:2px solid #b91c1c; color:#b91c1c; font-weight:700; font-size:12px; letter-spacing:0.18em; text-transform:uppercase; transform:rotate(-3deg); }
-    .meta { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin:24px 0; padding:16px; background:white; border:1px solid #e8dcc4; border-radius:8px; }
-    .meta .lbl { font-size:11px; color:#6b5a3f; text-transform:uppercase; letter-spacing:0.06em; }
-    .meta .val { font-size:14px; color:#2a1f15; font-weight:600; margin-top:2px; }
-    h2 { color:#6e4220; font-size:18px; margin:24px 0 8px; }
-    .body { background:white; padding:20px; border:1px solid #e8dcc4; border-radius:8px; }
-    .sign { margin-top:48px; display:grid; grid-template-columns:1fr 1fr; gap:48px; }
-    .sign .line { border-top:1.5px solid #2a1f15; padding-top:6px; font-size:12px; color:#6b5a3f; }
-    .footer { margin-top:36px; padding-top:12px; border-top:1px solid #e8dcc4; font-size:11px; color:#6b5a3f; text-align:center; }
-    .actions { margin-bottom:18px; }
-    .btn { background:#6e4220; color:white; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:Inter,sans-serif; }
-    @media print { .actions { display:none; } body { padding:24px; background:white; } }
+    body { font-family: 'Times New Roman', Georgia, serif; color:#1a1a1a; padding:0; margin:0; background:#f3f4f6; }
+    .page { background:#ffffff; max-width:820px; margin:24px auto; padding:56px 64px; box-shadow:0 6px 24px rgba(15,23,42,0.08); border-radius:4px; }
+    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:22px; border-bottom:1px solid #e5e7eb; margin-bottom:28px; }
+    .head .brand { display:flex; align-items:center; gap:16px; }
+    .head img { width:72px; height:72px; object-fit:contain; }
+    .head h1 { margin:0; font-size:22px; color:#111827; letter-spacing:0.5px; font-family:Inter,system-ui,sans-serif; font-weight:700; }
+    .head .sub { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.14em; margin-top:4px; font-family:Inter,system-ui,sans-serif; }
+    .head .doc-id { text-align:right; font-size:11px; color:#6b7280; font-family:Inter,system-ui,sans-serif; }
+    .head .doc-id .num { font-size:14px; color:#111827; font-weight:700; margin-top:2px; }
+    .stamp { display:inline-block; padding:10px 22px; border:2px solid #b91c1c; color:#b91c1c; font-weight:700; font-size:13px; letter-spacing:0.18em; text-transform:uppercase; transform:rotate(-2deg); font-family:Inter,system-ui,sans-serif; background:#fff; }
+    .meta { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin:28px 0; padding:18px 22px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; }
+    .meta .lbl { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; font-family:Inter,system-ui,sans-serif; }
+    .meta .val { font-size:14px; color:#111827; font-weight:600; margin-top:2px; }
+    h2 { color:#111827; font-size:16px; margin:26px 0 10px; font-family:Inter,system-ui,sans-serif; font-weight:700; padding-bottom:6px; border-bottom:1px solid #e5e7eb; }
+    .body { padding:14px 0; line-height:1.7; }
+    p { line-height:1.7; margin:10px 0; }
+    .sign { margin-top:60px; display:grid; grid-template-columns:1fr 1fr; gap:60px; }
+    .sign .line { border-top:1px solid #1a1a1a; padding-top:6px; font-size:12px; color:#6b7280; font-family:Inter,system-ui,sans-serif; }
+    .footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:10px; color:#9ca3af; text-align:center; font-family:Inter,system-ui,sans-serif; letter-spacing:0.04em; }
+    .actions { position:sticky; top:0; padding:14px 24px; background:#1f2937; text-align:right; z-index:10; }
+    .btn { background:#fff; color:#1f2937; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:Inter,sans-serif; }
+    @media print { .actions { display:none; } body { background:#fff; } .page { box-shadow:none; margin:0; max-width:none; padding:14mm 18mm; } @page { size:A4; margin:0; } }
   </style></head><body>
-  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
-  <div class="head">
-    <div>
-      <h1>${escapeHTML(c.companyName)}</h1>
-      <div class="sub">Human Resources Department</div>
+  <div class="actions"><button class="btn" onclick="window.print()">🖨️ Print or Save as PDF</button></div>
+  <div class="page">
+    <div class="head">
+      <div class="brand">
+        <img src="${logoURL()}" alt="${escapeHTML(c.companyName)}" onerror="this.style.display='none'" />
+        <div>
+          <h1>${escapeHTML(c.companyName)}</h1>
+          <div class="sub">Human Resources Department</div>
+        </div>
+      </div>
+      <div class="doc-id">
+        Document Reference<br>
+        <span class="num">WL-${escapeHTML(w.id.slice(-6).toUpperCase())}</span>
+      </div>
     </div>
-    <img src="${window.location.href.replace(/[^/]*$/,'')}logo.png" alt="" onerror="this.style.display='none'" />
+    <div style="text-align:center; margin:14px 0 22px"><span class="stamp">${escapeHTML(sevTitle)}</span></div>
+    <div class="meta">
+      <div><div class="lbl">Issued to</div><div class="val">${escapeHTML(e.firstName+' '+e.lastName)}</div><div style="font-size:12px;color:#6b7280;font-family:Inter,system-ui,sans-serif">${escapeHTML(e.role)} · ${escapeHTML(e.department)}</div></div>
+      <div><div class="lbl">Date of incident</div><div class="val">${fmtDate(w.date)}</div></div>
+      <div><div class="lbl">Category</div><div class="val">${escapeHTML(w.type)}</div></div>
+      <div><div class="lbl">Issued on</div><div class="val">${fmtDate(w.issuedAt.slice(0,10))}</div></div>
+    </div>
+    <p>Dear ${escapeHTML(e.firstName)},</p>
+    <p>This letter serves as a formal <strong>${escapeHTML(sevTitle.toLowerCase())}</strong> regarding the following incident:</p>
+    <h2>Description of incident</h2>
+    <div class="body">${escapeHTML(w.reason).replace(/\n/g,'<br>')}</div>
+    ${w.notes ? `<h2>Expected corrective action</h2><div class="body">${escapeHTML(w.notes).replace(/\n/g,'<br>')}</div>` : ''}
+    <p style="margin-top:22px">Please consider this notice as an opportunity to address and improve the matter described above. Continued occurrences of this nature may result in further disciplinary action, up to and including termination of employment.</p>
+    <p>If you wish to provide a written response, please submit it to the HR department within five (5) working days of receipt.</p>
+    <div class="sign">
+      <div><div class="line">${escapeHTML((issuer?(issuer.firstName+' '+issuer.lastName):'') + ' — Issuing manager')}</div></div>
+      <div><div class="line">Employee acknowledgment &amp; signature</div></div>
+    </div>
+    <div class="footer">${escapeHTML(c.companyName)} • Confidential personnel record • Generated ${new Date().toLocaleDateString()}</div>
   </div>
-  <div style="text-align:center; margin:8px 0 18px"><span class="stamp">${escapeHTML(sevTitle)}</span></div>
-  <div class="meta">
-    <div><div class="lbl">Issued to</div><div class="val">${escapeHTML(e.firstName+' '+e.lastName)}</div><div style="font-size:12px;color:#6b5a3f">${escapeHTML(e.role)} · ${escapeHTML(e.department)}</div></div>
-    <div><div class="lbl">Date of incident</div><div class="val">${fmtDate(w.date)}</div></div>
-    <div><div class="lbl">Category</div><div class="val">${escapeHTML(w.type)}</div></div>
-    <div><div class="lbl">Issued on</div><div class="val">${fmtDate(w.issuedAt.slice(0,10))}</div></div>
-  </div>
-  <p>Dear ${escapeHTML(e.firstName)},</p>
-  <p>This letter serves as a formal <strong>${escapeHTML(sevTitle.toLowerCase())}</strong> regarding the following incident:</p>
-  <h2>Description of incident</h2>
-  <div class="body">${escapeHTML(w.reason).replace(/\n/g,'<br>')}</div>
-  ${w.notes ? `<h2>Expected corrective action</h2><div class="body">${escapeHTML(w.notes).replace(/\n/g,'<br>')}</div>` : ''}
-  <p style="margin-top:18px">Please consider this notice as an opportunity to address and improve the matter described above. Continued occurrences of this nature may result in further disciplinary action, up to and including termination of employment.</p>
-  <p>If you wish to provide a written response, please submit it to the HR department within five (5) working days of receipt.</p>
-  <div class="sign">
-    <div><div class="line">${escapeHTML((issuer?(issuer.firstName+' '+issuer.lastName):'') + ' — Issuing manager')}</div></div>
-    <div><div class="line">Employee acknowledgment &amp; signature</div></div>
-  </div>
-  <div class="footer">${escapeHTML(c.companyName)} • Confidential personnel record • Generated ${new Date().toLocaleDateString()}</div>
   </body></html>`;
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
@@ -3399,51 +3443,63 @@ function printCertificate(id) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Certificate — ${escapeHTML(e.firstName+' '+e.lastName)}</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Cinzel:wght@400;500;600;700&family=Dancing+Script:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { font-family:'Cormorant Garamond', Georgia, serif; margin:0; padding:0; background:#3b2613; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    body { font-family:'Cormorant Garamond', Georgia, serif; margin:0; padding:0; background:#e5e7eb; min-height:100vh; display:flex; align-items:center; justify-content:center; }
     .actions { position:fixed; top:18px; right:18px; z-index:5; }
-    .btn { background:#fbf7f1; color:#3b2613; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:Inter,sans-serif; box-shadow:0 4px 14px rgba(0,0,0,0.25); }
+    .btn { background:#fff; color:#1f2937; border:1px solid #d1d5db; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:Inter,sans-serif; box-shadow:0 4px 14px rgba(0,0,0,0.15); }
     .cert {
       width: 1000px; max-width:96vw; aspect-ratio: 1.414/1;
-      background: linear-gradient(135deg,#fbf6ef 0%,#f4e8d4 100%);
-      box-shadow: 0 30px 80px rgba(0,0,0,0.4);
-      position:relative; padding: 60px 80px;
+      background:#ffffff;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.18);
+      position:relative; padding: 56px 70px;
       box-sizing:border-box;
     }
-    .frame { position:absolute; inset:24px; border:3px double #6e4220; pointer-events:none; }
-    .corner { position:absolute; width:60px; height:60px; border:3px solid #c44a4a; }
-    .c-tl { top:36px; left:36px; border-right:none; border-bottom:none; }
-    .c-tr { top:36px; right:36px; border-left:none; border-bottom:none; }
-    .c-bl { bottom:36px; left:36px; border-right:none; border-top:none; }
-    .c-br { bottom:36px; right:36px; border-left:none; border-top:none; }
-    .seal { position:absolute; right:80px; bottom:130px; width:130px; height:130px; border:5px double #c44a4a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:Cinzel,serif; color:#c44a4a; font-size:11px; text-align:center; line-height:1.2; transform:rotate(-6deg); background:rgba(196,74,74,0.05); }
-    .header { text-align:center; }
-    .badge { display:inline-block; padding:6px 22px; border:1.5px solid #6e4220; color:#6e4220; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.4em; text-transform:uppercase; }
-    h1 { font-family:Cinzel,serif; font-size:54px; color:#6e4220; margin:18px 0 6px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
-    .sub { font-family:'Cormorant Garamond',serif; font-size:22px; color:#8a5728; font-style:italic; margin-bottom:24px; }
-    .presented { text-align:center; margin:30px 0 18px; font-size:18px; color:#6b5a3f; letter-spacing:0.2em; text-transform:uppercase; font-family:Cinzel,serif; }
-    .name { text-align:center; font-family:'Dancing Script',cursive; font-size:80px; color:#3b2613; margin:0 0 8px; line-height:1; }
-    .name-rule { width:280px; height:1px; background:#a87035; margin:0 auto 18px; }
-    .body { text-align:center; max-width:680px; margin:0 auto; font-size:18px; color:#2a1f15; line-height:1.6; }
-    .period { text-align:center; margin-top:24px; font-family:Cinzel,serif; font-size:13px; color:#8a5728; letter-spacing:0.3em; text-transform:uppercase; }
-    .signs { display:grid; grid-template-columns:1fr 1fr; gap:80px; margin-top:60px; padding:0 60px; }
+    .frame-outer { position:absolute; inset:22px; border:2px solid #6e4220; pointer-events:none; }
+    .frame-inner { position:absolute; inset:32px; border:1px solid #c2914a; pointer-events:none; }
+    .corner { position:absolute; width:48px; height:48px; border:3px solid #c44a4a; pointer-events:none; }
+    .c-tl { top:38px; left:38px; border-right:none; border-bottom:none; }
+    .c-tr { top:38px; right:38px; border-left:none; border-bottom:none; }
+    .c-bl { bottom:38px; left:38px; border-right:none; border-top:none; }
+    .c-br { bottom:38px; right:38px; border-left:none; border-top:none; }
+    .header-row { display:flex; align-items:center; justify-content:center; gap:18px; margin-top:14px; }
+    .header-row img { width:84px; height:84px; object-fit:contain; }
+    .header-row .company { font-family:Cinzel,serif; font-size:14px; letter-spacing:0.32em; color:#6e4220; text-transform:uppercase; }
+    .header-row .company .tag { display:block; font-size:9px; color:#9ca3af; letter-spacing:0.3em; margin-top:4px; font-family:Inter,sans-serif; }
+    .header { text-align:center; margin-top:18px; }
+    .badge { display:inline-block; padding:6px 22px; border:1.5px solid #6e4220; color:#6e4220; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.4em; text-transform:uppercase; background:#fff; }
+    h1 { font-family:Cinzel,serif; font-size:48px; color:#6e4220; margin:14px 0 6px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
+    .sub { font-family:'Cormorant Garamond',serif; font-size:20px; color:#8a5728; font-style:italic; margin-bottom:14px; }
+    .presented { text-align:center; margin:18px 0 12px; font-size:14px; color:#6b7280; letter-spacing:0.22em; text-transform:uppercase; font-family:Cinzel,serif; }
+    .name { text-align:center; font-family:'Dancing Script',cursive; font-size:72px; color:#1f2937; margin:0 0 4px; line-height:1; }
+    .name-rule { width:300px; height:1px; background:#a87035; margin:0 auto 14px; }
+    .body { text-align:center; max-width:680px; margin:0 auto; font-size:17px; color:#1f2937; line-height:1.6; }
+    .period { text-align:center; margin-top:18px; font-family:Cinzel,serif; font-size:12px; color:#8a5728; letter-spacing:0.3em; text-transform:uppercase; }
+    .signs { display:grid; grid-template-columns:1fr auto 1fr; gap:30px; align-items:end; margin-top:36px; padding:0 50px; }
     .sign { text-align:center; }
-    .sign-line { border-top:1.5px solid #2a1f15; padding-top:6px; font-size:13px; color:#6b5a3f; font-family:Inter,sans-serif; }
-    .sign-name { font-family:'Dancing Script',cursive; font-size:28px; color:#3b2613; margin-bottom:-4px; }
-    .company { position:absolute; top:80px; right:100px; text-align:right; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.3em; color:#8a5728; }
+    .sign-line { border-top:1.5px solid #1f2937; padding-top:6px; font-size:12px; color:#6b7280; font-family:Inter,sans-serif; }
+    .sign-name { font-family:'Dancing Script',cursive; font-size:26px; color:#1f2937; margin-bottom:-2px; }
+    .seal { width:110px; height:110px; border:4px double #c44a4a; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:Cinzel,serif; color:#c44a4a; font-size:9px; text-align:center; line-height:1.2; background:#fff; padding:6px; box-sizing:border-box; transform:rotate(-4deg); }
+    .seal img { width:46px; height:46px; object-fit:contain; opacity:0.85; }
+    .seal .seal-text { margin-top:2px; letter-spacing:0.06em; }
     @media print {
       .actions { display:none; }
-      body { background:white; min-height:auto; }
-      .cert { box-shadow:none; max-width:none; width:100%; }
+      body { background:#fff; min-height:auto; padding:0; margin:0; }
+      .cert { box-shadow:none; max-width:none; width:100%; height:100vh; padding:36px 50px; }
       @page { size: A4 landscape; margin:0; }
     }
   </style></head><body>
-  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="actions"><button class="btn" onclick="window.print()">🖨️ Print or Save as PDF</button></div>
   <div class="cert">
-    <div class="frame"></div>
+    <div class="frame-outer"></div>
+    <div class="frame-inner"></div>
     <div class="corner c-tl"></div><div class="corner c-tr"></div>
     <div class="corner c-bl"></div><div class="corner c-br"></div>
-    <div class="company">${escapeHTML(company)}</div>
-    <div class="header" style="margin-top:30px">
+
+    <div class="header-row">
+      <img src="${logoURL()}" alt="" onerror="this.style.display='none'" />
+      <div class="company">${escapeHTML(company)}<span class="tag">Certificate of Recognition</span></div>
+    </div>
+
+    <div class="header">
       <div class="badge">${escapeHTML(c.type==='employee_of_month'?'Employee of the Month':c.type==='appreciation'?'Appreciation':c.type==='completion'?'Completion':'Recognition')}</div>
       <h1>${escapeHTML(c.title || 'Certificate')}</h1>
       <div class="sub">— is hereby awarded to —</div>
@@ -3455,9 +3511,12 @@ function printCertificate(id) {
     ${c.period ? `<div class="period">For the period of ${escapeHTML(c.period)}</div>` : ''}
     <div class="signs">
       <div class="sign"><div class="sign-name">${escapeHTML(issuer? issuer.firstName+' '+issuer.lastName:'')}</div><div class="sign-line">Issuing Authority</div></div>
+      <div class="seal">
+        <img src="${logoURL()}" alt="" onerror="this.style.display='none'" />
+        <div class="seal-text">OFFICIAL<br>SEAL</div>
+      </div>
       <div class="sign"><div class="sign-name">${new Date(c.issuedAt).toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'})}</div><div class="sign-line">Date of Issue</div></div>
     </div>
-    <div class="seal">${escapeHTML(company.split(' ').map(w=>w[0]||'').join('').slice(0,3).toUpperCase())}<br>OFFICIAL<br>SEAL</div>
   </div>
   </body></html>`;
   const win = window.open('', '_blank');
