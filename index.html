@@ -1489,7 +1489,9 @@ function renderEmployees() {
   const emps = state.employees.filter(e => {
     if (empFilter.dept !== 'all' && e.department !== empFilter.dept) return false;
     const ex = getEmpExtras(e.id);
-    if (empFilter.branch !== 'all' && (ex.branch||'') !== empFilter.branch) return false;
+    if (empFilter.branch === 'none') {
+      if ((ex.branch||'').trim() !== '') return false;
+    } else if (empFilter.branch !== 'all' && (ex.branch||'') !== empFilter.branch) return false;
     if (empFilter.nationality !== 'all' && (ex.nationality||'') !== empFilter.nationality) return false;
     if (empFilter.q) {
       const q = empFilter.q.toLowerCase();
@@ -1521,7 +1523,8 @@ function renderEmployees() {
           <input class="pill pill-search w-56" placeholder="Search..." value="${escapeHTML(empFilter.q||'')}" oninput="empFilter.q=this.value; clearTimeout(window._empSearchT); window._empSearchT=setTimeout(render,150);">
         </div>
         <select class="pill ${empFilter.branch!=='all'?'active':''}" onchange="empFilter.branch=this.value; render();" title="Branch">
-          <option value="all">${empFilter.branch==='all'?'Branches':'Branch: '+empFilter.branch}</option>
+          <option value="all">${empFilter.branch==='all'?'Branches':empFilter.branch==='none'?'Branch: None':'Branch: '+empFilter.branch}</option>
+          <option value="none" ${empFilter.branch==='none'?'selected':''}>None (unassigned)</option>
           ${branches.map(b=>`<option value="${escapeHTML(b)}" ${empFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
         </select>
       </div>
