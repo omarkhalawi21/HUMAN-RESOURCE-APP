@@ -424,24 +424,69 @@ function saveLocalData() {
     toast('Storage full — some data may not persist', 'error');
   }
 }
+function defaultSchedule() {
+  const start = state.settings.workStart || '09:00';
+  const end   = state.settings.workEnd   || '17:00';
+  return {
+    0: { off: false, start, end }, // Sun
+    1: { off: false, start, end }, // Mon
+    2: { off: false, start, end }, // Tue
+    3: { off: false, start, end }, // Wed
+    4: { off: false, start, end }, // Thu
+    5: { off: true,  start, end }, // Fri (default off)
+    6: { off: false, start, end }, // Sat
+  };
+}
 function getEmpExtras(id) {
   if (!state.empExtras[id]) {
     state.empExtras[id] = {
-      shiftStart: state.settings.workStart || '09:00',
-      shiftEnd:   state.settings.workEnd   || '17:00',
-      offDays:    [5],   // 0=Sun, 1=Mon, ... 5=Fri, 6=Sat (Friday default off)
+      schedule: defaultSchedule(),
       iqama:    { number: '', expiry: '' },
       baladiya: { number: '', expiry: '' },
     };
   }
-  // backfill any missing keys (legacy records)
   const x = state.empExtras[id];
   if (!x.iqama) x.iqama = { number:'', expiry:'' };
   if (!x.baladiya) x.baladiya = { number:'', expiry:'' };
-  if (!Array.isArray(x.offDays)) x.offDays = [5];
-  if (!x.shiftStart) x.shiftStart = state.settings.workStart || '09:00';
-  if (!x.shiftEnd)   x.shiftEnd   = state.settings.workEnd   || '17:00';
+
+  // Migrate legacy shape (shiftStart/shiftEnd/offDays) → schedule{0..6:{off,start,end}}
+  if (!x.schedule) {
+    const start = x.shiftStart || state.settings.workStart || '09:00';
+    const end   = x.shiftEnd   || state.settings.workEnd   || '17:00';
+    const offs  = Array.isArray(x.offDays) ? x.offDays : [5];
+    const sched = {};
+    for (let i=0;i<7;i++) sched[i] = { off: offs.includes(i), start, end };
+    x.schedule = sched;
+  }
+  // Ensure all 7 days present and well-formed
+  for (let i=0;i<7;i++) {
+    if (!x.schedule[i] || typeof x.schedule[i] !== 'object') {
+      x.schedule[i] = { off:false, start: state.settings.workStart||'09:00', end: state.settings.workEnd||'17:00' };
+    }
+    if (typeof x.schedule[i].off !== 'boolean') x.schedule[i].off = false;
+    if (!x.schedule[i].start) x.schedule[i].start = state.settings.workStart||'09:00';
+    if (!x.schedule[i].end)   x.schedule[i].end   = state.settings.workEnd||'17:00';
+  }
+
+  // Convenience accessors used by older code paths — derived from schedule
+  Object.defineProperty(x, 'offDays', {
+    configurable: true,
+    get() { const r=[]; for (let i=0;i<7;i++) if (this.schedule[i].off) r.push(i); return r; }
+  });
+  Object.defineProperty(x, 'shiftStart', {
+    configurable: true,
+    get() { for (let i=0;i<7;i++) if (!this.schedule[i].off) return this.schedule[i].start; return state.settings.workStart||'09:00'; }
+  });
+  Object.defineProperty(x, 'shiftEnd', {
+    configurable: true,
+    get() { for (let i=0;i<7;i++) if (!this.schedule[i].off) return this.schedule[i].end; return state.settings.workEnd||'17:00'; }
+  });
   return x;
+}
+function todaysShift(empId) {
+  const x = getEmpExtras(empId);
+  const dow = new Date().getDay();
+  return { ...x.schedule[dow], dow };
 }
 function daysUntil(dateStr) {
   if (!dateStr) return null;
@@ -1090,15 +1135,17 @@ function renderDashboard() {
       </div>
     </div>
 
-    <!-- Stat cards -->
+    <!-- Stat cards (admin only — full-team metrics) -->
+    ${admin ? `
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       ${statCard(t('total_employees'), state.employees.length, '+2 this month', 'up', 'users')}
       ${statCard(t('present_today'),  presentToday.length, `${state.employees.length-presentToday.length} away`, 'up', 'check')}
       ${statCard(t('on_leave'),       onLeave.length,       `${pending.length} pending`,                'down', 'calendar')}
       ${statCard(t('payroll_month'),  fmtMoney(totalPayroll), 'last cycle',                              'up', 'wallet')}
-    </div>
+    </div>` : ''}
 
-    <!-- Charts + activity -->
+    <!-- Charts + activity (admin only — full-team data) -->
+    ${admin ? `
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
       <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6">
         <div class="flex items-center justify-between mb-5">
@@ -1132,7 +1179,7 @@ function renderDashboard() {
             `).join('')}
         </div>
       </div>
-    </div>
+    </div>` : ''}
 
     ${admin ? `
     <!-- Compliance & alerts row -->
@@ -1361,13 +1408,24 @@ function renderEmployees() {
             ${emps.length===0 ? `<tr><td colspan="8" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
               emps.map(e => {
                 const ex = getEmpExtras(e.id);
-                const offSummary = (ex.offDays||[]).map(i=>dayNames()[i]).join(', ') || '—';
+                const offSummary = (ex.offDays||[]).map(i=>dayNames()[i]).join(', ') || 'None';
+                // Find first non-off day to show typical hours; if all off, fall back to defaults
+                let typical = '';
+                for (let i=1;i<=7;i++) {
+                  const idx = i % 7; // start Mon
+                  if (!ex.schedule[idx].off) { typical = `${ex.schedule[idx].start}–${ex.schedule[idx].end}`; break; }
+                }
+                if (!typical) typical = '—';
+                // Distinct shift count: how many unique non-off start times are there
+                const distinctStarts = new Set();
+                for (let i=0;i<7;i++) if (!ex.schedule[i].off) distinctStarts.add(ex.schedule[i].start+'-'+ex.schedule[i].end);
+                const variesNote = distinctStarts.size > 1 ? ' • varies' : '';
                 return `
               <tr class="hover-row">
                 <td><div class="flex items-center gap-3">${avatarHTML(e,36)}<div><div class="font-medium text-slate-900">${escapeHTML(e.firstName+' '+e.lastName)}</div><div class="text-xs text-slate-500">${escapeHTML(e.email)}</div></div></div></td>
                 <td>${escapeHTML(e.role)}</td>
                 <td><span class="badge badge-slate">${escapeHTML(e.department)}</span></td>
-                <td class="text-slate-600 text-xs"><div class="font-medium text-slate-700">${escapeHTML(ex.shiftStart)}–${escapeHTML(ex.shiftEnd)}</div><div class="text-slate-400">Off: ${escapeHTML(offSummary)}</div></td>
+                <td class="text-slate-600 text-xs"><div class="font-medium text-slate-700">${escapeHTML(typical)}${escapeHTML(variesNote)}</div><div class="text-slate-400">Off: ${escapeHTML(offSummary)}</div></td>
                 <td class="text-slate-600">${fmtDate(e.hireDate)}</td>
                 <td class="font-medium">${fmtMoney(e.salary)}</td>
                 <td>${statusBadge(e.status)}</td>
@@ -1395,14 +1453,30 @@ let _pendingPhoto = null;
 function openEmployeeModal(id) {
   const editing = id ? getEmployee(id) : null;
   _pendingPhoto = editing?.photo || null;
-  const ex = editing ? getEmpExtras(editing.id) : { shiftStart: state.settings.workStart, shiftEnd: state.settings.workEnd, offDays:[5], iqama:{number:'',expiry:''}, baladiya:{number:'',expiry:''} };
+  const ex = editing ? getEmpExtras(editing.id) : { schedule: defaultSchedule(), iqama:{number:'',expiry:''}, baladiya:{number:'',expiry:''} };
   const dn = dayNames();
-  const dayChips = dn.map((d,i)=>`
-    <label class="cursor-pointer">
-      <input type="checkbox" class="m-off-day hidden peer" data-idx="${i}" ${ex.offDays.includes(i)?'checked':''}>
-      <span class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-200 bg-slate-50 text-slate-600 peer-checked:bg-brand-700 peer-checked:text-white peer-checked:border-brand-700 transition">${escapeHTML(d)}</span>
-    </label>
-  `).join('');
+  // Order: Mon, Tue, Wed, Thu, Fri, Sat, Sun
+  const dayOrder = [1,2,3,4,5,6,0];
+  const scheduleRows = dayOrder.map(i => {
+    const day = ex.schedule[i] || { off:false, start: state.settings.workStart||'09:00', end: state.settings.workEnd||'17:00' };
+    return `
+      <div class="grid grid-cols-12 items-center gap-3 py-2 border-b border-slate-100 last:border-0" data-day="${i}">
+        <div class="col-span-3 font-semibold text-slate-700 text-sm">${escapeHTML(dn[i])}</div>
+        <div class="col-span-3">
+          <label class="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" class="m-day-off w-4 h-4 accent-rose-600" data-idx="${i}" ${day.off?'checked':''} onchange="toggleScheduleRow(${i}, this.checked)">
+            <span class="text-xs font-semibold text-slate-600">Off-day</span>
+          </label>
+        </div>
+        <div class="col-span-3">
+          <input type="time" class="input !py-2 !text-sm m-day-start" data-idx="${i}" value="${escapeHTML(day.start)}" ${day.off?'disabled':''}>
+        </div>
+        <div class="col-span-3">
+          <input type="time" class="input !py-2 !text-sm m-day-end" data-idx="${i}" value="${escapeHTML(day.end)}" ${day.off?'disabled':''}>
+        </div>
+      </div>
+    `;
+  }).join('');
   const form = `
     <div class="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
       <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${editing?.avatarColor || '#a87035'}">
@@ -1451,16 +1525,21 @@ function openEmployeeModal(id) {
 
     <div id="emp-pane-shift" style="display:none">
       <div class="bg-brand-50 border border-brand-100 rounded-xl p-3 text-xs text-brand-800 mb-4">
-        ${icon('clock','w-4 h-4 inline')} Each employee can have their own shift hours and off-days. Late detection on clock-in uses these hours instead of the company default.
+        ${icon('clock','w-4 h-4 inline')} Set the weekly schedule for this employee. Each day can have its own start/end time, or be marked as an off-day. The system uses today's hours for clock-in late-detection.
       </div>
-      <div class="grid grid-cols-2 gap-4">
-        <div><label class="label">Shift start</label><input id="m-shift-start" class="input" type="time" value="${escapeHTML(ex.shiftStart)}"></div>
-        <div><label class="label">Shift end</label><input id="m-shift-end" class="input" type="time" value="${escapeHTML(ex.shiftEnd)}"></div>
+      <div class="border border-slate-200 rounded-xl bg-white p-3">
+        <div class="grid grid-cols-12 gap-3 px-1 pb-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          <div class="col-span-3">Day</div>
+          <div class="col-span-3">Status</div>
+          <div class="col-span-3">Start</div>
+          <div class="col-span-3">End</div>
+        </div>
+        ${scheduleRows}
       </div>
-      <div class="mt-5">
-        <label class="label">Off-days (rest days)</label>
-        <div class="flex flex-wrap gap-2">${dayChips}</div>
-        <div class="text-xs text-slate-500 mt-2">Tap each day to toggle. Off-days count as expected rest, not absence.</div>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button type="button" onclick="applyToAllDays()" class="btn btn-ghost btn-sm">${icon('refresh','w-4 h-4')} Copy Mon's hours to all working days</button>
+        <button type="button" onclick="resetWeekendOff('FriSat')" class="btn btn-ghost btn-sm">Set Fri+Sat off</button>
+        <button type="button" onclick="resetWeekendOff('Fri')" class="btn btn-ghost btn-sm">Set Fri off only</button>
       </div>
     </div>
 
@@ -1508,17 +1587,26 @@ function openEmployeeModal(id) {
       savedId = newE.id;
       toast('Employee added. Share the signup link with them so they can create a password.', 'success');
     }
-    /* Persist shift / off-days / IQAMA / Baladiya to localStorage */
+    /* Persist schedule (per-day) / IQAMA / Baladiya to localStorage */
     if (savedId) {
-      const shiftStart = $('#m-shift-start')?.value || state.settings.workStart;
-      const shiftEnd   = $('#m-shift-end')?.value   || state.settings.workEnd;
-      const offDays = Array.from(document.querySelectorAll('.m-off-day')).filter(el=>el.checked).map(el=>parseInt(el.dataset.idx,10));
+      const schedule = {};
+      for (let i=0;i<7;i++) {
+        const offEl   = document.querySelector(`.m-day-off[data-idx="${i}"]`);
+        const startEl = document.querySelector(`.m-day-start[data-idx="${i}"]`);
+        const endEl   = document.querySelector(`.m-day-end[data-idx="${i}"]`);
+        schedule[i] = {
+          off:   !!(offEl && offEl.checked),
+          start: (startEl && startEl.value) || state.settings.workStart || '09:00',
+          end:   (endEl   && endEl.value)   || state.settings.workEnd   || '17:00',
+        };
+      }
       const iqamaNo  = $('#m-iqama-no')?.value.trim() || '';
       const iqamaExp = $('#m-iqama-exp')?.value || '';
       const balNo    = $('#m-bal-no')?.value.trim() || '';
       const balExp   = $('#m-bal-exp')?.value || '';
+      // Keep raw object (no derived getters); will be re-decorated by getEmpExtras on next read
       state.empExtras[savedId] = {
-        shiftStart, shiftEnd, offDays,
+        schedule,
         iqama:    { number: iqamaNo, expiry: iqamaExp },
         baladiya: { number: balNo,   expiry: balExp   },
       };
@@ -1537,6 +1625,39 @@ function switchEmpTab(which) {
     if (name === which) { tab.classList.add('active'); pane.style.display=''; }
     else { tab.classList.remove('active'); pane.style.display='none'; }
   });
+}
+/* Schedule editor helpers */
+function toggleScheduleRow(idx, isOff) {
+  const startEl = document.querySelector(`.m-day-start[data-idx="${idx}"]`);
+  const endEl   = document.querySelector(`.m-day-end[data-idx="${idx}"]`);
+  if (startEl) startEl.disabled = isOff;
+  if (endEl)   endEl.disabled   = isOff;
+}
+function applyToAllDays() {
+  const monStart = document.querySelector('.m-day-start[data-idx="1"]');
+  const monEnd   = document.querySelector('.m-day-end[data-idx="1"]');
+  if (!monStart || !monEnd) return;
+  const s = monStart.value, e = monEnd.value;
+  for (let i=0;i<7;i++) {
+    const offEl = document.querySelector(`.m-day-off[data-idx="${i}"]`);
+    if (offEl && offEl.checked) continue; // skip off-days
+    const sEl = document.querySelector(`.m-day-start[data-idx="${i}"]`);
+    const eEl = document.querySelector(`.m-day-end[data-idx="${i}"]`);
+    if (sEl) sEl.value = s;
+    if (eEl) eEl.value = e;
+  }
+  toast('Mon hours copied to all working days', 'success');
+}
+function resetWeekendOff(which) {
+  // 'Fri' = Friday only off; 'FriSat' = Friday + Saturday off
+  const offSet = which === 'FriSat' ? new Set([5,6]) : new Set([5]);
+  for (let i=0;i<7;i++) {
+    const offEl = document.querySelector(`.m-day-off[data-idx="${i}"]`);
+    if (!offEl) continue;
+    offEl.checked = offSet.has(i);
+    toggleScheduleRow(i, offEl.checked);
+  }
+  toast(which==='FriSat' ? 'Fri & Sat set as off-days' : 'Fri set as off-day', 'success');
 }
 function handlePhotoUpload(ev) {
   const file = ev.target.files?.[0];
@@ -1577,11 +1698,12 @@ function renderAttendance() {
       <div class="tab ${attTab==='history'?'active':''}" onclick="attTab='history'; render();">All History</div>
     </div>` : '';
 
-  // clock-in tile — show employee shift hours and off-days
+  // clock-in tile — show today's specific hours and weekly off-days
   const myEx = getEmpExtras(me.id);
-  const offTodayDow = new Date().getDay();
-  const isOffToday  = Array.isArray(myEx.offDays) && myEx.offDays.includes(offTodayDow);
+  const todayInfo = todaysShift(me.id);
+  const isOffToday = todayInfo.off;
   const offDayLabels = (myEx.offDays||[]).map(i=>dayNames()[i]).join(', ') || '—';
+  const todayHoursLabel = isOffToday ? 'Off today' : `${todayInfo.start}–${todayInfo.end}`;
   const clockTile = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-6">
       <div class="flex items-center justify-between gap-4 flex-wrap">
@@ -1592,7 +1714,7 @@ function renderAttendance() {
             <div class="text-2xl font-bold text-slate-900 mt-1">${escapeHTML(me.firstName+' '+me.lastName)}</div>
             <div class="text-sm text-slate-500">${escapeHTML(me.role)} • ${escapeHTML(me.department)}</div>
             <div class="text-xs text-slate-500 mt-1.5 flex items-center gap-3 flex-wrap">
-              <span class="inline-flex items-center gap-1">${icon('clock','w-3.5 h-3.5')} Shift ${escapeHTML(myEx.shiftStart)}–${escapeHTML(myEx.shiftEnd)}</span>
+              <span class="inline-flex items-center gap-1">${icon('clock','w-3.5 h-3.5')} Today: ${escapeHTML(todayHoursLabel)}</span>
               <span class="inline-flex items-center gap-1">${icon('calendar','w-3.5 h-3.5')} Off: ${escapeHTML(offDayLabels)}</span>
               ${isOffToday ? '<span class="badge badge-blue">Off-day today</span>' : ''}
             </div>
@@ -1741,13 +1863,12 @@ async function clockIn() {
   const me = currentEmployee();
   if (!me) { toast('Not signed in', 'error'); return; }
   const now = nowHHMM();
-  /* Use employee's individual shift; warn (but allow) if today is an off-day */
-  const ex = getEmpExtras(me.id);
-  const todayDow = new Date().getDay();
-  if (Array.isArray(ex.offDays) && ex.offDays.includes(todayDow)) {
-    if (!confirm(`Today (${dayNames()[todayDow]}) is your scheduled off-day. Continue with clock-in anyway?`)) return;
+  /* Use today's specific schedule; warn (but allow) if today is an off-day */
+  const today = todaysShift(me.id);
+  if (today.off) {
+    if (!confirm(`Today (${dayNames()[today.dow]}) is your scheduled off-day. Continue with clock-in anyway?`)) return;
   }
-  const shiftStart = ex.shiftStart || state.settings.workStart;
+  const shiftStart = today.start || state.settings.workStart;
   const lateMin = diffMinutes(shiftStart, now);
   const status = lateMin > 5 ? 'late' : 'present';
   let location = null;
@@ -3601,7 +3722,7 @@ function renderDocuments() {
                 <td class="font-mono text-sm text-slate-600">${escapeHTML(x.baladiya?.number||'—')}</td>
                 <td>${x.baladiya?.expiry ? `<div>${fmtDate(x.baladiya.expiry)}</div><span class="badge ${balSt.cls}">${escapeHTML(balSt.label)}</span>` : '<span class="badge badge-slate">Not set</span>'}</td>
                 <td class="!text-end whitespace-nowrap">
-                  ${admin || e.id===me.id ? `<button onclick="openRenewModal('${e.id}')" class="btn btn-sm btn-ghost">${icon('refresh','w-4 h-4')} ${escapeHTML(t('renew'))}</button>` : ''}
+                  ${admin ? `<button onclick="openRenewModal('${e.id}')" class="btn btn-sm btn-ghost">${icon('refresh','w-4 h-4')} ${escapeHTML(t('renew'))}</button>` : `<span class="text-xs text-slate-400">${(daysUntil(x.iqama?.expiry)<0 || daysUntil(x.baladiya?.expiry)<0) ? 'Expired — contact HR' : (daysUntil(x.iqama?.expiry)!==null && daysUntil(x.iqama?.expiry)<=30) || (daysUntil(x.baladiya?.expiry)!==null && daysUntil(x.baladiya?.expiry)<=30) ? 'Renewal due — contact HR' : 'Up to date'}</span>`}
                 </td>
               </tr>`).join('')}
           </tbody>
