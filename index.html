@@ -408,6 +408,7 @@ function emptyState() {
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
+    companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
   };
 }
 
@@ -424,6 +425,7 @@ function loadLocalData() {
     state.certificates= Array.isArray(data.certificates)? data.certificates: [];
     state.archive     = Array.isArray(data.archive)     ? data.archive     : [];
     state.empExtras   = (data.empExtras && typeof data.empExtras === 'object') ? data.empExtras : {};
+    state.companyStamp = typeof data.companyStamp === 'string' ? data.companyStamp : '';
   } catch(e) { console.warn('Local data parse failed', e); }
 }
 function saveLocalData() {
@@ -434,6 +436,7 @@ function saveLocalData() {
       certificates: state.certificates,
       archive:      state.archive,
       empExtras:    state.empExtras,
+      companyStamp: state.companyStamp || '',
     };
     localStorage.setItem(lsKey(), JSON.stringify(payload));
   } catch(e) {
@@ -2278,6 +2281,168 @@ function pickColor() {
 
 /* -------------------- ATTENDANCE -------------------- */
 let attTab = 'me';
+let attHistFilter = { employee:'all', branch:'all', status:'all', from:'', to:'' };
+function setAttHistRange(kind) {
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0,10);
+  if (kind === 'today') {
+    attHistFilter.from = fmt(today); attHistFilter.to = fmt(today);
+  } else if (kind === 'yesterday') {
+    const y = new Date(today); y.setDate(y.getDate()-1);
+    attHistFilter.from = fmt(y); attHistFilter.to = fmt(y);
+  } else if (kind === 'week') {
+    const w = new Date(today); w.setDate(w.getDate()-6);
+    attHistFilter.from = fmt(w); attHistFilter.to = fmt(today);
+  } else if (kind === 'month') {
+    const m = new Date(today); m.setDate(m.getDate()-29);
+    attHistFilter.from = fmt(m); attHistFilter.to = fmt(today);
+  } else if (kind === 'lastMonth') {
+    const first = new Date(today.getFullYear(), today.getMonth()-1, 1);
+    const last  = new Date(today.getFullYear(), today.getMonth(), 0);
+    attHistFilter.from = fmt(first); attHistFilter.to = fmt(last);
+  }
+  render();
+}
+function getAttHistFiltered() {
+  const records = state.attendance.filter(a => {
+    if (a.date < attHistFilter.from || a.date > attHistFilter.to) return false;
+    if (attHistFilter.employee !== 'all' && a.employeeId !== attHistFilter.employee) return false;
+    if (attHistFilter.branch !== 'all') {
+      const ex = getEmpExtras(a.employeeId);
+      const empBranch = (ex.branch || '').trim();
+      if (attHistFilter.branch === 'none') {
+        if (empBranch !== '') return false;
+      } else if (empBranch !== attHistFilter.branch) return false;
+    }
+    if (attHistFilter.status !== 'all' && a.status !== attHistFilter.status) return false;
+    return true;
+  });
+  return records.sort((a,b)=> b.date.localeCompare(a.date) || (a.clockIn||'').localeCompare(b.clockIn||''));
+}
+function printAttendanceEvidence() {
+  const records = getAttHistFiltered();
+  if (records.length === 0) { toast('No records to print — adjust the filter first', 'error'); return; }
+  const c = state.settings;
+  const empFilterLabel = attHistFilter.employee === 'all' ? 'All employees' : (() => { const e = getEmployee(attHistFilter.employee); return e ? e.firstName+' '+e.lastName : 'Unknown'; })();
+  const branchFilterLabel = attHistFilter.branch === 'all' ? 'All branches' : attHistFilter.branch === 'none' ? 'Unassigned' : attHistFilter.branch;
+  const statusFilterLabel = attHistFilter.status === 'all' ? 'All statuses' : attHistFilter.status.charAt(0).toUpperCase()+attHistFilter.status.slice(1);
+  const totalHrs = records.reduce((s,a) => s + (a.clockIn && a.clockOut ? diffMinutes(a.clockIn,a.clockOut) : 0), 0);
+  const presentN = records.filter(a => a.status==='present').length;
+  const lateN    = records.filter(a => a.status==='late').length;
+  const absentN  = records.filter(a => a.status==='absent').length;
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Attendance Report — ${escapeHTML(empFilterLabel)}</title>
+  <style>
+    body { font-family: Inter, system-ui, sans-serif; color:#1a1a1a; padding:0; margin:0; background:#f3f4f6; }
+    .page { background:#ffffff; max-width:900px; margin:24px auto; padding:42px 56px; box-shadow:0 6px 24px rgba(15,23,42,0.08); border-radius:4px; position:relative; }
+    .head { display:flex; justify-content:space-between; align-items:center; padding-bottom:22px; border-bottom:1px solid #e5e7eb; margin-bottom:22px; }
+    .head .brand { display:flex; align-items:center; gap:14px; }
+    .head img.logo { width:64px; height:64px; object-fit:contain; }
+    .head h1 { margin:0; font-size:22px; color:#111827; font-weight:700; }
+    .head .sub { font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.14em; margin-top:4px; }
+    .head .doc-id { text-align:right; font-size:11px; color:#6b7280; }
+    .head .doc-id .num { font-size:14px; color:#111827; font-weight:700; margin-top:2px; }
+    .stamp-area { position:absolute; bottom:60px; right:80px; opacity:0.92; transform:rotate(-6deg); pointer-events:none; }
+    .stamp-area img { width:140px; height:140px; object-fit:contain; }
+    h2 { color:#111827; font-size:16px; margin:24px 0 10px; padding-bottom:6px; border-bottom:1px solid #e5e7eb; font-weight:700; }
+    .filters { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:14px 16px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:18px; }
+    .filters .lbl { font-size:10px; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; }
+    .filters .val { font-size:13px; color:#111827; font-weight:600; margin-top:2px; }
+    .summary { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:18px; }
+    .stat { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:12px; text-align:center; }
+    .stat .lbl { font-size:10px; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; }
+    .stat .val { font-size:22px; font-weight:700; margin-top:4px; }
+    table { width:100%; border-collapse:collapse; background:#fff; border-radius:8px; overflow:hidden; border:1px solid #e5e7eb; font-size:12px; }
+    th { text-align:left; padding:9px 12px; background:#f9fafb; color:#6b7280; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid #e5e7eb; font-weight:600; }
+    td { padding:9px 12px; border-bottom:1px solid #f3f4f6; color:#111827; }
+    tr:last-child td { border-bottom:none; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:10px; font-weight:600; }
+    .p-present { background:#ecfdf5; color:#047857; }
+    .p-late    { background:#fffbeb; color:#b45309; }
+    .p-absent  { background:#fef2f2; color:#b91c1c; }
+    .signoff { margin-top:36px; display:grid; grid-template-columns:1fr 1fr; gap:60px; }
+    .signoff .line { border-top:1px solid #1a1a1a; padding-top:6px; font-size:11px; color:#6b7280; }
+    .footer { margin-top:24px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:10px; color:#9ca3af; text-align:center; letter-spacing:0.04em; }
+    .actions { position:sticky; top:0; padding:14px 24px; background:#1f2937; text-align:right; z-index:10; }
+    .btn { background:#fff; color:#1f2937; border:none; padding:10px 18px; border-radius:6px; font-weight:600; cursor:pointer; font-family:inherit; margin-left:8px; }
+    .btn-ghost { background:transparent; color:#fff; border:1px solid #4b5563; }
+    @media print { .actions { display:none; } body { background:#fff; } .page { box-shadow:none; margin:0; max-width:none; padding:14mm 16mm; } @page { size:A4; margin:0; } }
+  </style></head><body>
+  <div class="actions">
+    <button class="btn btn-ghost" onclick="window.close()">Close</button>
+    <button class="btn" onclick="window.print()">🖨️ Print or Save as PDF</button>
+  </div>
+  <div class="page">
+    <div class="head">
+      <div class="brand">
+        <img class="logo" src="${logoURL()}" alt="" onerror="this.style.display='none'" />
+        <div>
+          <h1>${escapeHTML(c.companyName)}</h1>
+          <div class="sub">Attendance Report — Evidence Document</div>
+        </div>
+      </div>
+      <div class="doc-id">
+        Generated<br>
+        <span class="num">${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</span>
+      </div>
+    </div>
+
+    <h2>Filter parameters</h2>
+    <div class="filters">
+      <div><div class="lbl">Employee</div><div class="val">${escapeHTML(empFilterLabel)}</div></div>
+      <div><div class="lbl">Branch</div><div class="val">${escapeHTML(branchFilterLabel)}</div></div>
+      <div><div class="lbl">Date range</div><div class="val">${fmtDate(attHistFilter.from)} → ${fmtDate(attHistFilter.to)}</div></div>
+      <div><div class="lbl">Status</div><div class="val">${escapeHTML(statusFilterLabel)}</div></div>
+    </div>
+
+    <h2>Summary</h2>
+    <div class="summary">
+      <div class="stat"><div class="lbl">Records</div><div class="val">${records.length}</div></div>
+      <div class="stat"><div class="lbl">Present</div><div class="val" style="color:#047857">${presentN}</div></div>
+      <div class="stat"><div class="lbl">Late</div><div class="val" style="color:#b45309">${lateN}</div></div>
+      <div class="stat"><div class="lbl">Absent</div><div class="val" style="color:#b91c1c">${absentN}</div></div>
+      <div class="stat"><div class="lbl">Total Hours</div><div class="val">${minutesToHrs(totalHrs)}h</div></div>
+    </div>
+
+    <h2>Detailed records</h2>
+    <table>
+      <thead><tr><th>#</th><th>Date</th><th>Day</th><th>Employee</th><th>Branch</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th><th>Location</th></tr></thead>
+      <tbody>
+        ${records.map((a,i) => {
+          const e = getEmployee(a.employeeId);
+          const ex = getEmpExtras(a.employeeId);
+          const dow = new Date(a.date+'T00:00:00').toLocaleDateString(undefined,{weekday:'short'});
+          const cls = a.status==='present'?'p-present':a.status==='late'?'p-late':'p-absent';
+          return `<tr>
+            <td>${i+1}</td>
+            <td>${fmtDate(a.date)}</td>
+            <td style="color:#6b7280">${dow}</td>
+            <td><strong>${escapeHTML(e?(e.firstName+' '+e.lastName):'—')}</strong></td>
+            <td>${escapeHTML(ex.branch||'—')}</td>
+            <td>${a.clockIn||'—'}</td>
+            <td>${a.clockOut||'—'}</td>
+            <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+            <td><span class="pill ${cls}">${escapeHTML(a.status)}</span></td>
+            <td style="color:#6b7280; font-size:10px">${escapeHTML(a.location?.label||'—')}${a.location?.lat ? `<br>${a.location.lat.toFixed(4)}, ${a.location.lng.toFixed(4)}`:''}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+
+    <div class="signoff">
+      <div><div class="line">Issued by — HR Department</div></div>
+      <div><div class="line">Verified &amp; received by</div></div>
+    </div>
+
+    ${state.companyStamp ? `<div class="stamp-area"><img src="${escapeHTML(state.companyStamp)}" alt="Stamp" /></div>` : ''}
+
+    <div class="footer">${escapeHTML(c.companyName)} • Confidential record • Generated ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} • This is a computer-generated report.</div>
+  </div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  win.document.write(html); win.document.close();
+}
 function renderAttendance() {
   const me = currentEmployee();
   const today = todayISO();
@@ -2402,29 +2567,121 @@ function renderAttendance() {
       </div>
     `;
   } else {
-    const sorted = state.attendance.slice().sort((a,b)=>b.date.localeCompare(a.date) || a.clockIn.localeCompare(b.clockIn));
+    /* All History — filterable by employee, branch, and date range */
+    if (!attHistFilter.from) {
+      const d = new Date(); d.setDate(d.getDate()-30);
+      attHistFilter.from = d.toISOString().slice(0,10);
+      attHistFilter.to = todayISO();
+    }
+    const sorted = state.attendance
+      .filter(a => {
+        if (a.date < attHistFilter.from || a.date > attHistFilter.to) return false;
+        if (attHistFilter.employee !== 'all' && a.employeeId !== attHistFilter.employee) return false;
+        if (attHistFilter.branch !== 'all') {
+          const ex = getEmpExtras(a.employeeId);
+          const empBranch = (ex.branch || '').trim();
+          if (attHistFilter.branch === 'none') {
+            if (empBranch !== '') return false;
+          } else if (empBranch !== attHistFilter.branch) return false;
+        }
+        if (attHistFilter.status !== 'all' && a.status !== attHistFilter.status) return false;
+        return true;
+      })
+      .sort((a,b)=> b.date.localeCompare(a.date) || (a.clockIn||'').localeCompare(b.clockIn||''));
+
+    const totalRecords = sorted.length;
+    const presentN = sorted.filter(a => a.status==='present').length;
+    const lateN    = sorted.filter(a => a.status==='late').length;
+    const totalHrs = sorted.reduce((s,a)=> s + (a.clockIn && a.clockOut ? diffMinutes(a.clockIn,a.clockOut) : 0), 0);
+
     main = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
-        <div class="p-5 border-b border-slate-100 flex justify-between items-center">
-          <h3 class="font-display text-lg font-semibold text-slate-900">All History</h3>
-          <button onclick="exportCSV('all-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+        <div class="p-5 border-b border-slate-100 flex justify-between items-center flex-wrap gap-3">
+          <div>
+            <h3 class="font-display text-lg font-semibold text-slate-900">${icon('clock','w-5 h-5 inline text-brand-600')} Attendance History</h3>
+            <div class="text-xs text-slate-500 mt-0.5">${totalRecords} record(s) matched · ${minutesToHrs(totalHrs)}h logged</div>
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="exportCSV('att-history-filtered')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} CSV</button>
+            <button onclick="printAttendanceEvidence()" class="btn btn-primary btn-sm">${icon('file','w-4 h-4')} Print as evidence</button>
+          </div>
         </div>
+
+        <!-- Filter row -->
+        <div class="px-5 py-3 border-b border-slate-100 bg-slate-50">
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Employee</div>
+              <select class="input !py-2 !text-sm" onchange="attHistFilter.employee=this.value; render();">
+                <option value="all" ${attHistFilter.employee==='all'?'selected':''}>All employees</option>
+                ${state.employees.slice().sort((a,b)=>a.firstName.localeCompare(b.firstName)).map(e=>`<option value="${e.id}" ${attHistFilter.employee===e.id?'selected':''}>${escapeHTML(e.firstName+' '+e.lastName)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Branch</div>
+              <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
+                <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
+                <option value="none" ${attHistFilter.branch==='none'?'selected':''}>None (unassigned)</option>
+                ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${attHistFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">From</div>
+              <input type="date" class="input !py-2 !text-sm" value="${escapeHTML(attHistFilter.from)}" onchange="attHistFilter.from=this.value; render();">
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">To</div>
+              <input type="date" class="input !py-2 !text-sm" value="${escapeHTML(attHistFilter.to)}" onchange="attHistFilter.to=this.value; render();">
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Status</div>
+              <select class="input !py-2 !text-sm" onchange="attHistFilter.status=this.value; render();">
+                <option value="all" ${attHistFilter.status==='all'?'selected':''}>All statuses</option>
+                <option value="present" ${attHistFilter.status==='present'?'selected':''}>Present</option>
+                <option value="late" ${attHistFilter.status==='late'?'selected':''}>Late</option>
+                <option value="absent" ${attHistFilter.status==='absent'?'selected':''}>Absent</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-2 flex items-center gap-2 flex-wrap">
+            <span class="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Quick range:</span>
+            <button onclick="setAttHistRange('today')" class="text-xs px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:bg-brand-50 text-slate-600 hover:text-brand-700">Today</button>
+            <button onclick="setAttHistRange('yesterday')" class="text-xs px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:bg-brand-50 text-slate-600 hover:text-brand-700">Yesterday</button>
+            <button onclick="setAttHistRange('week')" class="text-xs px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:bg-brand-50 text-slate-600 hover:text-brand-700">Last 7 days</button>
+            <button onclick="setAttHistRange('month')" class="text-xs px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:bg-brand-50 text-slate-600 hover:text-brand-700">Last 30 days</button>
+            <button onclick="setAttHistRange('lastMonth')" class="text-xs px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:bg-brand-50 text-slate-600 hover:text-brand-700">Last month</button>
+            <button onclick="attHistFilter={employee:'all',branch:'all',status:'all',from:'',to:''}; render();" class="text-xs px-2.5 py-1 rounded-full bg-white border border-slate-200 hover:bg-rose-50 text-slate-500 hover:text-rose-600">Clear all</button>
+          </div>
+        </div>
+
+        <!-- Summary chips -->
+        <div class="grid grid-cols-4 gap-px bg-slate-100">
+          <div class="bg-white p-3 text-center"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Records</div><div class="text-xl font-bold text-slate-900 mt-0.5">${totalRecords}</div></div>
+          <div class="bg-white p-3 text-center"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Present</div><div class="text-xl font-bold text-emerald-600 mt-0.5">${presentN}</div></div>
+          <div class="bg-white p-3 text-center"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Late</div><div class="text-xl font-bold text-amber-600 mt-0.5">${lateN}</div></div>
+          <div class="bg-white p-3 text-center"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total Hours</div><div class="text-xl font-bold text-slate-900 mt-0.5">${minutesToHrs(totalHrs)}h</div></div>
+        </div>
+
         <div class="overflow-x-auto">
           <table class="data">
-            <thead><tr><th>Date</th><th>Employee</th><th>In</th><th>Out</th><th>Hours</th><th>Status</th></tr></thead>
+            <thead><tr><th>Date</th><th>Employee</th><th>Branch</th><th>In</th><th>Out</th><th>Hours</th><th>Status</th></tr></thead>
             <tbody>
-              ${sorted.slice(0,200).map(a => {
+              ${totalRecords===0 ? `<tr><td colspan="7" class="text-center text-slate-400 !py-10">No records match these filters. Try widening the date range or changing the employee/branch.</td></tr>` :
+                sorted.slice(0,500).map(a => {
                 const e = getEmployee(a.employeeId); if(!e) return '';
+                const ex = getEmpExtras(e.id);
                 return `
                 <tr class="hover-row">
-                  <td>${fmtDate(a.date)}</td>
-                  <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span>${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
-                  <td>${a.clockIn||'—'}</td>
-                  <td>${a.clockOut||'—'}</td>
-                  <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td class="font-medium">${fmtDate(a.date)}</td>
+                  <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<a href="#/employee/${e.id}" class="font-medium hover:text-brand-700 hover:underline">${escapeHTML(e.firstName+' '+e.lastName)}</a></div></td>
+                  <td>${ex.branch ? `<span class="badge badge-blue">${escapeHTML(ex.branch)}</span>` : '<span class="text-xs text-slate-400">—</span>'}</td>
+                  <td class="tabular-nums">${a.clockIn||'—'}</td>
+                  <td class="tabular-nums">${a.clockOut||'—'}</td>
+                  <td class="tabular-nums">${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
                   <td>${statusBadge(a.status)}</td>
                 </tr>`;
               }).join('')}
+              ${sorted.length>500 ? `<tr><td colspan="7" class="text-center text-slate-400 text-xs !py-3">Showing first 500 of ${sorted.length}. Narrow filters to see more.</td></tr>`:''}
             </tbody>
           </table>
         </div>
@@ -2895,6 +3152,7 @@ function generatePayrollReport(period) {
     </tbody>
   </table>
 
+  ${state.companyStamp ? `<div style="margin-top:24px; text-align:right; padding-right:24px;">${stampImgHTML(110, 0.88)}</div>` : ''}
   <div class="footer">${escapeHTML(c.companyName)} • Payroll report for ${escapeHTML(monthName)} • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
@@ -2977,6 +3235,7 @@ function openPayslip(payrollId) {
       <tr class="total"><td>Net pay</td><td style="text-align:right">${fmtMoney(p.net)}</td></tr>
     </tbody>
   </table>
+  ${state.companyStamp ? `<div style="margin-top:30px; text-align:right; padding-right:24px;">${stampImgHTML(120, 0.88)}</div>` : ''}
   <div class="footer">
     This is a computer-generated payslip and does not require a signature.<br>
     ${escapeHTML(c.companyName)} • Generated ${new Date().toLocaleDateString()}
@@ -3355,6 +3614,28 @@ function renderSettings() {
       </div>
 
       <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">${icon('shield','w-5 h-5 inline text-brand-600')} Company Stamp</h3>
+        <p class="text-sm text-slate-500 mb-5">Upload your official company stamp / seal image. It will appear on warning letters, certificates, payslips, payroll reports, and printable attendance reports. PNG with transparent background works best.</p>
+        <div class="flex items-center gap-6 flex-wrap">
+          <div class="w-32 h-32 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden" id="stamp-preview">
+            ${state.companyStamp ? `<img src="${escapeHTML(state.companyStamp)}" alt="Company stamp" style="max-width:100%; max-height:100%; object-fit:contain;">` : `<div class="text-xs text-slate-400 text-center px-2">No stamp<br>uploaded</div>`}
+          </div>
+          <div class="flex-1 min-w-[200px]">
+            <div class="flex gap-2 mb-3">
+              <label class="btn btn-primary cursor-pointer">
+                ${icon('upload','w-4 h-4')} ${state.companyStamp ? 'Replace stamp' : 'Upload stamp'}
+                <input type="file" accept="image/*" class="hidden" onchange="handleStampUpload(event)">
+              </label>
+              ${state.companyStamp ? `<button onclick="removeCompanyStamp()" class="btn btn-danger">${icon('trash','w-4 h-4')} Remove</button>` : ''}
+            </div>
+            <div class="text-xs text-slate-500 leading-relaxed">
+              <strong>Tip:</strong> Use a high-resolution PNG (at least 300×300px) with a transparent background so the stamp blends nicely on white-paper templates. Max 1 MB.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Danger zone</h3>
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
@@ -3448,6 +3729,32 @@ function useMyLocationForBranch() {
   }, err => {
     toast('Could not get location: ' + err.message, 'error');
   }, { timeout: 8000, enableHighAccuracy: true });
+}
+
+function handleStampUpload(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  if (file.size > 1024 * 1024) { toast('Stamp image must be under 1 MB', 'error'); ev.target.value=''; return; }
+  if (!file.type.startsWith('image/')) { toast('Please choose an image file', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    state.companyStamp = e.target.result;
+    saveLocalData();
+    render();
+    toast('Company stamp uploaded — it will appear on all printed documents', 'success');
+  };
+  reader.readAsDataURL(file);
+}
+function removeCompanyStamp() {
+  if (!confirm('Remove the company stamp? Documents will print without it.')) return;
+  state.companyStamp = '';
+  saveLocalData();
+  render();
+  toast('Company stamp removed', 'success');
+}
+function stampImgHTML(size = 130, opacity = 0.92) {
+  if (!state.companyStamp) return '';
+  return `<img src="${escapeHTML(state.companyStamp)}" alt="Company stamp" style="width:${size}px; height:${size}px; object-fit:contain; opacity:${opacity}; transform:rotate(-6deg); pointer-events:none;">`;
 }
 
 async function saveSettings() {
@@ -3577,6 +3884,21 @@ function exportCSV(kind) {
       const e = getEmployee(a.employeeId); if(!e) return;
       rows.push([a.date, e.firstName+' '+e.lastName, a.clockIn, a.clockOut||'', a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'', a.status]);
     });
+  } else if (kind==='att-history-filtered') {
+    rows = [['Date','Day','Employee','Branch','Role','Clock In','Clock Out','Hours','Status','Location']];
+    const filtered = getAttHistFiltered();
+    filtered.forEach(a => {
+      const e = getEmployee(a.employeeId); if(!e) return;
+      const ex = getEmpExtras(e.id);
+      const dow = new Date(a.date+'T00:00:00').toLocaleDateString(undefined,{weekday:'short'});
+      rows.push([
+        a.date, dow, e.firstName+' '+e.lastName, ex.branch||'', e.role,
+        a.clockIn||'', a.clockOut||'',
+        a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut)) : '',
+        a.status, a.location?.label||'',
+      ]);
+    });
+    filename = `attendance-${attHistFilter.from}_to_${attHistFilter.to}.csv`;
   } else if (kind==='payroll') {
     rows = [['Employee','Period','Base','Bonus','Deductions','Net','Status','Paid on']];
     state.payroll.forEach(p => {
@@ -3855,9 +4177,10 @@ function printWarningLetter(id) {
     ${w.notes ? `<h2>Expected corrective action</h2><div class="body">${escapeHTML(w.notes).replace(/\n/g,'<br>')}</div>` : ''}
     <p style="margin-top:22px">Please consider this notice as an opportunity to address and improve the matter described above. Continued occurrences of this nature may result in further disciplinary action, up to and including termination of employment.</p>
     <p>If you wish to provide a written response, please submit it to the HR department within five (5) working days of receipt.</p>
-    <div class="sign">
+    <div class="sign" style="position:relative">
       <div><div class="line">${escapeHTML((issuer?(issuer.firstName+' '+issuer.lastName):'') + ' — Issuing manager')}</div></div>
       <div><div class="line">Employee acknowledgment &amp; signature</div></div>
+      ${state.companyStamp ? `<div style="position:absolute; left:50%; top:-30px; transform:translateX(-50%);">${stampImgHTML(120, 0.85)}</div>` : ''}
     </div>
     <div class="footer">${escapeHTML(c.companyName)} • Confidential personnel record • Generated ${new Date().toLocaleDateString()}</div>
   </div>
@@ -4270,10 +4593,12 @@ function printCertificate(id) {
     ${c.period ? `<div class="period">For the period of ${escapeHTML(c.period)}</div>` : ''}
     <div class="signs">
       <div class="sign"><div class="sign-name">${escapeHTML(issuer? issuer.firstName+' '+issuer.lastName:'')}</div><div class="sign-line">Issuing Authority</div></div>
-      <div class="seal">
-        <img src="${logoURL()}" alt="" onerror="this.style.display='none'" />
-        <div class="seal-text">OFFICIAL<br>SEAL</div>
-      </div>
+      ${state.companyStamp
+        ? `<div style="display:flex; align-items:center; justify-content:center;">${stampImgHTML(140, 0.9)}</div>`
+        : `<div class="seal">
+            <img src="${logoURL()}" alt="" onerror="this.style.display='none'" />
+            <div class="seal-text">OFFICIAL<br>SEAL</div>
+          </div>`}
       <div class="sign"><div class="sign-name">${new Date(c.issuedAt).toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'})}</div><div class="sign-line">Date of Issue</div></div>
     </div>
   </div>
