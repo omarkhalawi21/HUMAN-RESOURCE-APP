@@ -5112,22 +5112,62 @@ function renderDocuments() {
     </div>
   `;
 }
+// Standard renewal periods used for the auto-fill buttons in the renew modal.
+// IQAMA in KSA renews for 3 months; Baladiya health card for 1 year.
+const IQAMA_RENEW_MONTHS    = 3;
+const BALADIYA_RENEW_MONTHS = 12;
+// Add `n` calendar months to today and return YYYY-MM-DD. Day clamps to the
+// target month's last day if today is e.g. the 31st and the target month is
+// shorter (so adding 1 month to Jan 31 gives Feb 28/29, not Mar 3).
+function todayPlusMonths(n) {
+  const d = new Date();
+  const targetMonth = d.getMonth() + n;
+  const target = new Date(d.getFullYear(), targetMonth, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth()+1, 0).getDate();
+  target.setDate(Math.min(d.getDate(), lastDay));
+  return target.toISOString().slice(0,10);
+}
+// Click handler for the renew-modal auto-fill buttons.
+function applyRenewalPeriod(target) {
+  const months = target === 'iqama' ? IQAMA_RENEW_MONTHS : BALADIYA_RENEW_MONTHS;
+  const inputId = target === 'iqama' ? 'r-iqama-exp' : 'r-bal-exp';
+  const inp = document.getElementById(inputId);
+  if (inp) inp.value = todayPlusMonths(months);
+}
 function openRenewModal(empId) {
   const e = getEmployee(empId);
   if (!e) return;
   const x = getEmpExtras(empId);
+  // Pre-compute the renewed expiry dates so they show up in the form on
+  // open. User can still adjust before saving.
+  const newIqamaExp    = todayPlusMonths(IQAMA_RENEW_MONTHS);
+  const newBaladiyaExp = todayPlusMonths(BALADIYA_RENEW_MONTHS);
   const form = `
-    <div class="text-sm text-slate-600 mb-4">Renewing documents for <strong>${escapeHTML(e.firstName+' '+e.lastName)}</strong>.</div>
+    <div class="text-sm text-slate-600 mb-4">Renewing documents for <strong>${escapeHTML(e.firstName+' '+e.lastName)}</strong>. New expiry dates are auto-calculated &mdash; adjust if needed.</div>
     <div class="grid grid-cols-2 gap-4">
-      <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-1">${escapeHTML(t('iqama'))} — Resident ID</div></div>
+      <div class="col-span-2 flex items-center justify-between mt-1">
+        <div class="text-xs uppercase tracking-wider font-semibold text-slate-500">${escapeHTML(t('iqama'))} &mdash; Resident ID</div>
+        <button type="button" onclick="applyRenewalPeriod('iqama')" class="text-xs text-brand-600 hover:underline">Renew &middot; +${IQAMA_RENEW_MONTHS} months</button>
+      </div>
       <div><label class="label">IQAMA number</label><input id="r-iqama-no" class="input" value="${escapeHTML(x.iqama?.number||'')}"></div>
-      <div><label class="label">New expiry date</label><input id="r-iqama-exp" class="input" type="date" value="${escapeHTML(x.iqama?.expiry||'')}"></div>
-      <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-3">${escapeHTML(t('baladiya'))} — Health Card</div></div>
+      <div>
+        <label class="label">New expiry date</label>
+        <input id="r-iqama-exp" class="input" type="date" value="${escapeHTML(newIqamaExp)}">
+        ${x.iqama?.expiry ? `<div class="text-[11px] text-slate-400 mt-1">Previous: ${fmtDate(x.iqama.expiry)}</div>` : ''}
+      </div>
+      <div class="col-span-2 flex items-center justify-between mt-3">
+        <div class="text-xs uppercase tracking-wider font-semibold text-slate-500">${escapeHTML(t('baladiya'))} &mdash; Health Card</div>
+        <button type="button" onclick="applyRenewalPeriod('baladiya')" class="text-xs text-brand-600 hover:underline">Renew &middot; +1 year</button>
+      </div>
       <div><label class="label">Baladiya number</label><input id="r-bal-no" class="input" value="${escapeHTML(x.baladiya?.number||'')}"></div>
-      <div><label class="label">New expiry date</label><input id="r-bal-exp" class="input" type="date" value="${escapeHTML(x.baladiya?.expiry||'')}"></div>
+      <div>
+        <label class="label">New expiry date</label>
+        <input id="r-bal-exp" class="input" type="date" value="${escapeHTML(newBaladiyaExp)}">
+        ${x.baladiya?.expiry ? `<div class="text-[11px] text-slate-400 mt-1">Previous: ${fmtDate(x.baladiya.expiry)}</div>` : ''}
+      </div>
     </div>
     <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-xs text-emerald-800 mt-4">
-      ${icon('check','w-4 h-4 inline')} Updating an expiry date here counts as a renewal — the previous date is replaced.
+      ${icon('check','w-4 h-4 inline')} New expiries default to <strong>+${IQAMA_RENEW_MONTHS} months</strong> for IQAMA and <strong>+1 year</strong> for Baladiya from today. Saving here counts as a renewal &mdash; the previous date is replaced.
     </div>
   `;
   openModal('Renew documents', form, async () => {
