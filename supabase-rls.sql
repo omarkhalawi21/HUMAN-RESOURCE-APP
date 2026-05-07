@@ -70,6 +70,14 @@ AS $$
 DECLARE
   is_first boolean;
 BEGIN
+  -- Idempotent: if an employee row already maps to this auth user
+  -- (manual link by an admin, retried trigger, etc.), do nothing.
+  -- An IF NOT EXISTS check works regardless of whether user_id has a
+  -- UNIQUE constraint, which we don't assume.
+  IF EXISTS (SELECT 1 FROM public.employees WHERE user_id = NEW.id) THEN
+    RETURN NEW;
+  END IF;
+
   SELECT NOT EXISTS (SELECT 1 FROM public.employees) INTO is_first;
 
   INSERT INTO public.employees (
@@ -86,8 +94,7 @@ BEGIN
     CASE WHEN is_first THEN 'Management' ELSE 'General' END,
     CURRENT_DATE,
     0
-  )
-  ON CONFLICT (user_id) DO NOTHING;
+  );
 
   RETURN NEW;
 END;
