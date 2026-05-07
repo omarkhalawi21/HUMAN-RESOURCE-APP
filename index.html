@@ -5427,9 +5427,13 @@ function closeModal() {
   }
   _modalPrevFocus = null;
 }
-function submitModal() {
+async function submitModal() {
   if (!modalOnSave) return closeModal();
-  const result = modalOnSave();
+  // MUST await: many save callbacks are async (Supabase calls). Without
+  // awaiting, the modal closes synchronously and any field reads that
+  // happen after the first await find an empty DOM (silent data loss —
+  // saw branch/nationality/iqama persisted as null because of this).
+  const result = await modalOnSave();
   if (result !== false) closeModal();
 }
 
