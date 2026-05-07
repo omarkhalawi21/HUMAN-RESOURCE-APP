@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; object-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-src 'self' data:; base-uri 'self'; form-action 'self';" />
 <title>Hassad Coffee Roasters — HR</title>
 <link rel="icon" type="image/png" href="logo.png" />
+<!-- Tailwind Play CDN — for production, replace with a precompiled local build (see tailwindcss.com/docs/installation). -->
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap" rel="stylesheet">
@@ -145,9 +147,10 @@
   [dir="rtl"] .toast { right: auto; left: 20px; animation: slideInL .25s ease-out; }
   @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes slideInL { from { transform: translateX(-20px); opacity: 0; } to { transform: none; opacity: 1; } }
-  .tab { padding: 10px 16px; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #6b5a3f; cursor: pointer; transition: all .15s; }
+  .tab { padding: 10px 16px; border: 0; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #6b5a3f; cursor: pointer; transition: all .15s; background: transparent; font-family: inherit; }
   .tab.active { color: #6e4220; border-bottom-color: #a87035; }
   .tab:hover:not(.active) { color: #2a1f15; }
+  .tab:focus-visible { outline: 2px solid #a87035; outline-offset: 2px; border-radius: 4px; }
   .progress-bar { height: 8px; background: #f4e8d4; border-radius: 999px; overflow: hidden; }
   .progress-fill { height: 100%; background: linear-gradient(90deg,#a87035,#6e4220); transition: width .3s; }
 
@@ -412,38 +415,7 @@ function emptyState() {
   };
 }
 
-/* -------------------- LOCAL STORAGE FOR NEW FEATURES -------------------- */
-const LS_KEY_PREFIX = 'hassad_hr_v2_';
-function lsKey() { return LS_KEY_PREFIX + (state.companyId || 'default'); }
-function loadLocalData() {
-  try {
-    const raw = localStorage.getItem(lsKey());
-    if (!raw) return;
-    const data = JSON.parse(raw) || {};
-    state.warnings    = Array.isArray(data.warnings)    ? data.warnings    : [];
-    state.advances    = Array.isArray(data.advances)    ? data.advances    : [];
-    state.certificates= Array.isArray(data.certificates)? data.certificates: [];
-    state.archive     = Array.isArray(data.archive)     ? data.archive     : [];
-    state.empExtras   = (data.empExtras && typeof data.empExtras === 'object') ? data.empExtras : {};
-    state.companyStamp = typeof data.companyStamp === 'string' ? data.companyStamp : '';
-  } catch(e) { console.warn('Local data parse failed', e); }
-}
-function saveLocalData() {
-  try {
-    const payload = {
-      warnings:     state.warnings,
-      advances:     state.advances,
-      certificates: state.certificates,
-      archive:      state.archive,
-      empExtras:    state.empExtras,
-      companyStamp: state.companyStamp || '',
-    };
-    localStorage.setItem(lsKey(), JSON.stringify(payload));
-  } catch(e) {
-    console.warn('Local save failed (storage may be full):', e);
-    toast('Storage full — some data may not persist', 'error');
-  }
-}
+/* -------------------- (V2 features now persisted to Supabase via mutations below) -------------------- */
 function defaultSchedule() {
   const start = state.settings.workStart || '09:00';
   const end   = state.settings.workEnd   || '17:00';
@@ -457,55 +429,56 @@ function defaultSchedule() {
     6: { off: false, start, end }, // Sat
   };
 }
-function getEmpExtras(id) {
-  if (!state.empExtras[id]) {
-    state.empExtras[id] = {
-      schedule: defaultSchedule(),
-      iqama:    { number: '', expiry: '' },
-      baladiya: { number: '', expiry: '' },
-      branch:      '',
-      nationality: '',
-    };
-  }
-  const x = state.empExtras[id];
-  if (!x.iqama) x.iqama = { number:'', expiry:'' };
-  if (!x.baladiya) x.baladiya = { number:'', expiry:'' };
-  if (typeof x.branch !== 'string')      x.branch = '';
-  if (typeof x.nationality !== 'string') x.nationality = '';
-
-  // Migrate legacy shape (shiftStart/shiftEnd/offDays) → schedule{0..6:{off,start,end}}
-  if (!x.schedule) {
-    const start = x.shiftStart || state.settings.workStart || '09:00';
-    const end   = x.shiftEnd   || state.settings.workEnd   || '17:00';
-    const offs  = Array.isArray(x.offDays) ? x.offDays : [5];
-    const sched = {};
-    for (let i=0;i<7;i++) sched[i] = { off: offs.includes(i), start, end };
-    x.schedule = sched;
-  }
-  // Ensure all 7 days present and well-formed
-  for (let i=0;i<7;i++) {
-    if (!x.schedule[i] || typeof x.schedule[i] !== 'object') {
-      x.schedule[i] = { off:false, start: state.settings.workStart||'09:00', end: state.settings.workEnd||'17:00' };
-    }
-    if (typeof x.schedule[i].off !== 'boolean') x.schedule[i].off = false;
-    if (!x.schedule[i].start) x.schedule[i].start = state.settings.workStart||'09:00';
-    if (!x.schedule[i].end)   x.schedule[i].end   = state.settings.workEnd||'17:00';
-  }
-
-  // Convenience accessors used by older code paths — derived from schedule
+// Build a fresh extras object with sensible defaults. Used when an
+// employee has no employee_extras row in the DB yet.
+function emptyExtras() {
+  const x = {
+    schedule:    defaultSchedule(),
+    iqama:       { number: '', expiry: '' },
+    baladiya:    { number: '', expiry: '' },
+    branch:      '',
+    nationality: '',
+  };
+  decorateExtras(x);
+  return x;
+}
+// Add the read-only convenience accessors that older code paths use
+// (offDays / shiftStart / shiftEnd derived from `schedule`).
+function decorateExtras(x) {
   Object.defineProperty(x, 'offDays', {
     configurable: true,
-    get() { const r=[]; for (let i=0;i<7;i++) if (this.schedule[i].off) r.push(i); return r; }
+    get() { const r=[]; for (let i=0;i<7;i++) if (this.schedule?.[i]?.off) r.push(i); return r; }
   });
   Object.defineProperty(x, 'shiftStart', {
     configurable: true,
-    get() { for (let i=0;i<7;i++) if (!this.schedule[i].off) return this.schedule[i].start; return state.settings.workStart||'09:00'; }
+    get() { for (let i=0;i<7;i++) if (!this.schedule?.[i]?.off) return this.schedule[i].start; return state.settings.workStart||'09:00'; }
   });
   Object.defineProperty(x, 'shiftEnd', {
     configurable: true,
-    get() { for (let i=0;i<7;i++) if (!this.schedule[i].off) return this.schedule[i].end; return state.settings.workEnd||'17:00'; }
+    get() { for (let i=0;i<7;i++) if (!this.schedule?.[i]?.off) return this.schedule[i].end; return state.settings.workEnd||'17:00'; }
   });
   return x;
+}
+// Pure read — never mutates state. Returns the cached entry or a
+// fresh defaults object. (Render paths used to lazily INSERT here,
+// which silently grew localStorage; with Supabase that would mean
+// surprise network writes during render.)
+function getEmpExtras(id) {
+  return state.empExtras[id] || emptyExtras();
+}
+// Upsert an employee_extras row to Supabase and update local cache.
+// Returns true on success, false on error.
+async function saveEmpExtras(empId, x) {
+  const { data, error } = await sb.from('employee_extras')
+    .upsert(extrasToDb(empId, x), { onConflict: 'employee_id' })
+    .select().single();
+  if (error) {
+    console.error('employee_extras upsert failed:', error);
+    toast('Could not save: ' + error.message, 'error');
+    return false;
+  }
+  state.empExtras[empId] = mapExtrasFromDb(data);
+  return true;
 }
 function todaysShift(empId) {
   const x = getEmpExtras(empId);
@@ -566,7 +539,7 @@ function nearestBranch(lat, lng, accuracy=0) {
 /* -------------------- FIELD MAPPERS (DB snake_case ↔ JS camelCase) -------------------- */
 function mapCompanyFromDb(r) {
   if (!r) return null;
-  return { _id: r.id, companyName: r.name, workStart: (r.work_start||'09:00:00').slice(0,5), workEnd: (r.work_end||'17:00:00').slice(0,5), currency: r.currency, lang: r.language, requireLocation: r.require_location };
+  return { _id: r.id, companyName: r.name, workStart: (r.work_start||'09:00:00').slice(0,5), workEnd: (r.work_end||'17:00:00').slice(0,5), currency: r.currency, lang: r.language, requireLocation: r.require_location, companyStamp: r.company_stamp || '' };
 }
 function mapEmployeeFromDb(r) {
   return {
@@ -597,7 +570,7 @@ function mapAttendanceFromDb(r) {
     clockIn: r.clock_in ? r.clock_in.slice(0,5) : null,
     clockOut: r.clock_out ? r.clock_out.slice(0,5) : null,
     status: r.status, notes: r.notes||'',
-    location: (r.location_lat || r.location_label) ? { lat: r.location_lat, lng: r.location_lng, label: r.location_label||'Captured' } : null,
+    location: (r.location_lat != null || r.location_label) ? { lat: r.location_lat, lng: r.location_lng, label: r.location_label||'Captured' } : null,
     branchId: r.branch_id || null,
   };
 }
@@ -631,24 +604,123 @@ function mapPayrollFromDb(r) {
     net: Number(r.net)||0, status: r.status, paidAt: r.paid_at,
   };
 }
+/* V2 mappers — DB ↔ JS */
+function mapWarningFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id,
+    severity: r.severity, type: r.type||'',
+    date: r.date, reason: r.reason||'', notes: r.notes||'',
+    issuedBy: r.issued_by, issuedAt: r.issued_at,
+  };
+}
+function warningToDb(w) {
+  return {
+    employee_id: w.employeeId, severity: w.severity, type: w.type||null,
+    date: w.date||null, reason: w.reason||null, notes: w.notes||null,
+    issued_by: w.issuedBy||null,
+  };
+}
+function mapAdvanceFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id,
+    amount: Number(r.amount)||0, reason: r.reason||'',
+    requestedAt: r.requested_at, status: r.status,
+    deductFromPayroll: r.deduct_from_payroll||'none',
+    installmentsPaid: Number(r.installments_paid)||0,
+    decidedBy: r.decided_by, decidedAt: r.decided_at, repaidAt: r.repaid_at,
+  };
+}
+function advanceToDb(a) {
+  return {
+    employee_id: a.employeeId, amount: Number(a.amount)||0,
+    reason: a.reason||null, status: a.status||'pending',
+    deduct_from_payroll: a.deductFromPayroll||'none',
+  };
+}
+function mapCertificateFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id,
+    type: r.type, title: r.title||'', period: r.period||'',
+    message: r.message||'', issuedBy: r.issued_by, issuedAt: r.issued_at,
+  };
+}
+function certificateToDb(c) {
+  return {
+    employee_id: c.employeeId, type: c.type, title: c.title||null,
+    period: c.period||null, message: c.message||null, issued_by: c.issuedBy||null,
+  };
+}
+function mapArchiveFromDb(r) {
+  return {
+    id: r.id, name: r.name, category: r.category||'',
+    mime: r.mime||'', size: Number(r.size)||0, dataUrl: r.data_url||'',
+    description: r.description||'', uploadedBy: r.uploaded_by, uploadedAt: r.uploaded_at,
+  };
+}
+function archiveToDb(d) {
+  return {
+    name: d.name, category: d.category||null, mime: d.mime||null,
+    size: Number(d.size)||0, data_url: d.dataUrl||null,
+    description: d.description||null, uploaded_by: d.uploadedBy||null,
+  };
+}
+function mapExtrasFromDb(r) {
+  const x = {
+    schedule: r.schedule || defaultSchedule(),
+    iqama:    { number: r.iqama_number||'',    expiry: r.iqama_expiry||'' },
+    baladiya: { number: r.baladiya_number||'', expiry: r.baladiya_expiry||'' },
+    branch:      r.branch || '',
+    nationality: r.nationality || '',
+  };
+  // Ensure all 7 days present and well-formed
+  for (let i=0;i<7;i++) {
+    if (!x.schedule[i] || typeof x.schedule[i] !== 'object') {
+      x.schedule[i] = { off:false, start: state.settings.workStart||'09:00', end: state.settings.workEnd||'17:00' };
+    }
+    if (typeof x.schedule[i].off !== 'boolean') x.schedule[i].off = false;
+    if (!x.schedule[i].start) x.schedule[i].start = state.settings.workStart||'09:00';
+    if (!x.schedule[i].end)   x.schedule[i].end   = state.settings.workEnd||'17:00';
+  }
+  decorateExtras(x);
+  return x;
+}
+function extrasToDb(empId, x) {
+  return {
+    employee_id:     empId,
+    schedule:        x.schedule || defaultSchedule(),
+    iqama_number:    x.iqama?.number    || null,
+    iqama_expiry:    x.iqama?.expiry    || null,
+    baladiya_number: x.baladiya?.number || null,
+    baladiya_expiry: x.baladiya?.expiry || null,
+    branch:          x.branch          || null,
+    nationality:     x.nationality     || null,
+  };
+}
 
 /* -------------------- LOAD ALL FROM SUPABASE -------------------- */
 async function loadAll() {
   isLoadingData = true;
   try {
-    const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR] = await Promise.all([
+    const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
+           warningsR, advancesR, certificatesR, archiveR, extrasR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
       sb.from('leave_requests').select('*').order('created_at', { ascending: false }),
       sb.from('payroll').select('*').order('period', { ascending: false }),
       sb.from('branches').select('*').order('name'),
+      sb.from('warnings').select('*').order('issued_at', { ascending: false }),
+      sb.from('advances').select('*').order('requested_at', { ascending: false }),
+      sb.from('certificates').select('*').order('issued_at', { ascending: false }),
+      sb.from('archive_documents').select('*').order('uploaded_at', { ascending: false }),
+      sb.from('employee_extras').select('*'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
       const c = mapCompanyFromDb(companyR.data);
       state.companyId = c._id;
       state.settings = { companyName: c.companyName, workStart: c.workStart, workEnd: c.workEnd, currency: c.currency, lang: c.lang || state.settings.lang, requireLocation: c.requireLocation };
+      state.companyStamp = c.companyStamp || '';
     }
     state.employees = (employeesR.data || []).map(mapEmployeeFromDb);
     state.attendance = (attendanceR.data || []).map(mapAttendanceFromDb);
@@ -661,8 +733,13 @@ async function loadAll() {
     state.users = state.employees.filter(e => e.user_id).map(e => ({
       id: 'u-'+e.id, username: e.email, role: e.isAdmin?'admin':'employee', employeeId: e.id, user_id: e.user_id
     }));
-    /* Load v2 features from localStorage (warnings, advances, certificates, archive, empExtras) */
-    loadLocalData();
+    /* V2 features now loaded from Supabase */
+    state.warnings     = (warningsR.data     || []).map(mapWarningFromDb);
+    state.advances     = (advancesR.data     || []).map(mapAdvanceFromDb);
+    state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
+    state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
+    state.empExtras    = {};
+    (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
     console.error('Load failed:', e);
     toast('Failed to load data: '+e.message, 'error');
@@ -676,12 +753,15 @@ function saveState() { /* no-op: data persisted to Supabase per-mutation */ }
 function loadState() { return emptyState(); }
 async function resetState() {
   if (!isAdmin()) return;
-  if (!confirm('Reset all company data? This deletes all employees, attendance, leave, and payroll records.')) return;
-  await Promise.all([
-    sb.from('attendance').delete().neq('id','00000000-0000-0000-0000-000000000000'),
-    sb.from('leave_requests').delete().neq('id','00000000-0000-0000-0000-000000000000'),
-    sb.from('payroll').delete().neq('id','00000000-0000-0000-0000-000000000000'),
-  ]);
+  if (!confirm('Reset all company data? This deletes attendance, leave, payroll, warnings, advances, certificates, archived documents, and any employees without a login account. Schedules and document expiries on remaining employees are kept.')) return;
+  const NIL = '00000000-0000-0000-0000-000000000000';
+  // Wipe transactional/historical tables (all use `id` as the PK column).
+  // employee_extras is intentionally NOT in this list — it's configuration
+  // tied to surviving employees, and any extras for deleted employees
+  // cascade automatically via the FK.
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents'];
+  const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
+  results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
   await loadAll(); render();
   toast('Company data reset','success');
@@ -718,6 +798,14 @@ const $$ = (sel) => document.querySelectorAll(sel);
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstChild; }
 function escapeHTML(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+// CSV cell escape with formula-injection guard. A leading =, +, -, @, tab,
+// or CR can be interpreted as a formula by Excel/Sheets — prefix with a
+// single quote to neutralize it, then quote-escape per RFC 4180.
+function csvCell(v) {
+  let s = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
 }
 function toast(msg, type='info') {
   const t = document.createElement('div');
@@ -859,7 +947,7 @@ function renderLogin() {
               <label class="label">${escapeHTML(t('password'))}</label>
               <div class="relative">
                 <input id="login-password" type="password" class="input ${isAr?'pl-10':'pr-10'}" autocomplete="current-password" placeholder="••••••••" />
-                <button type="button" onclick="togglePw('login-password')" class="absolute top-1/2 -translate-y-1/2 ${isAr?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
+                <button type="button" onclick="togglePw('login-password')" aria-label="Show or hide password" class="absolute top-1/2 -translate-y-1/2 ${isAr?'left-3':'right-3'} text-slate-400 hover:text-slate-600">
                   ${icon('eye','w-5 h-5')}
                 </button>
               </div>
@@ -958,18 +1046,32 @@ async function afterAuth(user) {
 }
 async function logout() {
   await sb.auth.signOut();
-  // Keep localStorage data — it's tied to companyId, will reload after next login
+  // All data lives in Supabase; in-memory state is rebuilt on next login
   state = emptyState();
   authMode = 'login';
   location.hash = '';
   render();
 }
-async function resetPasswordPrompt() {
-  const email = $('#login-email')?.value.trim() || prompt('Email to send reset link to:');
-  if (!email) return;
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
-  if (error) { toast(error.message, 'error'); return; }
-  toast('Password reset link sent to '+email, 'success');
+function resetPasswordPrompt() {
+  const prefill = $('#login-email')?.value.trim() || '';
+  const form = `
+    <div class="space-y-4">
+      <p class="text-sm text-slate-600">Enter the email associated with your account. We'll send a password-reset link there.</p>
+      <div>
+        <label class="label">Email</label>
+        <input id="rp-email" type="email" class="input" autocomplete="email" placeholder="you@hassad.coffee" value="${escapeHTML(prefill)}">
+      </div>
+    </div>
+  `;
+  openModal('Reset password', form, async () => {
+    const email = $('#rp-email').value.trim();
+    if (!email) { toast('Email required', 'error'); return false; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a valid email', 'error'); return false; }
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    if (error) { toast(error.message, 'error'); return false; }
+    toast('Reset link sent to ' + email, 'success');
+    return true;
+  }, { saveLabel: 'Send reset link' });
 }
 
 /* -------------------- LAYOUT (sidebar + topbar) -------------------- */
@@ -1672,8 +1774,8 @@ function renderEmployees() {
                 <td class="font-medium">${fmtMoney(e.salary)}</td>
                 <td>${statusBadge(e.status)}</td>
                 <td class="!text-end whitespace-nowrap">
-                  <button onclick="openEmployeeModal('${e.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-                  <button onclick="deleteEmployee('${e.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                  <button onclick="openEmployeeModal('${e.id}')" aria-label="Edit ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                  <button onclick="deleteEmployee('${e.id}')" aria-label="Delete ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                 </td>
               </tr>`;}).join('')}
           </tbody>
@@ -1856,7 +1958,7 @@ function renderEmployeeProfile(empId) {
                     <td class="text-rose-600">-${fmtMoney(p.deductions||0)}</td>
                     <td class="font-bold">${fmtMoney(p.net)}</td>
                     <td class="text-slate-500 text-xs">${fmtDate(p.paidAt)}</td>
-                    <td class="!text-end"><button onclick="openPayslip('${p.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button></td>
+                    <td class="!text-end"><button onclick="openPayslip('${p.id}')" aria-label="Open payslip ${escapeHTML(p.period)}" title="Open payslip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button></td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -1911,7 +2013,7 @@ function renderEmployeeProfile(empId) {
                     <td><span class="badge ${w.severity==='final'?'badge-red':w.severity==='written'?'badge-amber':'badge-slate'}">${escapeHTML(w.severity)}</span></td>
                     <td>${escapeHTML(w.type)}</td>
                     <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML(w.reason)}">${escapeHTML(w.reason)}</td>
-                    <td class="!text-end"><button onclick="printWarningLetter('${w.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button></td>
+                    <td class="!text-end"><button onclick="printWarningLetter('${w.id}')" aria-label="Print warning letter" title="Print letter" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button></td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -2060,9 +2162,9 @@ function openEmployeeModal(id) {
 
     <!-- Tabs inside modal -->
     <div class="flex gap-1 border-b border-slate-200 mb-4 -mx-1">
-      <div class="tab active" id="emp-tab-basic" onclick="switchEmpTab('basic')">Basic info</div>
-      <div class="tab" id="emp-tab-shift" onclick="switchEmpTab('shift')">Shift &amp; Off-days</div>
-      <div class="tab" id="emp-tab-docs" onclick="switchEmpTab('docs')">IQAMA &amp; Baladiya</div>
+      <button type="button" class="tab active" id="emp-tab-basic" onclick="switchEmpTab('basic')">Basic info</button>
+      <button type="button" class="tab" id="emp-tab-shift" onclick="switchEmpTab('shift')">Shift &amp; Off-days</button>
+      <button type="button" class="tab" id="emp-tab-docs" onclick="switchEmpTab('docs')">IQAMA &amp; Baladiya</button>
     </div>
 
     <div id="emp-pane-basic">
@@ -2084,12 +2186,13 @@ function openEmployeeModal(id) {
             const cur = editing?.department || '';
             const isCustom = cur && !deptOptions.includes(cur);
             return `
-              <select id="m-dp" class="input" onchange="if(this.value==='__other__'){const v=prompt('Enter custom department name:'); if(v){const o=document.createElement('option'); o.value=v; o.text=v; o.selected=true; this.add(o,this.options[this.options.length-1]);} else { this.value=''; }}">
+              <select id="m-dp" class="input" onchange="onDeptSelectChange()">
                 <option value="">— Select department —</option>
                 ${deptOptions.map(d=>`<option value="${escapeHTML(d)}" ${cur===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
                 ${isCustom?`<option value="${escapeHTML(cur)}" selected>${escapeHTML(cur)}</option>`:''}
                 <option value="__other__">+ Add custom department…</option>
               </select>
+              <input id="m-dp-custom" class="input mt-2" placeholder="Enter custom department name" style="display:none">
             `;
           })()}
         </div>
@@ -2158,7 +2261,7 @@ function openEmployeeModal(id) {
       email:     $('#m-em').value.trim(),
       phone:     $('#m-ph').value.trim(),
       role:      $('#m-ro').value.trim() || 'Employee',
-      department:$('#m-dp').value.trim() || 'General',
+      department:($('#m-dp-custom')?.value.trim()) || $('#m-dp').value.trim() || 'General',
       hireDate:  $('#m-hd').value,
       salary:    Number($('#m-sa').value)||0,
       status:    $('#m-st').value,
@@ -2181,7 +2284,7 @@ function openEmployeeModal(id) {
       savedId = newE.id;
       toast('Employee added. Share the signup link with them so they can create a password.', 'success');
     }
-    /* Persist schedule (per-day) / IQAMA / Baladiya to localStorage */
+    /* Persist schedule (per-day) / IQAMA / Baladiya to Supabase */
     if (savedId) {
       const schedule = {};
       for (let i=0;i<7;i++) {
@@ -2194,25 +2297,37 @@ function openEmployeeModal(id) {
           end:   (endEl   && endEl.value)   || state.settings.workEnd   || '17:00',
         };
       }
-      const iqamaNo  = $('#m-iqama-no')?.value.trim() || '';
-      const iqamaExp = $('#m-iqama-exp')?.value || '';
-      const balNo    = $('#m-bal-no')?.value.trim() || '';
-      const balExp   = $('#m-bal-exp')?.value || '';
-      const branch      = $('#m-br')?.value.trim()  || '';
-      const nationality = $('#m-nat')?.value.trim() || '';
-      // Keep raw object (no derived getters); will be re-decorated by getEmpExtras on next read
-      state.empExtras[savedId] = {
+      const extras = {
         schedule,
-        iqama:    { number: iqamaNo, expiry: iqamaExp },
-        baladiya: { number: balNo,   expiry: balExp   },
-        branch, nationality,
+        iqama:    { number: $('#m-iqama-no')?.value.trim() || '', expiry: $('#m-iqama-exp')?.value || '' },
+        baladiya: { number: $('#m-bal-no')?.value.trim()  || '', expiry: $('#m-bal-exp')?.value   || '' },
+        branch:      $('#m-br')?.value.trim()  || '',
+        nationality: $('#m-nat')?.value.trim() || '',
       };
-      saveLocalData();
+      const ok = await saveEmpExtras(savedId, extras);
+      if (!ok) return false;
     }
     _pendingPhoto = null;
     render();
     return true;
   });
+}
+// When the user picks "+ Add custom department…", reveal an inline input.
+// We avoid opening a second modal here — that would close the parent
+// employee modal and lose all the other form values.
+function onDeptSelectChange() {
+  const sel = document.getElementById('m-dp');
+  const inp = document.getElementById('m-dp-custom');
+  if (!sel || !inp) return;
+  if (sel.value === '__other__') {
+    inp.style.display = '';
+    inp.value = '';
+    inp.focus();
+    sel.value = ''; // un-select the trigger so save logic falls through to inp
+  } else {
+    inp.style.display = 'none';
+    inp.value = '';
+  }
 }
 function switchEmpTab(which) {
   ['basic','shift','docs'].forEach(name => {
@@ -2439,8 +2554,9 @@ function printAttendanceEvidence() {
     <div class="footer">${escapeHTML(c.companyName)} • Confidential record • Generated ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} • This is a computer-generated report.</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
+  const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
 }
 function renderAttendance() {
@@ -2452,9 +2568,9 @@ function renderAttendance() {
 
   const tabs = admin ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
-      <div class="tab ${attTab==='me'?'active':''}" onclick="attTab='me'; render();">My Attendance</div>
-      <div class="tab ${attTab==='all'?'active':''}" onclick="attTab='all'; render();">All Employees Today</div>
-      <div class="tab ${attTab==='history'?'active':''}" onclick="attTab='history'; render();">All History</div>
+      <button type="button" class="tab ${attTab==='me'?'active':''}" onclick="attTab='me'; render();">My Attendance</button>
+      <button type="button" class="tab ${attTab==='all'?'active':''}" onclick="attTab='all'; render();">All Employees Today</button>
+      <button type="button" class="tab ${attTab==='history'?'active':''}" onclick="attTab='history'; render();">All History</button>
     </div>` : '';
 
   // clock-in tile — show today's specific hours and weekly off-days
@@ -2801,9 +2917,9 @@ function renderLeave() {
 
   const tabs = admin ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
-      <div class="tab ${leaveTab==='mine'?'active':''}" onclick="leaveTab='mine'; render();">My Leave</div>
-      <div class="tab ${leaveTab==='pending'?'active':''}" onclick="leaveTab='pending'; render();">Pending Approvals ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</div>
-      <div class="tab ${leaveTab==='all'?'active':''}" onclick="leaveTab='all'; render();">All Requests</div>
+      <button type="button" class="tab ${leaveTab==='mine'?'active':''}" onclick="leaveTab='mine'; render();">My Leave</button>
+      <button type="button" class="tab ${leaveTab==='pending'?'active':''}" onclick="leaveTab='pending'; render();">Pending Approvals ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</button>
+      <button type="button" class="tab ${leaveTab==='all'?'active':''}" onclick="leaveTab='all'; render();">All Requests</button>
     </div>` : '';
 
   const balanceCards = `
@@ -2857,9 +2973,11 @@ function renderLeave() {
   `;
   return tabs + balanceCards + requestBtn + table;
 }
-function balanceCard(label, used, total, color) {
-  const remaining = used; // already remaining
-  const pct = (used/total)*100;
+// `remaining` is days NOT yet consumed (state.leaveBalances stores remaining,
+// not used). The bar visualizes consumption — width grows as remaining shrinks.
+function balanceCard(label, remaining, total, color) {
+  const used = Math.max(0, total - remaining);
+  const pct  = total > 0 ? Math.min(100, (used/total)*100) : 0;
   return `
     <div class="bg-white rounded-2xl shadow-card p-5">
       <div class="flex items-center justify-between mb-3">
@@ -2867,7 +2985,7 @@ function balanceCard(label, used, total, color) {
         <span class="badge badge-slate">${remaining}/${total}</span>
       </div>
       <div class="text-2xl font-bold text-slate-900">${remaining} <span class="text-sm font-normal text-slate-500">days left</span></div>
-      <div class="progress-bar mt-3"><div class="progress-fill" style="width:${pct}%; background:${color}"></div></div>
+      <div class="progress-bar mt-3" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${used}" aria-label="${escapeHTML(label)} leave used"><div class="progress-fill" style="width:${pct}%; background:${color}"></div></div>
     </div>
   `;
 }
@@ -3157,7 +3275,7 @@ function renderPayroll() {
                   <td>${statusBadge(p.status)}</td>
                   <td class="text-slate-500 text-xs">${fmtDate(p.paidAt)}</td>
                   <td class="!text-end whitespace-nowrap">
-                    <button onclick="openPayslip('${p.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Download payslip">${icon('download','w-4 h-4')}</button>
+                    <button onclick="openPayslip('${p.id}')" aria-label="Download payslip ${escapeHTML(p.period)}" title="Download payslip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>
                   </td>
                 </tr>`;
               }).join('')}
@@ -3285,8 +3403,9 @@ function generatePayrollReport(period) {
   <div class="footer">${escapeHTML(c.companyName)} • Payroll report for ${escapeHTML(monthName)} • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
+  const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
 }
 function openPayslip(payrollId) {
@@ -3371,34 +3490,43 @@ function openPayslip(payrollId) {
   </div>
   </div>
   </body></html>`;
-  const w = window.open('', '_blank');
+  const w = window.open('', '_blank', 'noopener,noreferrer');
   if (!w) { toast('Pop-up blocked. Allow pop-ups for this site.', 'error'); return; }
+  try { w.opener = null; } catch(_) {}
   w.document.write(html);
   w.document.close();
 }
 
-async function runPayroll() {
-  const defaultYm = new Date().toISOString().slice(0,7);
-  const ym = prompt(`Run payroll for which month? (YYYY-MM)`, defaultYm);
-  if (!ym) return;
-  if (!/^\d{4}-\d{2}$/.test(ym)) { toast('Invalid format. Use YYYY-MM', 'error'); return; }
-  if (state.payroll.some(p => p.period===ym)) {
-    if (!confirm(`Payroll for ${ym} already exists. Run again (will duplicate)?`)) return;
-  }
-  const advancesUsed = []; // track which advances we mark as paid back
+// Pure calculator — figures out payroll rows + advance bookkeeping for a
+// given YYYY-MM period without writing anything. Used both by the live
+// preview in the modal and by the actual run.
+function calcPayroll(ym) {
+  const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
   const rows = state.employees.map(e => {
-    // Sum any approved, not-yet-repaid advances for this employee that should be deducted
     const empAdvances = (state.advances||[]).filter(a =>
       a.employeeId === e.id &&
       a.status === 'approved' &&
       !a.repaidAt &&
       (a.deductFromPayroll === 'next' || a.deductFromPayroll === 'installments')
     );
-    const advanceDeduction = empAdvances.reduce((s,a)=>{
-      // For installments, take half of amount; for 'next', take full amount
-      return s + (a.deductFromPayroll==='installments' ? Number(a.amount)/2 : Number(a.amount));
-    },0);
-    empAdvances.forEach(a => advancesUsed.push(a.id));
+    let advanceDeduction = 0;
+    empAdvances.forEach(a => {
+      const total = Number(a.amount) || 0;
+      if (a.deductFromPayroll === 'next') {
+        advanceDeduction += total;
+        advanceUpdates.set(a.id, { installmentsPaid: 1, repaid: true });
+      } else {
+        // installments: 2 equal halves. Skip if both already taken.
+        const paid = Number(a.installmentsPaid) || 0;
+        if (paid >= 2) return;
+        const half = Math.round((total / 2) * 100) / 100;
+        // Last installment takes whatever remains so totals match exactly.
+        const installment = paid === 1 ? Math.max(0, total - half) : half;
+        advanceDeduction += installment;
+        const newPaid = paid + 1;
+        advanceUpdates.set(a.id, { installmentsPaid: newPaid, repaid: newPaid >= 2 });
+      }
+    });
     const base = e.salary;
     const bonus = 0;
     const deductions = Math.round(advanceDeduction*100)/100;
@@ -3409,21 +3537,107 @@ async function runPayroll() {
       net, status: 'paid', paid_at: todayISO()
     };
   });
-  if (rows.length === 0) { toast('No employees to pay', 'error'); return; }
-  const { data, error } = await sb.from('payroll').insert(rows).select();
-  if (error) { toast(error.message, 'error'); return; }
-  (data || []).forEach(r => state.payroll.unshift(mapPayrollFromDb(r)));
+  const totals = rows.reduce((s, r) => ({
+    base:       s.base       + r.base,
+    bonus:      s.bonus      + r.bonus,
+    deductions: s.deductions + r.deductions,
+    net:        s.net        + r.net,
+  }), { base:0, bonus:0, deductions:0, net:0 });
+  return { rows, advanceUpdates, totals };
+}
 
-  // Mark "deduct from next payroll" advances as repaid
-  state.advances.forEach(a => {
-    if (advancesUsed.includes(a.id) && a.deductFromPayroll === 'next' && !a.repaidAt) {
-      a.repaidAt = todayISO();
-    }
-  });
-  saveLocalData();
-  render();
-  toast(`Payroll run for ${ym} — ${rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:''), 'success');
-  if (confirm('Open the payroll report for this period?')) generatePayrollReport(ym);
+function runPayroll() {
+  if (!isAdmin()) return;
+  const defaultYm = new Date().toISOString().slice(0,7);
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Pay period</label>
+        <input id="rp-period" type="month" class="input" value="${defaultYm}" oninput="renderRunPayrollPreview()">
+        <p class="text-xs text-slate-500 mt-1">Every active employee will receive a payslip for this period. Approved advances flagged for deduction are applied automatically.</p>
+      </div>
+      <div id="rp-preview"></div>
+    </div>
+  `;
+  openModal('Run payroll', form, async () => {
+    const ym = $('#rp-period').value;
+    if (!/^\d{4}-\d{2}$/.test(ym)) { toast('Pick a valid month', 'error'); return false; }
+    const calc = calcPayroll(ym);
+    if (calc.rows.length === 0) { toast('No employees to pay', 'error'); return false; }
+    const isDuplicate = state.payroll.some(p => p.period===ym);
+    if (isDuplicate && !confirm(`Payroll for ${ym} already exists. Running again will create duplicate payslips. Continue?`)) return false;
+    const { data, error } = await sb.from('payroll').insert(calc.rows).select();
+    if (error) { toast(error.message, 'error'); return false; }
+    (data || []).forEach(r => state.payroll.unshift(mapPayrollFromDb(r)));
+
+    // Persist advance bookkeeping (installments counter + repaid timestamp)
+    // back to Supabase so it survives reloads and other devices see it.
+    const advancesUsed = Array.from(calc.advanceUpdates.keys());
+    await Promise.all(advancesUsed.map(async aid => {
+      const a = state.advances.find(x => x.id === aid);
+      const u = calc.advanceUpdates.get(aid);
+      if (!a || !u) return;
+      const updates = { installments_paid: u.installmentsPaid };
+      if (u.repaid && !a.repaidAt) updates.repaid_at = todayISO();
+      const { data, error } = await sb.from('advances').update(updates).eq('id', aid).select().single();
+      if (error) { console.error('Advance update failed:', error); return; }
+      Object.assign(a, mapAdvanceFromDb(data));
+    }));
+    render();
+    toast(`Payroll run for ${ym} — ${calc.rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:''), 'success');
+    if (confirm('Open the payroll report for this period?')) generatePayrollReport(ym);
+    return true;
+  }, { saveLabel: 'Run payroll' });
+  // Modal mounts synchronously; render preview on next tick.
+  setTimeout(renderRunPayrollPreview, 0);
+}
+
+function renderRunPayrollPreview() {
+  const target = $('#rp-preview');
+  if (!target) return;
+  const ym = $('#rp-period')?.value || '';
+  if (!/^\d{4}-\d{2}$/.test(ym)) {
+    target.innerHTML = `<div class="text-xs text-slate-500">Pick a month above to see a preview.</div>`;
+    return;
+  }
+  const calc = calcPayroll(ym);
+  const isDuplicate = state.payroll.some(p => p.period===ym);
+  const advancesAffected = calc.advanceUpdates.size;
+  const installmentsRemain = Array.from(calc.advanceUpdates.values()).filter(u => !u.repaid).length;
+
+  if (calc.rows.length === 0) {
+    target.innerHTML = `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">No employees to pay. Add employees first.</div>`;
+    return;
+  }
+
+  target.innerHTML = `
+    ${isDuplicate ? `
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2 mb-3">
+        ${icon('warning','w-4 h-4 shrink-0 mt-0.5')}
+        <div>Payroll for <strong>${escapeHTML(ym)}</strong> already exists. Running again will create duplicate payslips for every employee.</div>
+      </div>
+    ` : ''}
+    <div class="bg-slate-50 rounded-xl p-4">
+      <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-3">Preview · ${escapeHTML(ym)}</div>
+      <div class="grid grid-cols-2 gap-y-2 text-sm">
+        <div class="text-slate-600">Employees</div>
+        <div class="text-right font-semibold text-slate-900">${calc.rows.length}</div>
+        <div class="text-slate-600">Total base salary</div>
+        <div class="text-right font-semibold text-slate-900">${fmtMoney(calc.totals.base)}</div>
+        ${calc.totals.deductions > 0 ? `
+          <div class="text-slate-600">Advance deductions</div>
+          <div class="text-right font-semibold text-rose-700">−${fmtMoney(calc.totals.deductions)}</div>
+        ` : ''}
+        <div class="text-slate-700 border-t border-slate-200 pt-2 mt-1">Net to pay</div>
+        <div class="text-right text-base font-bold text-slate-900 border-t border-slate-200 pt-2 mt-1">${fmtMoney(calc.totals.net)}</div>
+      </div>
+      ${advancesAffected ? `
+        <div class="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-200">
+          ${advancesAffected} advance${advancesAffected===1?'':'s'} affected · ${installmentsRemain} installment${installmentsRemain===1?'':'s'} remain after this run
+        </div>
+      ` : ''}
+    </div>
+  `;
 }
 
 /* -------------------- REPORTS -------------------- */
@@ -3633,15 +3847,15 @@ async function changeMyPassword() {
   const cur = $('#acc-current').value;
   const newPw = $('#acc-new').value;
   const confirmPw = $('#acc-confirm').value;
+  if (!cur) { toast('Current password is required', 'error'); return; }
   if (!newPw || newPw.length < 6) { toast('New password must be at least 6 characters', 'error'); return; }
   if (newPw !== confirmPw) { toast('Passwords do not match', 'error'); return; }
-  // Verify current password by attempting a sign-in
+  if (cur === newPw) { toast('New password must differ from current password', 'error'); return; }
   const email = state.session?.email;
   if (!email) { toast('Session expired', 'error'); return; }
-  if (cur) {
-    const verify = await sb.auth.signInWithPassword({ email, password: cur });
-    if (verify.error) { toast('Current password is incorrect', 'error'); return; }
-  }
+  // Verify current password by attempting a sign-in. Required — never skip.
+  const verify = await sb.auth.signInWithPassword({ email, password: cur });
+  if (verify.error) { toast('Current password is incorrect', 'error'); return; }
   const { error } = await sb.auth.updateUser({ password: newPw });
   if (error) { toast(error.message, 'error'); return; }
   $('#acc-current').value = '';
@@ -3732,8 +3946,8 @@ function renderSettings() {
                   <td class="text-slate-700">${b.radius}m</td>
                   <td>${b.isActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-slate">Inactive</span>'}</td>
                   <td class="!text-end whitespace-nowrap">
-                    <button onclick="openBranchModal('${b.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-                    <button onclick="deleteBranch('${b.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                    <button onclick="openBranchModal('${b.id}')" aria-label="Edit branch ${escapeHTML(b.name)}" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                    <button onclick="deleteBranch('${b.id}')" aria-label="Delete branch ${escapeHTML(b.name)}" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                   </td>
                 </tr>`).join('')}
             </tbody>
@@ -3866,18 +4080,23 @@ function handleStampUpload(ev) {
   if (file.size > 1024 * 1024) { toast('Stamp image must be under 1 MB', 'error'); ev.target.value=''; return; }
   if (!file.type.startsWith('image/')) { toast('Please choose an image file', 'error'); return; }
   const reader = new FileReader();
-  reader.onload = e => {
-    state.companyStamp = e.target.result;
-    saveLocalData();
+  reader.onload = async e => {
+    const dataUrl = e.target.result;
+    if (!state.companyId) { toast('Company record not loaded yet', 'error'); return; }
+    const { error } = await sb.from('companies').update({ company_stamp: dataUrl }).eq('id', state.companyId);
+    if (error) { toast(error.message, 'error'); return; }
+    state.companyStamp = dataUrl;
     render();
     toast('Company stamp uploaded — it will appear on all printed documents', 'success');
   };
   reader.readAsDataURL(file);
 }
-function removeCompanyStamp() {
+async function removeCompanyStamp() {
   if (!confirm('Remove the company stamp? Documents will print without it.')) return;
+  if (!state.companyId) { toast('Company record not loaded yet', 'error'); return; }
+  const { error } = await sb.from('companies').update({ company_stamp: null }).eq('id', state.companyId);
+  if (error) { toast(error.message, 'error'); return; }
   state.companyStamp = '';
-  saveLocalData();
   render();
   toast('Company stamp removed', 'success');
 }
@@ -3886,8 +4105,9 @@ function stampImgHTML(size = 130, opacity = 0.92) {
   return `<img src="${escapeHTML(state.companyStamp)}" alt="Company stamp" style="width:${size}px; height:${size}px; object-fit:contain; opacity:${opacity}; transform:rotate(-6deg); pointer-events:none;">`;
 }
 function numberToWords(num) {
-  num = Math.round(Number(num) || 0);
-  if (num === 0) return 'Zero';
+  const value = Number(num) || 0;
+  const whole = Math.floor(Math.abs(value));
+  const cents = Math.round((Math.abs(value) - whole) * 100);
   const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
   const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
   function below1000(n) {
@@ -3895,11 +4115,18 @@ function numberToWords(num) {
     if (n < 100) return tens[Math.floor(n/10)] + (n%10 ? ' '+ones[n%10] : '');
     return ones[Math.floor(n/100)] + ' Hundred' + (n%100 ? ' and '+below1000(n%100) : '');
   }
-  let words = '', remainder = num;
-  if (remainder >= 1000000) { words += below1000(Math.floor(remainder/1000000)) + ' Million '; remainder %= 1000000; }
-  if (remainder >= 1000)    { words += below1000(Math.floor(remainder/1000)) + ' Thousand '; remainder %= 1000; }
-  if (remainder > 0)        { words += below1000(remainder); }
-  return words.trim() + ' Only';
+  function intToWords(n) {
+    if (n === 0) return 'Zero';
+    let words = '', remainder = n;
+    if (remainder >= 1000000) { words += below1000(Math.floor(remainder/1000000)) + ' Million '; remainder %= 1000000; }
+    if (remainder >= 1000)    { words += below1000(Math.floor(remainder/1000)) + ' Thousand '; remainder %= 1000; }
+    if (remainder > 0)        { words += below1000(remainder); }
+    return words.trim();
+  }
+  const sign = value < 0 ? 'Negative ' : '';
+  const main = intToWords(whole);
+  const fraction = cents > 0 ? ` and ${cents.toString().padStart(2,'0')}/100` : '';
+  return sign + main + fraction + ' Only';
 }
 
 async function saveSettings() {
@@ -3954,12 +4181,23 @@ async function toggleUserRole(uid_) {
   toast(`${emp.firstName} is now ${newAdmin?'an admin':'an employee'}`, 'success');
 }
 function downloadBackup() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  if (!isAdmin()) { toast('Admins only', 'error'); return; }
+  if (!confirm(
+    'Download a full backup?\n\n' +
+    'This file contains all employee records, attendance, leave, payroll, ' +
+    'warnings, salary advances, certificates, and uploaded documents in ' +
+    'plain text. Anyone with the file can read everything. ' +
+    'Save it only to a secure location.'
+  )) return;
+  // Strip the active session so a leaked backup can't be used to impersonate.
+  const { session, ...safe } = state;
+  const blob = new Blob([JSON.stringify(safe, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `pulsehr-backup-${todayISO()}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  toast('Backup downloaded — store it securely', 'success');
 }
 
 /* Export the dashboard's attendance snapshot for the selected date + branch */
@@ -3989,10 +4227,7 @@ function exportAttendanceSnapshot() {
       att?.clockIn||'', att?.clockOut||'', hrs, status
     ]);
   });
-  const csv = rows.map(r => r.map(v => {
-    const s = String(v??'');
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
-  }).join(',')).join('\n');
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type:'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -4085,10 +4320,7 @@ function exportCSV(kind) {
   } else {
     toast('Exporting current view'); return;
   }
-  const csv = rows.map(r => r.map(v => {
-    const s = String(v??'');
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
-  }).join(',')).join('\n');
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type:'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -4100,7 +4332,8 @@ function exportCSV(kind) {
 /* ============================================================
    ============== V2 FEATURES =================================
    Warnings • Salary Advances • Certificates • Documents (IQAMA/Baladiya) • Archive • Payroll Report
-   All persisted to localStorage via saveLocalData().
+   All persisted to Supabase (warnings, advances, certificates,
+   archive_documents, employee_extras, companies.company_stamp).
 ============================================================ */
 
 /* -------------------- WARNINGS -------------------- */
@@ -4209,8 +4442,8 @@ function renderWarnings() {
                   <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML(w.reason||'')}">${escapeHTML(w.reason||'—')}</td>
                   <td class="text-slate-500 text-xs">${escapeHTML(issuer?(issuer.firstName+' '+issuer.lastName):'—')}</td>
                   <td class="!text-end whitespace-nowrap">
-                    <button onclick="printWarningLetter('${w.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Print letter">${icon('file','w-4 h-4')}</button>
-                    ${admin ? `<button onclick="deleteWarning('${w.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
+                    <button onclick="printWarningLetter('${w.id}')" aria-label="Print warning letter" title="Print letter" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
+                    ${admin ? `<button onclick="deleteWarning('${w.id}')" aria-label="Delete warning" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
                   </td>
                 </tr>`;
               }).join('')}
@@ -4265,9 +4498,8 @@ function openWarningModal() {
       </div>
     </div>
   `;
-  openModal(t('issue_warning'), form, () => {
+  openModal(t('issue_warning'), form, async () => {
     const w = {
-      id: uid(),
       employeeId: $('#w-emp').value,
       severity:   $('#w-sev').value,
       type:       $('#w-type').value.trim() || 'General',
@@ -4275,21 +4507,23 @@ function openWarningModal() {
       reason:     $('#w-reason').value.trim(),
       notes:      $('#w-notes').value.trim(),
       issuedBy:   me.id,
-      issuedAt:   new Date().toISOString(),
     };
     if (!w.employeeId || !w.reason) { toast('Employee and reason are required', 'error'); return false; }
-    state.warnings.push(w);
-    saveLocalData();
+    const { data, error } = await sb.from('warnings').insert(warningToDb(w)).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    const saved = mapWarningFromDb(data);
+    state.warnings.unshift(saved);
     render();
     toast('Warning issued', 'success');
-    if (confirm('Open the warning letter for printing?')) printWarningLetter(w.id);
+    if (confirm('Open the warning letter for printing?')) printWarningLetter(saved.id);
     return true;
   });
 }
-function deleteWarning(id) {
+async function deleteWarning(id) {
   if (!confirm('Delete this warning record? This action cannot be undone.')) return;
+  const { error } = await sb.from('warnings').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
   state.warnings = state.warnings.filter(w => w.id !== id);
-  saveLocalData();
   render();
   toast('Warning deleted', 'success');
 }
@@ -4362,8 +4596,9 @@ function printWarningLetter(id) {
     <div class="footer">${escapeHTML(c.companyName)} • Confidential personnel record • Generated ${new Date().toLocaleDateString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
+  const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
 }
 
@@ -4383,9 +4618,9 @@ function renderAdvances() {
 
   const tabs = admin ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
-      <div class="tab ${advTab==='mine'?'active':''}" onclick="advTab='mine'; render();">My Advances</div>
-      <div class="tab ${advTab==='pending'?'active':''}" onclick="advTab='pending'; render();">Pending ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</div>
-      <div class="tab ${advTab==='all'?'active':''}" onclick="advTab='all'; render();">All History</div>
+      <button type="button" class="tab ${advTab==='mine'?'active':''}" onclick="advTab='mine'; render();">My Advances</button>
+      <button type="button" class="tab ${advTab==='pending'?'active':''}" onclick="advTab='pending'; render();">Pending ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</button>
+      <button type="button" class="tab ${advTab==='all'?'active':''}" onclick="advTab='all'; render();">All History</button>
     </div>` : '';
 
   const stats = admin ? `
@@ -4444,12 +4679,12 @@ function renderAdvances() {
                       a.status==='pending'?`
                         <button onclick="decideAdvance('${a.id}','approved')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} ${escapeHTML(t('approve'))}</button>
                         <button onclick="decideAdvance('${a.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
-                        <button onclick="printAdvanceSlip('${a.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Print slip">${icon('file','w-4 h-4')}</button>
+                        <button onclick="printAdvanceSlip('${a.id}')" aria-label="Print advance slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
                       `: a.status==='approved' && !a.repaidAt ? `
                         <button onclick="markAdvanceRepaid('${a.id}')" class="btn btn-sm btn-ghost">${icon('check','w-4 h-4')} Mark repaid</button>
-                        <button onclick="printAdvanceSlip('${a.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Print slip">${icon('download','w-4 h-4')}</button>
-                      ` : `<button onclick="printAdvanceSlip('${a.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Print slip">${icon('download','w-4 h-4')}</button>`
-                    ) : `<button onclick="printAdvanceSlip('${a.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Download slip">${icon('download','w-4 h-4')}</button>`}
+                        <button onclick="printAdvanceSlip('${a.id}')" aria-label="Print advance slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>
+                      ` : `<button onclick="printAdvanceSlip('${a.id}')" aria-label="Print advance slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>`
+                    ) : `<button onclick="printAdvanceSlip('${a.id}')" aria-label="Download advance slip" title="Download slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>`}
                   </td>
                 </tr>`;
               }).join('')}
@@ -4494,43 +4729,42 @@ function openAdvanceModal() {
       ${icon('warning','w-4 h-4 inline')} The amount will be tracked and (when configured) automatically deducted from the next payroll run after approval.
     </div>
   `;
-  openModal(t('request_advance'), form, () => {
+  openModal(t('request_advance'), form, async () => {
     const empId = admin ? ($('#adv-emp')?.value || me.id) : me.id;
     const amount = Number($('#adv-amt').value)||0;
     const deduct = $('#adv-deduct').value;
     const reason = $('#adv-reason').value.trim();
     if (amount <= 0) { toast('Enter a valid amount', 'error'); return false; }
     if (!reason) { toast('Please provide a reason', 'error'); return false; }
-    const a = {
-      id: uid(), employeeId: empId, amount, reason,
-      requestedAt: todayISO(), status: 'pending',
-      deductFromPayroll: deduct, decidedBy: null, decidedAt: null, repaidAt: null,
-    };
-    state.advances.push(a);
-    saveLocalData();
+    const payload = advanceToDb({ employeeId: empId, amount, reason, status: 'pending', deductFromPayroll: deduct });
+    const { data, error } = await sb.from('advances').insert(payload).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    const saved = mapAdvanceFromDb(data);
+    state.advances.unshift(saved);
     render();
     toast('Advance request submitted', 'success');
-    if (confirm('Open the advance request slip for printing?')) printAdvanceSlip(a.id);
+    if (confirm('Open the advance request slip for printing?')) printAdvanceSlip(saved.id);
     return true;
   });
 }
-function decideAdvance(id, decision) {
+async function decideAdvance(id, decision) {
   const a = state.advances.find(x => x.id===id);
   if (!a) return;
   const me = currentEmployee();
-  a.status = decision;
-  a.decidedBy = me.id;
-  a.decidedAt = todayISO();
-  saveLocalData();
+  const updates = { status: decision, decided_by: me.id, decided_at: todayISO() };
+  const { data, error } = await sb.from('advances').update(updates).eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(a, mapAdvanceFromDb(data));
   render();
   toast(`Advance ${decision}`, 'success');
   if (decision === 'approved' && confirm('Open the approved advance slip for printing?')) printAdvanceSlip(id);
 }
-function markAdvanceRepaid(id) {
+async function markAdvanceRepaid(id) {
   const a = state.advances.find(x => x.id===id);
   if (!a) return;
-  a.repaidAt = todayISO();
-  saveLocalData();
+  const { data, error } = await sb.from('advances').update({ repaid_at: todayISO() }).eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(a, mapAdvanceFromDb(data));
   render();
   toast('Marked as repaid', 'success');
 }
@@ -4695,8 +4929,9 @@ function printAdvanceSlip(id) {
     <div class="footer">${escapeHTML(c.companyName)} • Confidential financial document • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
+  const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
 }
 
@@ -4783,7 +5018,7 @@ function renderCertificates() {
                 <div class="text-xs text-slate-500 mb-3">${c.period? 'For '+escapeHTML(c.period)+' · ' : ''}Issued ${fmtDate(c.issuedAt)}</div>
                 <div class="flex gap-2">
                   <button onclick="printCertificate('${c.id}')" class="btn btn-sm btn-primary flex-1 justify-center">${icon('download','w-4 h-4')} ${escapeHTML(t('download'))}</button>
-                  ${admin ? `<button onclick="deleteCertificate('${c.id}')" class="btn btn-sm btn-ghost">${icon('trash','w-4 h-4')}</button>` : ''}
+                  ${admin ? `<button onclick="deleteCertificate('${c.id}')" aria-label="Delete certificate" title="Delete" class="btn btn-sm btn-ghost">${icon('trash','w-4 h-4')}</button>` : ''}
                 </div>
               </div>
             </div>
@@ -4839,30 +5074,31 @@ function openCertificateModal(type) {
       </div>
     </div>
   `;
-  openModal(t('issue_certificate')+': '+(titles[type]||''), form, () => {
+  openModal(t('issue_certificate')+': '+(titles[type]||''), form, async () => {
     const c = {
-      id: uid(),
       employeeId: $('#cert-emp').value,
       type:       $('#cert-type').value,
       title:      $('#cert-title').value.trim(),
       period:     $('#cert-period').value.trim(),
       message:    $('#cert-msg').value.trim(),
       issuedBy:   me.id,
-      issuedAt:   todayISO(),
     };
     if (!c.employeeId || !c.title) { toast('Recipient and title required', 'error'); return false; }
-    state.certificates.push(c);
-    saveLocalData();
+    const { data, error } = await sb.from('certificates').insert(certificateToDb(c)).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    const saved = mapCertificateFromDb(data);
+    state.certificates.unshift(saved);
     render();
     toast('Certificate issued', 'success');
-    if (confirm('Open the certificate now?')) printCertificate(c.id);
+    if (confirm('Open the certificate now?')) printCertificate(saved.id);
     return true;
   });
 }
-function deleteCertificate(id) {
+async function deleteCertificate(id) {
   if (!confirm('Delete this certificate?')) return;
+  const { error } = await sb.from('certificates').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
   state.certificates = state.certificates.filter(c => c.id !== id);
-  saveLocalData();
   render();
   toast('Certificate deleted', 'success');
 }
@@ -4953,8 +5189,9 @@ function printCertificate(id) {
     </div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
+  const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
 }
 
@@ -5062,11 +5299,17 @@ function openRenewModal(empId) {
       ${icon('check','w-4 h-4 inline')} Updating an expiry date here counts as a renewal — the previous date is replaced.
     </div>
   `;
-  openModal('Renew documents', form, () => {
-    const ex = getEmpExtras(empId);
-    ex.iqama    = { number: $('#r-iqama-no').value.trim(), expiry: $('#r-iqama-exp').value };
-    ex.baladiya = { number: $('#r-bal-no').value.trim(),   expiry: $('#r-bal-exp').value   };
-    saveLocalData();
+  openModal('Renew documents', form, async () => {
+    const cur = state.empExtras[empId] || emptyExtras();
+    const next = {
+      schedule:    cur.schedule || defaultSchedule(),
+      iqama:       { number: $('#r-iqama-no').value.trim(), expiry: $('#r-iqama-exp').value },
+      baladiya:    { number: $('#r-bal-no').value.trim(),   expiry: $('#r-bal-exp').value   },
+      branch:      cur.branch || '',
+      nationality: cur.nationality || '',
+    };
+    const ok = await saveEmpExtras(empId, next);
+    if (!ok) return false;
     render();
     toast('Document records updated', 'success');
     return true;
@@ -5136,9 +5379,9 @@ function renderArchive() {
             <div class="px-4 py-3 flex items-center justify-between">
               <div class="text-xs text-slate-500">${fmtDate(d.uploadedAt)} · ${escapeHTML(uploader?.firstName||'—')}</div>
               <div class="flex gap-1">
-                <button onclick="downloadArchiveDoc('${d.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Download">${icon('download','w-4 h-4')}</button>
-                <button onclick="previewArchiveDoc('${d.id}')" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100" title="Preview">${icon('eye','w-4 h-4')}</button>
-                ${admin?`<button onclick="deleteArchiveDoc('${d.id}')" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100" title="Delete">${icon('trash','w-4 h-4')}</button>`:''}
+                <button onclick="downloadArchiveDoc('${d.id}')" aria-label="Download ${escapeHTML(d.name)}" title="Download" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>
+                <button onclick="previewArchiveDoc('${d.id}')" aria-label="Preview ${escapeHTML(d.name)}" title="Preview" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>
+                ${admin?`<button onclick="deleteArchiveDoc('${d.id}')" aria-label="Delete ${escapeHTML(d.name)}" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
               </div>
             </div>
           </div>`;
@@ -5173,36 +5416,68 @@ function openArchiveUploadModal() {
       </div>
       <div>
         <label class="label">File</label>
-        <input id="ar-file" type="file" class="input" onchange="handleArchiveFile(event)">
-        <div class="text-xs text-slate-500 mt-1">Max 5MB. PDFs, Word, images, and most document types are supported.</div>
+        <input id="ar-file" type="file" class="input" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.txt,.csv" onchange="handleArchiveFile(event)">
+        <div class="text-xs text-slate-500 mt-1">Max 5MB. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.</div>
         <div id="ar-preview" class="mt-2 text-sm text-slate-700"></div>
       </div>
     </div>
   `;
-  openModal(t('upload_document'), form, () => {
+  openModal(t('upload_document'), form, async () => {
     const me = currentEmployee();
     const name = $('#ar-name').value.trim();
     const cat  = $('#ar-cat').value;
     const desc = $('#ar-desc').value.trim();
     if (!name) { toast('Document name required', 'error'); return false; }
     if (!_archiveFile) { toast('Please choose a file', 'error'); return false; }
-    state.archive.push({
-      id: uid(), name, category: cat, description: desc,
+    const payload = archiveToDb({
+      name, category: cat, description: desc,
       mime: _archiveFile.mime, size: _archiveFile.size,
-      dataUrl: _archiveFile.dataUrl,
-      uploadedBy: me.id, uploadedAt: todayISO(),
+      dataUrl: _archiveFile.dataUrl, uploadedBy: me.id,
     });
-    saveLocalData();
+    const { data, error } = await sb.from('archive_documents').insert(payload).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    state.archive.unshift(mapArchiveFromDb(data));
     _archiveFile = null;
     render();
     toast('Document uploaded to archive', 'success');
     return true;
   });
 }
+// Whitelist of allowed archive MIME types. SVG and HTML are intentionally
+// excluded — both can carry executable script and would be a stored-XSS
+// vector when previewed/downloaded.
+const ARCHIVE_ALLOWED_MIMES = new Set([
+  'application/pdf',
+  'image/png','image/jpeg','image/gif','image/webp',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain','text/csv',
+]);
+function isAllowedArchiveMime(m) { return ARCHIVE_ALLOWED_MIMES.has((m||'').toLowerCase()); }
+// Sanitize a stored value before re-using it as a data: URL. Anything that
+// isn't a plain image/* or application/pdf data URL is treated as opaque
+// and downloaded as application/octet-stream rather than rendered.
+function safeArchiveDataUrl(d) {
+  const url = String(d.dataUrl || '');
+  if (!/^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i.test(url)) return '';
+  if (!isAllowedArchiveMime(d.mime)) return '';
+  return url;
+}
+// Strip path separators / control chars so a malicious filename can't
+// influence where the browser saves the download.
+function safeFileName(n) {
+  return String(n||'document').replace(/[\\/\x00-\x1f]+/g,'_').slice(0, 200) || 'document';
+}
 function handleArchiveFile(ev) {
   const file = ev.target.files?.[0];
   if (!file) return;
   if (file.size > 5*1024*1024) { toast('File too large (max 5MB)', 'error'); ev.target.value=''; return; }
+  if (!isAllowedArchiveMime(file.type)) {
+    toast('Unsupported file type. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.', 'error');
+    ev.target.value = ''; return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
     _archiveFile = { name: file.name, mime: file.type, size: file.size, dataUrl: e.target.result };
@@ -5214,53 +5489,113 @@ function handleArchiveFile(ev) {
 function downloadArchiveDoc(id) {
   const d = (state.archive||[]).find(x => x.id===id);
   if (!d) return;
+  const safeUrl = safeArchiveDataUrl(d);
+  if (!safeUrl) { toast('This document type is not allowed for download.', 'error'); return; }
   const a = document.createElement('a');
-  a.href = d.dataUrl; a.download = d.name;
+  a.href = safeUrl;
+  a.download = safeFileName(d.name);
+  a.rel = 'noopener noreferrer';
   a.click();
 }
 function previewArchiveDoc(id) {
   const d = (state.archive||[]).find(x => x.id===id);
   if (!d) return;
-  const win = window.open('', '_blank');
+  const safeUrl = safeArchiveDataUrl(d);
+  if (!safeUrl) { toast('This document type cannot be previewed.', 'error'); return; }
+  const win = window.open('', '_blank', 'noopener,noreferrer');
   if (!win) { toast('Pop-up blocked.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
   const isImage = (d.mime||'').startsWith('image/');
   const isPdf   = (d.mime||'').includes('pdf');
-  if (isImage) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${d.dataUrl}" style="max-width:100%;max-height:100vh"></body>`);
-  else if (isPdf) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${d.dataUrl}" style="width:100vw;height:100vh"></body>`);
-  else win.location.href = d.dataUrl;
+  // safeUrl is a base64 data URL — base64 charset is HTML/attribute-safe,
+  // but we still pass it through escapeHTML for defense in depth.
+  if (isImage) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safeUrl)}" style="max-width:100%;max-height:100vh"></body>`);
+  else if (isPdf) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${escapeHTML(safeUrl)}" type="application/pdf" style="width:100vw;height:100vh"></body>`);
+  else win.document.write(`<title>${escapeHTML(d.name)}</title><body style="font-family:system-ui;padding:40px;text-align:center;color:#475569">Preview not available for this file type. Use download instead.</body>`);
   win.document.close();
 }
-function deleteArchiveDoc(id) {
+async function deleteArchiveDoc(id) {
   if (!confirm('Delete this document permanently?')) return;
+  const { error } = await sb.from('archive_documents').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
   state.archive = state.archive.filter(d => d.id !== id);
-  saveLocalData();
   render();
   toast('Document deleted', 'success');
 }
 
 /* -------------------- MODAL SYSTEM -------------------- */
 let modalOnSave = null;
-function openModal(title, bodyHTML, onSave) {
+let _modalPrevFocus = null;       // element to restore focus to on close
+let _modalTrapHandler = null;     // captured to remove listener on close
+// opts.saveLabel — override the default "Save" button text (e.g. "Run payroll")
+function openModal(title, bodyHTML, onSave, opts = {}) {
+  // Close any existing modal first so we never stack them.
+  if (document.getElementById('modal-root')) closeModal();
   modalOnSave = onSave;
+  _modalPrevFocus = document.activeElement;
+  const titleId = 'modal-title-' + Date.now();
+  const saveLabel = opts.saveLabel || t('save');
   const m = el(`
-    <div id="modal-root" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop fade-in">
+    <div id="modal-root" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop fade-in"
+         role="dialog" aria-modal="true" aria-labelledby="${titleId}">
       <div class="bg-white rounded-2xl shadow-pop w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div class="flex items-center justify-between p-5 border-b border-slate-100">
-          <h3 class="font-display text-xl font-semibold text-slate-900">${escapeHTML(title)}</h3>
-          <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 p-1">${icon('close','w-5 h-5')}</button>
+          <h3 id="${titleId}" class="font-display text-xl font-semibold text-slate-900">${escapeHTML(title)}</h3>
+          <button onclick="closeModal()" aria-label="${escapeHTML(t('cancel'))}" class="text-slate-400 hover:text-slate-700 p-1">${icon('close','w-5 h-5')}</button>
         </div>
         <div class="p-5 overflow-y-auto">${bodyHTML}</div>
         <div class="flex justify-end gap-2 p-5 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
           <button onclick="closeModal()" class="btn btn-ghost">${escapeHTML(t('cancel'))}</button>
-          <button onclick="submitModal()" class="btn btn-primary">${escapeHTML(t('save'))}</button>
+          <button onclick="submitModal()" class="btn btn-primary">${escapeHTML(saveLabel)}</button>
         </div>
       </div>
     </div>
   `);
   document.body.appendChild(m);
   m.addEventListener('click', e => { if (e.target===m) closeModal(); });
+
+  // Focus the first focusable element inside the modal (skip the close
+  // button so the user lands on actual form content).
+  const focusables = getModalFocusables(m);
+  const initial = focusables.find(el => !el.matches('[aria-label]')) || focusables[1] || focusables[0];
+  if (initial) initial.focus();
+
+  // Tab/Shift+Tab focus trap.
+  _modalTrapHandler = e => {
+    if (e.key !== 'Tab') return;
+    const list = getModalFocusables(m);
+    if (list.length === 0) { e.preventDefault(); return; }
+    const first = list[0], last = list[list.length-1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !m.contains(active))) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && (active === last || !m.contains(active))) {
+      e.preventDefault(); first.focus();
+    }
+  };
+  document.addEventListener('keydown', _modalTrapHandler);
 }
-function closeModal() { document.getElementById('modal-root')?.remove(); modalOnSave=null; }
+function getModalFocusables(root) {
+  return Array.from(root.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter(el => el.offsetParent !== null);
+}
+function closeModal() {
+  document.getElementById('modal-root')?.remove();
+  modalOnSave = null;
+  // Reset transient form state so it can't bleed into the next modal.
+  if (typeof _pendingPhoto !== 'undefined')  _pendingPhoto = null;
+  if (typeof _archiveFile !== 'undefined')   _archiveFile = null;
+  if (_modalTrapHandler) {
+    document.removeEventListener('keydown', _modalTrapHandler);
+    _modalTrapHandler = null;
+  }
+  // Return focus to whatever opened the modal (accessibility).
+  if (_modalPrevFocus && document.contains(_modalPrevFocus)) {
+    try { _modalPrevFocus.focus(); } catch(_) {}
+  }
+  _modalPrevFocus = null;
+}
 function submitModal() {
   if (!modalOnSave) return closeModal();
   const result = modalOnSave();
@@ -5272,7 +5607,8 @@ function render() {
   document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
-  if (!state.session) { app.innerHTML = renderLogin(); return; }
+  if (!state.session) { stopClockTicker(); app.innerHTML = renderLogin(); return; }
+  startClockTicker();
   const route = getRoute();
   let content = '';
   switch (route) {
@@ -5331,11 +5667,27 @@ async function bootstrap() {
 }
 bootstrap();
 
-// Live clock on dashboard
-setInterval(() => {
-  const c = document.getElementById('dash-clock');
-  if (c) c.textContent = new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
-}, 30000);
+// Live clock on dashboard. Started on first authenticated render and
+// cleared on logout via stopClockTicker().
+let _clockTickerId = null;
+function startClockTicker() {
+  if (_clockTickerId != null) return;
+  _clockTickerId = setInterval(() => {
+    const c = document.getElementById('dash-clock');
+    if (c) c.textContent = new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+  }, 30000);
+}
+function stopClockTicker() {
+  if (_clockTickerId != null) { clearInterval(_clockTickerId); _clockTickerId = null; }
+}
+
+// Global ESC handler: closes the topmost modal if any is open.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('modal-root')) {
+    e.preventDefault();
+    closeModal();
+  }
+});
 </script>
 </body>
 </html>

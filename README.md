@@ -34,7 +34,13 @@ The app seeds itself with sample data on first load — 8 employees, ~100 attend
 
 ## Tech
 
-Plain HTML + CSS + vanilla JavaScript. Tailwind via CDN. Persistence via `localStorage` — no backend yet. Suitable for a single user / demo / small team that all use the same device.
+Plain HTML + CSS + vanilla JavaScript. Tailwind via CDN. Backend: Supabase (auth + Postgres) for core tables; `localStorage` for v2 features (warnings, advances, certificates, archive, document expiries).
+
+## Security setup (REQUIRED for shared deployments)
+
+The Supabase publishable key in `index.html` is safe to ship **only if Row Level Security is enabled** on every table. Without it, any logged-in employee can self-promote to admin or wipe data via DevTools.
+
+Apply `supabase-rls.sql` once: open Supabase dashboard → SQL Editor → New query → paste the file → Run. The script is idempotent.
 
 ## Roadmap
 
