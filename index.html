@@ -2554,7 +2554,7 @@ function printAttendanceEvidence() {
     <div class="footer">${escapeHTML(c.companyName)} • Confidential record • Generated ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} • This is a computer-generated report.</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank', 'noopener,noreferrer');
+  const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
@@ -3403,7 +3403,7 @@ function generatePayrollReport(period) {
   <div class="footer">${escapeHTML(c.companyName)} • Payroll report for ${escapeHTML(monthName)} • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank', 'noopener,noreferrer');
+  const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
@@ -3490,7 +3490,7 @@ function openPayslip(payrollId) {
   </div>
   </div>
   </body></html>`;
-  const w = window.open('', '_blank', 'noopener,noreferrer');
+  const w = window.open('', '_blank');
   if (!w) { toast('Pop-up blocked. Allow pop-ups for this site.', 'error'); return; }
   try { w.opener = null; } catch(_) {}
   w.document.write(html);
@@ -4596,7 +4596,7 @@ function printWarningLetter(id) {
     <div class="footer">${escapeHTML(c.companyName)} • Confidential personnel record • Generated ${new Date().toLocaleDateString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank', 'noopener,noreferrer');
+  const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
@@ -4929,7 +4929,7 @@ function printAdvanceSlip(id) {
     <div class="footer">${escapeHTML(c.companyName)} • Confidential financial document • Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank', 'noopener,noreferrer');
+  const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
@@ -5189,7 +5189,7 @@ function printCertificate(id) {
     </div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank', 'noopener,noreferrer');
+  const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
   win.document.write(html); win.document.close();
@@ -5502,7 +5502,7 @@ function previewArchiveDoc(id) {
   if (!d) return;
   const safeUrl = safeArchiveDataUrl(d);
   if (!safeUrl) { toast('This document type cannot be previewed.', 'error'); return; }
-  const win = window.open('', '_blank', 'noopener,noreferrer');
+  const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
   const isImage = (d.mime||'').startsWith('image/');
