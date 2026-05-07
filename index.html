@@ -1111,7 +1111,9 @@ function toggleNotifications() {
 }
 
 /* -------------------- DASHBOARD -------------------- */
+let dashAttFilter = { date: '', branch: 'all' };
 function renderDashboard() {
+  if (!dashAttFilter.date) dashAttFilter.date = todayISO();
   const admin = isAdmin();
   const today = todayISO();
   const presentToday = state.attendance.filter(a => a.date===today && a.status!=='absent');
@@ -1179,42 +1181,148 @@ function renderDashboard() {
       ${statCard(t('payroll_month'),  fmtMoney(totalPayroll), 'last cycle',                              'up', 'wallet')}
     </div>` : ''}
 
-    <!-- Charts + activity (admin only — full-team data) -->
-    ${admin ? `
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6">
-        <div class="flex items-center justify-between mb-5">
-          <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('monthly_attendance'))}</h3>
-          <span class="text-xs text-slate-500">Last 7 days</span>
+    <!-- Attendance Snapshot — date + branch filterable (admin only) -->
+    ${admin ? (() => {
+      const filterDate   = dashAttFilter.date;
+      const filterBranch = dashAttFilter.branch;
+      const empsScoped = filterBranch === 'all'
+        ? state.employees
+        : filterBranch === 'none'
+          ? state.employees.filter(e => !((getEmpExtras(e.id).branch||'').trim()))
+          : state.employees.filter(e => getEmpExtras(e.id).branch === filterBranch);
+
+      // Build per-employee status for selected date
+      const dayRows = empsScoped.map(e => {
+        const ex = getEmpExtras(e.id);
+        const att = state.attendance.find(a => a.employeeId===e.id && a.date===filterDate);
+        const onLeave = state.leaveRequests.find(r => r.status==='approved' && r.employeeId===e.id && r.startDate<=filterDate && r.endDate>=filterDate);
+        const dow = new Date(filterDate+'T00:00:00').getDay();
+        const isOff = ex.schedule && ex.schedule[dow] && ex.schedule[dow].off;
+        let status, statusLabel;
+        if (att?.status === 'present')        { status='present'; statusLabel='Present'; }
+        else if (att?.status === 'late')      { status='late';    statusLabel='Late'; }
+        else if (onLeave)                     { status='on_leave';statusLabel='On leave'; }
+        else if (isOff)                       { status='off';     statusLabel='Off-day'; }
+        else                                  { status='absent';  statusLabel='Absent'; }
+        return { e, ex, att, status, statusLabel };
+      });
+      const presentCount = dayRows.filter(r=>r.status==='present').length;
+      const lateCount    = dayRows.filter(r=>r.status==='late').length;
+      const absentCount  = dayRows.filter(r=>r.status==='absent').length;
+      const onLeaveCount = dayRows.filter(r=>r.status==='on_leave').length;
+      const offCount     = dayRows.filter(r=>r.status==='off').length;
+
+      // 7-day chart anchored on selected date
+      const last7Filtered = [];
+      for (let i=6;i>=0;i--) {
+        const d = new Date(filterDate+'T00:00:00'); d.setDate(d.getDate()-i);
+        const iso = d.toISOString().slice(0,10);
+        const count = empsScoped.reduce((s,e) => {
+          const a = state.attendance.find(x => x.employeeId===e.id && x.date===iso);
+          return s + (a && a.status!=='absent' ? 1 : 0);
+        }, 0);
+        last7Filtered.push({ date: iso, count, label: d.toLocaleDateString(undefined,{weekday:'short'}) });
+      }
+      const maxC2 = Math.max(...last7Filtered.map(x=>x.count), 1);
+
+      // Determine status badge color helpers
+      const badgeFor = s => ({
+        present: 'badge-green', late: 'badge-amber', absent: 'badge-red',
+        on_leave: 'badge-blue', off: 'badge-slate'
+      }[s] || 'badge-slate');
+
+      // Sorted by status priority for the list
+      const statusOrder = { present:0, late:1, on_leave:2, off:3, absent:4 };
+      dayRows.sort((a,b) => (statusOrder[a.status]-statusOrder[b.status]) || a.e.firstName.localeCompare(b.e.firstName));
+
+      return `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <!-- Header with filters -->
+        <div class="p-5 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 class="font-display text-lg font-semibold text-slate-900">${icon('clock','w-5 h-5 inline text-brand-600')} Attendance Snapshot</h3>
+            <div class="text-xs text-slate-500 mt-0.5">${empsScoped.length} employee(s) · ${new Date(filterDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long', year:'numeric'})}${filterBranch!=='all'?' · '+(filterBranch==='none'?'Unassigned':filterBranch):''}</div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <input type="date" class="pill" style="padding-right:12px" value="${escapeHTML(filterDate)}" onchange="dashAttFilter.date=this.value; render();">
+            <button onclick="dashAttFilter.date=todayISO(); render();" class="btn btn-ghost btn-sm" title="Jump to today">Today</button>
+            <select class="pill ${filterBranch!=='all'?'active':''}" onchange="dashAttFilter.branch=this.value; render();" title="Branch">
+              <option value="all" ${filterBranch==='all'?'selected':''}>All branches</option>
+              <option value="none" ${filterBranch==='none'?'selected':''}>None (unassigned)</option>
+              ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${filterBranch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+            </select>
+          </div>
         </div>
-        <div class="flex items-end gap-3 h-48">
-          ${last7.map(d => `
-            <div class="flex-1 flex flex-col items-center gap-2">
-              <div class="text-xs font-semibold text-slate-700">${d.count}</div>
-              <div class="w-full rounded-t-lg" style="height:${(d.count/maxC)*100}%;background:linear-gradient(180deg,#c2914a,#6e4220);min-height:4px"></div>
-              <div class="text-xs text-slate-500">${escapeHTML(d.label)}</div>
+
+        <!-- Status counts -->
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-px bg-slate-100">
+          <div class="bg-white p-4 text-center">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Present</div>
+            <div class="text-2xl font-bold text-emerald-600 mt-1">${presentCount}</div>
+          </div>
+          <div class="bg-white p-4 text-center">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Late</div>
+            <div class="text-2xl font-bold text-amber-600 mt-1">${lateCount}</div>
+          </div>
+          <div class="bg-white p-4 text-center">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Absent</div>
+            <div class="text-2xl font-bold text-rose-600 mt-1">${absentCount}</div>
+          </div>
+          <div class="bg-white p-4 text-center">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">On leave</div>
+            <div class="text-2xl font-bold text-blue-600 mt-1">${onLeaveCount}</div>
+          </div>
+          <div class="bg-white p-4 text-center">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Off-day</div>
+            <div class="text-2xl font-bold text-slate-600 mt-1">${offCount}</div>
+          </div>
+        </div>
+
+        <!-- Body: 7-day chart + employee list -->
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-px bg-slate-100">
+          <!-- 7-day chart -->
+          <div class="lg:col-span-2 bg-white p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h4 class="text-sm font-semibold text-slate-700">7 days through ${new Date(filterDate+'T00:00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'})}</h4>
+              <span class="text-xs text-slate-500">in this branch</span>
             </div>
-          `).join('')}
-        </div>
-      </div>
-      <div class="bg-white rounded-2xl shadow-card p-6">
-        <div class="flex items-center justify-between mb-5">
-          <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('recent_activity'))}</h3>
-        </div>
-        <div class="space-y-4 max-h-64 overflow-y-auto">
-          ${activity.length===0 ? `<div class="text-sm text-slate-400">${escapeHTML(t('no_data'))}</div>` :
-            activity.map(a => `
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 shrink-0 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center">${icon(a.icon||'clock','w-4 h-4')}</div>
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm text-slate-700">${escapeHTML(a.text)}</div>
-                  <div class="text-xs text-slate-400 mt-0.5">${new Date(a.at).toLocaleString()}</div>
+            <div class="flex items-end gap-2 h-40">
+              ${last7Filtered.map(d => `
+                <div class="flex-1 flex flex-col items-center gap-1.5 ${d.date===filterDate?'opacity-100':'opacity-90'}">
+                  <div class="text-xs font-semibold text-slate-700">${d.count}</div>
+                  <div class="w-full rounded-t-md ${d.date===filterDate?'ring-2 ring-brand-300':''}" style="height:${(d.count/maxC2)*100}%;background:linear-gradient(180deg,#c2914a,#6e4220);min-height:4px"></div>
+                  <div class="text-[10px] text-slate-500 ${d.date===filterDate?'font-bold text-brand-700':''}">${escapeHTML(d.label)}</div>
                 </div>
-              </div>
-            `).join('')}
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Employee list -->
+          <div class="lg:col-span-3 bg-white p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h4 class="text-sm font-semibold text-slate-700">Status by employee</h4>
+              ${dayRows.length>0 ? `<button onclick="exportAttendanceSnapshot()" class="text-xs text-brand-600 hover:underline">Export CSV</button>` : ''}
+            </div>
+            ${dayRows.length === 0 ? '<div class="text-sm text-slate-400 text-center py-8">No employees match this filter.</div>' : `
+            <div class="space-y-1.5 max-h-72 overflow-y-auto">
+              ${dayRows.map(({e,att,status,statusLabel,ex}) => `
+                <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="location.hash='#/employee/${e.id}'">
+                  ${avatarHTML(e,28)}
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium text-slate-900 truncate">${escapeHTML(e.firstName+' '+e.lastName)}</div>
+                    <div class="text-[11px] text-slate-500 truncate">${escapeHTML(ex.branch||'No branch')} · ${escapeHTML(e.role)}</div>
+                  </div>
+                  <div class="text-right">
+                    ${att?.clockIn ? `<div class="text-xs text-slate-500 tabular-nums">${escapeHTML(att.clockIn)}${att.clockOut?'–'+escapeHTML(att.clockOut):''}</div>`:''}
+                    <span class="badge ${badgeFor(status)} mt-0.5">${escapeHTML(statusLabel)}</span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>`}
+          </div>
         </div>
-      </div>
-    </div>` : ''}
+      </div>` ;
+    })() : ''}
 
     ${admin ? `
     <!-- Compliance & alerts row -->
@@ -3400,6 +3508,47 @@ function downloadBackup() {
   a.href = url; a.download = `pulsehr-backup-${todayISO()}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* Export the dashboard's attendance snapshot for the selected date + branch */
+function exportAttendanceSnapshot() {
+  const filterDate   = dashAttFilter.date || todayISO();
+  const filterBranch = dashAttFilter.branch || 'all';
+  const empsScoped = filterBranch === 'all'
+    ? state.employees
+    : filterBranch === 'none'
+      ? state.employees.filter(e => !((getEmpExtras(e.id).branch||'').trim()))
+      : state.employees.filter(e => getEmpExtras(e.id).branch === filterBranch);
+  const rows = [['Employee','Branch','Role','Department','Clock In','Clock Out','Hours','Status']];
+  empsScoped.forEach(e => {
+    const ex = getEmpExtras(e.id);
+    const att = state.attendance.find(a => a.employeeId===e.id && a.date===filterDate);
+    const onLeave = state.leaveRequests.find(r => r.status==='approved' && r.employeeId===e.id && r.startDate<=filterDate && r.endDate>=filterDate);
+    const dow = new Date(filterDate+'T00:00:00').getDay();
+    const isOff = ex.schedule && ex.schedule[dow] && ex.schedule[dow].off;
+    let status = 'absent';
+    if (att?.status === 'present') status='present';
+    else if (att?.status === 'late') status='late';
+    else if (onLeave) status='on_leave';
+    else if (isOff) status='off';
+    const hrs = att?.clockIn && att?.clockOut ? minutesToHrs(diffMinutes(att.clockIn, att.clockOut)) : '';
+    rows.push([
+      e.firstName+' '+e.lastName, ex.branch||'', e.role, e.department,
+      att?.clockIn||'', att?.clockOut||'', hrs, status
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => {
+    const s = String(v??'');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const branchTag = filterBranch === 'all' ? 'all' : filterBranch.toLowerCase().replace(/\s+/g,'-');
+  a.href = url; a.download = `attendance-${filterDate}-${branchTag}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Snapshot exported', 'success');
 }
 
 /* -------------------- CSV EXPORT -------------------- */
