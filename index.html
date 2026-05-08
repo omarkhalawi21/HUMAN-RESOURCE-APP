@@ -4145,6 +4145,13 @@ function numberToWords(num) {
 }
 
 /* -------------------- USER GUIDE -------------------- */
+// Smooth-scroll the User Guide to a section without modifying the URL
+// hash — modifying it would change the route (e.g. #guide-compliance is
+// not a known route, so the router would fall back to dashboard).
+function scrollToGuideSection(id) {
+  const el = document.getElementById('guide-' + id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 // Mirrors HR_USER_GUIDE.md in the repo. When updating one, update both.
 function renderHelp() {
   const admin = isAdmin();
@@ -4170,7 +4177,7 @@ function renderHelp() {
     <nav class="bg-white rounded-2xl shadow-card p-5 sticky top-20">
       <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-semibold mb-3">Contents</div>
       <ul class="space-y-1.5 text-sm">
-        ${visible.map(s => `<li><a href="#guide-${s.id}" class="text-slate-700 hover:text-brand-700 hover:underline">${escapeHTML(s.title)}</a></li>`).join('')}
+        ${visible.map(s => `<li><a href="#/help" onclick="scrollToGuideSection('${s.id}'); return false;" class="text-slate-700 hover:text-brand-700 hover:underline">${escapeHTML(s.title)}</a></li>`).join('')}
       </ul>
       <div class="mt-5 pt-4 border-t border-slate-100 text-xs text-slate-500">
         Full markdown copy on <a href="https://github.com/omarkhalawi21/HUMAN-RESOURCE-APP/blob/main/HR_USER_GUIDE.md" target="_blank" rel="noopener" class="text-brand-700 hover:underline">GitHub</a>.
