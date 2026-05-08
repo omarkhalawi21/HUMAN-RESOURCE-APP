@@ -251,6 +251,7 @@ const I18N = {
     payroll: "Payroll",
     reports: "Reports",
     settings: "Settings",
+    help: "User Guide",
     logout: "Logout",
     today: "Today",
     present: "Present",
@@ -322,6 +323,7 @@ const I18N = {
     payroll: "الرواتب",
     reports: "التقارير",
     settings: "الإعدادات",
+    help: "دليل الاستخدام",
     logout: "تسجيل الخروج",
     today: "اليوم",
     present: "حاضر",
@@ -954,7 +956,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'reports', 'settings', 'account'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'reports', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1189,6 +1191,7 @@ function renderShell(routeContent) {
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:admin, group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:admin, group:'company' },
+    { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
   ];
   const sidebar = `
     <aside class="app-sidebar w-64 shrink-0 bg-white border-${lang==='ar'?'l':'r'} border-slate-200 flex flex-col h-screen md:sticky md:top-0">
@@ -4141,6 +4144,180 @@ function numberToWords(num) {
   return sign + main + fraction + ' Only';
 }
 
+/* -------------------- USER GUIDE -------------------- */
+// Mirrors HR_USER_GUIDE.md in the repo. When updating one, update both.
+function renderHelp() {
+  const admin = isAdmin();
+  const sections = [
+    { id:'sign-in',     title:'Signing in' },
+    { id:'first-setup', title:'First-time setup', adminOnly:true },
+    { id:'add-emp',     title:'Adding an employee', adminOnly:true },
+    { id:'attendance',  title:'Daily attendance' },
+    { id:'leave',       title:'Leave requests' },
+    { id:'warning',     title:'Issuing a warning', adminOnly:true },
+    { id:'advance',     title:'Salary advances' },
+    { id:'payroll',     title:'Running monthly payroll', adminOnly:true },
+    { id:'renew',       title:'Renewing IQAMA / Baladiya', adminOnly:true },
+    { id:'cert',        title:'Issuing certificates', adminOnly:true },
+    { id:'evidence',    title:'Evidence reports', adminOnly:true },
+    { id:'backup',      title:'Backup & data export', adminOnly:true },
+    { id:'troubleshoot',title:'Common problems & fixes' },
+  ];
+  const visible = sections.filter(s => !s.adminOnly || admin);
+
+  const toc = `
+    <nav class="bg-white rounded-2xl shadow-card p-5 sticky top-20">
+      <div class="text-[11px] uppercase tracking-[0.18em] text-slate-500 font-semibold mb-3">Contents</div>
+      <ul class="space-y-1.5 text-sm">
+        ${visible.map(s => `<li><a href="#guide-${s.id}" class="text-slate-700 hover:text-brand-700 hover:underline">${escapeHTML(s.title)}</a></li>`).join('')}
+      </ul>
+      <div class="mt-5 pt-4 border-t border-slate-100 text-xs text-slate-500">
+        Full markdown copy on <a href="https://github.com/omarkhalawi21/HUMAN-RESOURCE-APP/blob/main/HR_USER_GUIDE.md" target="_blank" rel="noopener" class="text-brand-700 hover:underline">GitHub</a>.
+      </div>
+    </nav>
+  `;
+
+  // Inline CSS scoped to the guide so it doesn't fight Tailwind utility
+  // classes used elsewhere. Plain readable typography.
+  const guideStyles = `
+    <style>
+      .guide-prose h2 { font-family:'Fraunces', Georgia, serif; font-size:24px; font-weight:600; color:#0f172a; margin:36px 0 12px; padding-bottom:8px; border-bottom:1px solid #e8dcc4; scroll-margin-top:80px; }
+      .guide-prose h3 { font-size:14px; font-weight:700; color:#0f172a; text-transform:uppercase; letter-spacing:0.06em; margin:22px 0 8px; }
+      .guide-prose p  { color:#374151; line-height:1.7; margin:10px 0; font-size:14px; }
+      .guide-prose ul, .guide-prose ol { color:#374151; line-height:1.75; padding-inline-start:1.4em; font-size:14px; }
+      .guide-prose ul { list-style:disc; }
+      .guide-prose ol { list-style:decimal; }
+      .guide-prose li { margin:4px 0; }
+      .guide-prose strong { color:#0f172a; }
+      .guide-prose code  { background:#fbf6ef; color:#6e4220; padding:1px 6px; border-radius:4px; font-size:13px; font-family:ui-monospace, "SF Mono", Menlo, monospace; }
+      .guide-prose .callout { background:#fbf6ef; border:1px solid #e8dcc4; border-radius:10px; padding:14px 18px; margin:14px 0; font-size:13px; color:#5d4626; }
+      .guide-prose .callout strong { color:#42351c; }
+      .guide-prose a { color:#6e4220; text-decoration:underline; }
+    </style>
+  `;
+
+  const body = `
+    ${guideStyles}
+    <article class="guide-prose bg-white rounded-2xl shadow-card p-8 md:p-10">
+      <header class="mb-6 pb-6 border-b border-brand-100">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('file','w-3.5 h-3.5')} Hassad HR</div>
+        <h1 class="font-display text-3xl md:text-4xl font-semibold text-slate-900 mt-1">User Guide</h1>
+        <p class="mt-2 text-slate-500">Practical reference for the HR person running the app day-to-day.</p>
+      </header>
+
+      <h2 id="guide-sign-in">Signing in</h2>
+      <ul>
+        <li>Open the live URL in any modern browser.</li>
+        <li>Enter your work email + password and click <strong>Login</strong>.</li>
+        <li>Forgot password? Click <strong>Forgot your password?</strong> under the form &mdash; a reset link is emailed to you.</li>
+      </ul>
+      <p>The first time you sign in on a device, allow <strong>pop-ups</strong> for the site &mdash; every printable document opens in a pop-up window. (Safari: top menu &rarr; Safari &rarr; Settings for this site &rarr; Pop-up Windows &rarr; Allow.)</p>
+
+      ${admin ? `
+      <h2 id="guide-first-setup">First-time setup (admin)</h2>
+      <p>Run through this once before anyone else uses the app.</p>
+      <ol>
+        <li><strong>Settings &rarr; Company</strong> &mdash; fill legal entity name, registration number, address lines, work day start/end, currency, language. Tick "Capture location on clock-in" if you want geofencing.</li>
+        <li><strong>Upload the company stamp</strong> &mdash; transparent PNG/JPG of your official stamp. Appears on every printed document.</li>
+        <li><strong>Add branches</strong> &mdash; Settings &rarr; Branches. Use "Use my current location" while standing at each branch to capture coordinates. Set radius to 100&ndash;200m.</li>
+        <li><strong>Promote a second admin</strong> &mdash; Settings &rarr; Users &rarr; "make admin" on another HR person. Don't be the only admin.</li>
+      </ol>
+
+      <h2 id="guide-add-emp">Adding an employee</h2>
+      <ol>
+        <li><strong>Employees &rarr; Add employee</strong>.</li>
+        <li><strong>Basic info</strong> &mdash; name, email, phone, nationality, role, department, branch, joining date, salary, status.</li>
+        <li><strong>Shift &amp; Off-days</strong> &mdash; per-day hours and off-day toggles. Use the quick buttons:
+          <ul>
+            <li><strong>Set Fri+Sat off</strong> &mdash; standard Saudi weekend</li>
+            <li><strong>Set Fri off only</strong> &mdash; half-Saturday work</li>
+            <li><strong>Copy Mon's hours to all working days</strong> &mdash; quickest setup</li>
+          </ul>
+        </li>
+        <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system warns 30 days before either expires.</li>
+        <li>Save. The employee then signs up at the live URL with the same email to set their own password.</li>
+      </ol>
+      ` : ''}
+
+      <h2 id="guide-attendance">Daily attendance</h2>
+      <p><strong>Employees</strong>: dashboard &rarr; tap <strong>Clock In</strong>. End of shift &rarr; <strong>Clock Out</strong>. If geofencing is on, the browser asks for location permission once.</p>
+      ${admin ? `<p><strong>Admins</strong> see today's snapshot on the Dashboard, the per-employee table on Attendance &rarr; All Employees Today, and the full history (filterable + exportable) on All History.</p>` : ''}
+
+      <h2 id="guide-leave">Leave requests</h2>
+      <p>Employees: <strong>Leave &rarr; Request Leave</strong> &mdash; pick type (Annual / Sick / Personal), dates, reason.</p>
+      ${admin ? `<p>Admin: <strong>Leave &rarr; Pending Approvals</strong> &mdash; Approve or Reject. Approved leave deducts from the employee's balance and shows them as "On leave" for those dates.</p>` : ''}
+
+      ${admin ? `
+      <h2 id="guide-warning">Issuing a warning</h2>
+      <ol>
+        <li><strong>Warnings &rarr; Issue warning</strong>.</li>
+        <li>Pick employee, severity (Verbal / Written / <strong>Final Written</strong>), type, date.</li>
+        <li>Reason (what happened) and management comments (corrective action expected).</li>
+        <li>Save &rarr; click "Open the warning letter for printing?" &rarr; the letter pops up with the company letterhead, employee details (incl. IQAMA from their profile), violation, action taken, signature lines.</li>
+        <li>Print, get employee signature, scan, upload to <strong>Archive</strong>.</li>
+      </ol>
+      ` : ''}
+
+      <h2 id="guide-advance">Salary advances</h2>
+      <p>Employees: <strong>Salary Advances &rarr; Request Advance</strong> &mdash; amount, reason, repayment plan (next payroll / 2 installments / manual).</p>
+      ${admin ? `<p>Admin: <strong>Salary Advances &rarr; Pending</strong> &rarr; Approve or Reject. Approved advances are <strong>automatically deducted</strong> on the next payroll run; the live preview shows the deduction before you confirm.</p>` : ''}
+      <p>Print the slip via the printer icon next to any row.</p>
+
+      ${admin ? `
+      <h2 id="guide-payroll">Running monthly payroll</h2>
+      <ol>
+        <li><strong>Payroll &rarr; Run Payroll</strong>.</li>
+        <li>Modal opens with the current month pre-selected. <strong>Live preview</strong> shows employee count, total base, advance deductions, total net, and how many advances will be marked repaid.</li>
+        <li>If a payroll for that period already exists you get an amber warning before running again.</li>
+        <li>Click <strong>Run payroll</strong> &mdash; payslips generated for every active employee.</li>
+      </ol>
+      <div class="callout">
+        <strong>WPS workflow with your bank:</strong> Run payroll in the app &rarr; Export CSV &rarr; upload to your bank's WPS portal &rarr; bank transfers the money &rarr; payroll status in the app stays "Paid". The app generates payslips and tracks records; your bank moves the money.
+      </div>
+
+      <h2 id="guide-renew">Renewing IQAMA / Baladiya</h2>
+      <p>When <strong>Documents</strong> shows an amber badge, someone's documents are expiring within 30 days.</p>
+      <ol>
+        <li><strong>Documents &rarr; Renew</strong> on the row.</li>
+        <li>Modal pre-fills the new expiry: <strong>+3 months</strong> for IQAMA, <strong>+1 year</strong> for Baladiya from today.</li>
+        <li>Adjust if needed &rarr; Save. The previous expiry is shown for reference.</li>
+      </ol>
+
+      <h2 id="guide-cert">Issuing certificates</h2>
+      <p><strong>Certificates</strong> &rarr; pick a type (Employee of the Month / Appreciation / Completion / Custom), recipient, edit title and message, save, download as PDF.</p>
+
+      <h2 id="guide-evidence">Evidence reports</h2>
+      <p>The <strong>attendance evidence</strong> report is what you'd hand to GOSI, the Ministry, or a court when asked "did this employee actually show up to work":</p>
+      <ol>
+        <li><strong>Attendance &rarr; All History</strong>.</li>
+        <li>Filter by date range, employee, branch, status as needed.</li>
+        <li>Click <strong>Print as evidence</strong> &mdash; has the letterhead, filter summary, statistics, full record table, signature lines.</li>
+      </ol>
+      <p>For payroll evidence, use <strong>Payroll &rarr; Open Report</strong> for the period in question.</p>
+
+      <h2 id="guide-backup">Backup &amp; data export</h2>
+      <p>Data lives in Supabase (cloud) but keep a local backup.</p>
+      <p><strong>Weekly:</strong> Settings &rarr; <strong>Download backup</strong>. Stores all employees, attendance, leave, payroll, warnings, advances, certificates, document tracking as JSON. Save somewhere encrypted (USB, password-manager attachment, locked Drive folder). <strong>Don't email it</strong> &mdash; contains everyone's salaries.</p>
+      <p>Per-screen exports: Employees &rarr; CSV, Attendance &rarr; CSV, Payroll &rarr; CSV, Reports &rarr; Export.</p>
+      ` : ''}
+
+      <h2 id="guide-troubleshoot">Common problems &amp; fixes</h2>
+      <p><strong>Employee can't log in:</strong> they probably haven't signed up yet. Send them the live URL &mdash; they need to use the same email entered when their record was created, then click "Create one" under the login form.</p>
+      <p><strong>Clock-in fails with "outside branch radius":</strong> branch coordinates are wrong, or radius is too small. ${admin ? 'Settings &rarr; Branches &rarr; Edit &rarr; "Use my current location" while at the branch.' : 'Ask HR to check the branch coordinates.'}</p>
+      <p><strong>Print preview blank:</strong> pop-ups blocked. Allow pop-ups for the site (Safari: top menu &rarr; Safari &rarr; Settings for this site &rarr; Pop-up Windows &rarr; Allow).</p>
+      <p><strong>Modal won't close after save:</strong> the save errored. Look for a red toast at the top right.</p>
+      <p><strong>Lost admin access:</strong> ask another admin to demote and re-promote you, or use Forgot password. If no other admin exists, an engineer needs to flip <code>is_admin</code> in the Supabase Table Editor.</p>
+    </article>
+  `;
+
+  return `
+    <div class="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-5 max-w-5xl mx-auto">
+      <aside class="hidden lg:block">${toc}</aside>
+      <div>${body}</div>
+    </div>
+  `;
+}
+
 async function saveSettings() {
   const updates = {
     name: $('#set-name').value.trim() || 'Hassad Coffee Roasters',
@@ -5556,6 +5733,7 @@ function render() {
     case 'archive':      content = renderArchive(); break;
     case 'reports':      content = isAdmin() ? renderReports() : renderDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderDashboard(); break;
+    case 'help':         content = renderHelp(); break;
     case 'account':      content = renderAccount(); break;
     default:             content = renderDashboard();
   }
