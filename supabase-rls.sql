@@ -434,6 +434,48 @@ ALTER TABLE public.companies
   ADD COLUMN IF NOT EXISTS address_line2 text,
   ADD COLUMN IF NOT EXISTS address_line3 text;
 
+-- PDPL consent fields. `consent_at` NULL = employee has not yet given
+-- digital consent and must do so on next login. `consent_version` lets
+-- us bump the privacy notice version and re-prompt everyone if it
+-- changes materially. GPS and photo are optional opt-ins; cross-border
+-- and the privacy notice acknowledgement are implicit when consent_at
+-- is set (the app is unusable without them).
+ALTER TABLE public.employees
+  ADD COLUMN IF NOT EXISTS consent_at      timestamptz,
+  ADD COLUMN IF NOT EXISTS consent_version text,
+  ADD COLUMN IF NOT EXISTS consent_gps     boolean,
+  ADD COLUMN IF NOT EXISTS consent_photo   boolean;
+
+-- record_consent() lets an authenticated employee write ONLY their
+-- consent fields, without granting them general UPDATE on employees
+-- (which would let them change their own salary, admin flag, etc.).
+-- SECURITY DEFINER bypasses RLS for this specific operation;
+-- the WHERE clause locks it to the caller's own row.
+CREATE OR REPLACE FUNCTION public.record_consent(
+  p_gps     boolean,
+  p_photo   boolean,
+  p_version text DEFAULT '1.0'
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+  UPDATE public.employees
+     SET consent_at      = NOW(),
+         consent_version = p_version,
+         consent_gps     = COALESCE(p_gps,   false),
+         consent_photo   = COALESCE(p_photo, false)
+   WHERE user_id = auth.uid();
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_consent(boolean, boolean, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.record_consent(boolean, boolean, text) TO authenticated;
+
 -- -------------------------------------------------------------
 -- 11. RLS for v2 tables
 -- -------------------------------------------------------------
