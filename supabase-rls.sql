@@ -122,8 +122,10 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- 3. New self-service signup. First-ever becomes admin; everyone
-  --    else lands as a regular Employee.
+  -- 3. New self-service signup. First-ever becomes admin (status =
+  --    'active' so they can immediately set up the company); everyone
+  --    else lands as 'pending' awaiting admin approval. The JS shows
+  --    a "pending approval" gate to anyone with status='pending'.
   SELECT NOT EXISTS (SELECT 1 FROM public.employees) INTO is_first;
 
   INSERT INTO public.employees (
@@ -136,7 +138,7 @@ BEGIN
     COALESCE(meta->>'last_name', ''),
     NULLIF(TRIM(meta->>'phone'), ''),
     is_first,
-    'active',
+    CASE WHEN is_first THEN 'active' ELSE 'pending' END,
     COALESCE(NULLIF(TRIM(meta->>'role'), ''), CASE WHEN is_first THEN 'Admin'      ELSE 'Employee' END),
     COALESCE(NULLIF(TRIM(meta->>'role'), ''), CASE WHEN is_first THEN 'Management' ELSE 'General'  END),
     CURRENT_DATE,
