@@ -61,6 +61,20 @@ GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
 --    This is the safe place for that logic — never trust the
 --    client to set is_admin on signup.
 -- -------------------------------------------------------------
+-- Invite-only signup. The signup form on the live site is open to the
+-- internet, but only people HR has pre-added to the employees table
+-- can actually use the system. Otherwise a stranger could find the
+-- URL and create an account.
+--
+-- Logic, in order:
+--   1. If this auth user is already linked to an employee row, no-op.
+--   2. If HR has pre-added a row with this email and no user_id yet,
+--      link them. They've been invited and can use the app.
+--   3. If there are zero employees in the entire system, this is the
+--      first-ever signup — bootstrap as admin so the system is usable.
+--   4. Otherwise: do NOT create an employee row. The auth user exists
+--      but the JS will catch the "no employee record" case, show a
+--      "not authorized" page, and log them out.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -68,34 +82,57 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  is_first boolean;
+  is_first       boolean;
+  invited_emp_id uuid;
 BEGIN
-  -- Idempotent: if an employee row already maps to this auth user
-  -- (manual link by an admin, retried trigger, etc.), do nothing.
-  -- An IF NOT EXISTS check works regardless of whether user_id has a
-  -- UNIQUE constraint, which we don't assume.
+  -- 1. Already linked.
   IF EXISTS (SELECT 1 FROM public.employees WHERE user_id = NEW.id) THEN
     RETURN NEW;
   END IF;
 
+  -- 2. HR has pre-added this email — link to the existing row.
+  --    Email comparison is case-insensitive (auth lowercases email
+  --    on insert; the employees table may have any casing).
+  SELECT id INTO invited_emp_id
+    FROM public.employees
+   WHERE LOWER(email) = LOWER(NEW.email)
+     AND user_id IS NULL
+   ORDER BY hire_date NULLS LAST
+   LIMIT 1;
+
+  IF invited_emp_id IS NOT NULL THEN
+    UPDATE public.employees
+       SET user_id = NEW.id
+     WHERE id = invited_emp_id;
+    RETURN NEW;
+  END IF;
+
+  -- 3. First-ever signup. Bootstrap an admin record so somebody can
+  --    set up the company.
   SELECT NOT EXISTS (SELECT 1 FROM public.employees) INTO is_first;
+  IF is_first THEN
+    INSERT INTO public.employees (
+      user_id, email, first_name, last_name,
+      is_admin, status, job_title, department, hire_date, salary
+    ) VALUES (
+      NEW.id,
+      NEW.email,
+      COALESCE(NEW.raw_user_meta_data->>'first_name', ''),
+      COALESCE(NEW.raw_user_meta_data->>'last_name', ''),
+      true,
+      'active',
+      'Admin',
+      'Management',
+      CURRENT_DATE,
+      0
+    );
+    RETURN NEW;
+  END IF;
 
-  INSERT INTO public.employees (
-    user_id, email, first_name, last_name,
-    is_admin, status, job_title, department, hire_date, salary
-  ) VALUES (
-    NEW.id,
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'first_name', ''),
-    COALESCE(NEW.raw_user_meta_data->>'last_name', ''),
-    is_first,
-    'active',
-    CASE WHEN is_first THEN 'Admin' ELSE 'Employee' END,
-    CASE WHEN is_first THEN 'Management' ELSE 'General' END,
-    CURRENT_DATE,
-    0
-  );
-
+  -- 4. Not invited, not first-ever. Don't create an employee row.
+  --    The auth user exists (created by Supabase Auth) but they have
+  --    no record in our system. The JS catches this, shows a
+  --    "not authorized" screen, and logs them out.
   RETURN NEW;
 END;
 $$;

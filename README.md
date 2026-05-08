@@ -30,9 +30,9 @@ Static HTML file deployed to GitHub Pages. Backend is Supabase (Auth + Postgres)
 If you're standing this up on a fresh Supabase project:
 
 1. **Apply the schema + RLS**: Supabase dashboard → SQL Editor → New query → paste `supabase-rls.sql` → Run. The script is idempotent.
-2. **Sign up** at the deployed URL — the **first user to sign up automatically becomes admin** (handled by a server-side trigger in the SQL). Subsequent signups are regular employees.
+2. **Sign up** at the deployed URL — the **first user to sign up automatically becomes admin** (handled by a server-side trigger). After this initial bootstrap, signup is locked: only people HR has pre-added can create an account.
 3. From the admin account, go to **Settings** to fill in company info, work hours, currency, and upload the company stamp.
-4. Add your other employees from the **Employees** screen, or have them sign up themselves and you can promote/configure from Settings.
+4. Add each new employee from **Employees → Add Employee**, entering their work email. Tell them to sign up at the live URL using that exact email — they'll be linked to their pre-created record automatically.
 
 ## Security
 
