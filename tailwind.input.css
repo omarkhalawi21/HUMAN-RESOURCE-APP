@@ -1,0 +1,4 @@
+/* Tailwind v3 source. Generates tailwind.css via `npm run build`. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -43,9 +43,31 @@ The Supabase publishable key in `index.html` is safe to ship **only because Row 
 ## Tech
 
 - Plain HTML + CSS + vanilla JavaScript, single file
-- Tailwind via Play CDN (development); compile locally for production
+- **Tailwind self-hosted** — pre-built `tailwind.css` committed to the repo, no CDN dependency
 - Supabase JS SDK pinned to v2.45.4 with SRI integrity check
 - CSP meta tag restricting external resources to declared CDNs
+
+## Building Tailwind CSS
+
+The compiled `tailwind.css` is committed and served as-is by GitHub Pages — you don't need to build to deploy. Only rebuild when you add new utility classes to `index.html` that aren't already in the CSS.
+
+One-time setup (per machine):
+```bash
+npm install
+```
+
+Rebuild after adding new Tailwind classes:
+```bash
+npm run build
+```
+
+This regenerates `tailwind.css` from `tailwind.input.css` + `tailwind.config.js`, scanning `index.html` and `HR_USER_GUIDE.md` for class names. Commit the updated `tailwind.css` along with your code change.
+
+For live development:
+```bash
+npm run watch
+```
+…leaves the compiler running and rebuilds on save.
 
 ## Roadmap
 
