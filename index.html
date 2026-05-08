@@ -638,6 +638,10 @@ function mapEmployeeFromDb(r) {
     avatarColor: r.avatar_color || '#a87035',
     photo: r.photo,
     leave_annual: r.leave_annual, leave_sick: r.leave_sick, leave_personal: r.leave_personal,
+    consentAt:      r.consent_at,
+    consentVersion: r.consent_version,
+    consentGps:     r.consent_gps,
+    consentPhoto:   r.consent_photo,
   };
 }
 function employeeToDb(e) {
@@ -3994,6 +3998,41 @@ function renderSettings() {
       </div>
 
       <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-1">
+          <h3 class="font-display text-lg font-semibold text-slate-900">PDPL consent audit trail</h3>
+          ${(() => {
+            const total   = state.employees.length;
+            const consented = state.employees.filter(e => e.consentAt).length;
+            return `<span class="text-xs text-slate-500">${consented} of ${total} employees have given digital consent</span>`;
+          })()}
+        </div>
+        <p class="text-sm text-slate-500 mb-5">Required by Saudi PDPL: a tamper-proof record of who agreed to your Privacy Notice, when, and what optional consents (GPS / photo) they gave. Show this to SDAIA on request.</p>
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Employee</th><th>Consented at</th><th>Version</th><th>GPS</th><th>Photo</th></tr></thead>
+            <tbody>
+              ${state.employees.length === 0 ? `<tr><td colspan="5" class="text-center text-slate-400 !py-8">No employees yet.</td></tr>` :
+                state.employees.slice().sort((a,b)=>{
+                  const ax = a.consentAt ? 1 : 0, bx = b.consentAt ? 1 : 0;
+                  if (ax !== bx) return ax - bx; // pending first
+                  return (a.firstName||'').localeCompare(b.firstName||'');
+                }).map(e => {
+                  const at = e.consentAt ? new Date(e.consentAt).toLocaleString(undefined,{year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : null;
+                  return `
+                  <tr class="hover-row">
+                    <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
+                    <td>${at ? `<span class="text-slate-700 text-xs">${escapeHTML(at)}</span>` : '<span class="badge badge-amber">Pending</span>'}</td>
+                    <td>${e.consentVersion ? `<span class="text-xs text-slate-500">v${escapeHTML(e.consentVersion)}</span>` : '<span class="text-xs text-slate-300">—</span>'}</td>
+                    <td>${e.consentAt ? (e.consentGps ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-slate">No</span>') : '<span class="text-xs text-slate-300">—</span>'}</td>
+                    <td>${e.consentAt ? (e.consentPhoto ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-slate">No</span>') : '<span class="text-xs text-slate-300">—</span>'}</td>
+                  </tr>`;
+                }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Danger zone</h3>
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
@@ -6076,11 +6115,137 @@ async function submitModal() {
 }
 
 /* -------------------- MAIN RENDER -------------------- */
+/* -------------------- PDPL CONSENT GATE -------------------- */
+const CURRENT_CONSENT_VERSION = '1.0';
+
+// Has the current employee given consent under the current version?
+function hasGivenConsent() {
+  const e = currentEmployee();
+  if (!e) return true; // not logged in yet, irrelevant
+  if (!e.consentAt) return false;
+  if (e.consentVersion !== CURRENT_CONSENT_VERSION) return false; // version bump = re-consent
+  return true;
+}
+
+function renderConsentGate() {
+  const me = currentEmployee();
+  const isAr = state.settings.lang === 'ar';
+  return `
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+    <div class="w-full max-w-2xl bg-white rounded-2xl shadow-pop p-8 md:p-10">
+      <div class="flex items-center gap-3 mb-2">
+        <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden border border-slate-100">
+          <img src="logo.png" alt="" class="w-full h-full object-contain" onerror="this.style.display='none'" />
+        </div>
+        <div>
+          <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
+          <div class="text-xs text-slate-500">PDPL Compliance</div>
+        </div>
+      </div>
+
+      <h1 class="font-display text-3xl md:text-4xl font-semibold text-slate-900 mt-6 leading-tight">
+        ${isAr ? 'مرحباً' : 'One quick step'}, ${escapeHTML(me?.firstName||'')}.
+      </h1>
+      <p class="mt-3 text-sm text-slate-600 leading-relaxed">
+        Before you can use the HR system, please review how we handle your personal data and confirm your consent. This is required by the Saudi Personal Data Protection Law (PDPL). Your answers are recorded with a timestamp.
+      </p>
+
+      <div class="mt-6">
+        <button onclick="printPrivacyNotice()" class="text-sm text-brand-700 hover:underline inline-flex items-center gap-1.5">
+          ${icon('file','w-4 h-4')} Read the full Privacy Notice
+        </button>
+        <span class="text-xs text-slate-400 ms-2">(opens in a new window)</span>
+      </div>
+
+      <div class="mt-7 space-y-3">
+
+        <label class="flex items-start gap-3 p-4 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition">
+          <input id="cg-ack" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0" oninput="updateConsentSubmit()">
+          <div class="text-sm">
+            <div class="font-semibold text-slate-900">I have read and understood the Privacy Notice <span class="text-rose-600">*</span></div>
+            <div class="text-slate-500 text-xs mt-0.5">Required. Confirms you understand what data we collect and why.</div>
+          </div>
+        </label>
+
+        <label class="flex items-start gap-3 p-4 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition">
+          <input id="cg-xb" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0" oninput="updateConsentSubmit()">
+          <div class="text-sm">
+            <div class="font-semibold text-slate-900">I consent to my data being stored on cloud servers outside Saudi Arabia <span class="text-rose-600">*</span></div>
+            <div class="text-slate-500 text-xs mt-0.5">Required. Our HR system uses Supabase (EU/US). Without this we cannot provide the service.</div>
+          </div>
+        </label>
+
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold pt-3 pb-1">Optional &mdash; you can change these later</div>
+
+        <label class="flex items-start gap-3 p-4 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition">
+          <input id="cg-gps" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0">
+          <div class="text-sm">
+            <div class="font-semibold text-slate-900">Capture my GPS location at clock-in</div>
+            <div class="text-slate-500 text-xs mt-0.5">Used only to confirm you are physically at your assigned branch. Decline and your attendance will be recorded without location.</div>
+          </div>
+        </label>
+
+        <label class="flex items-start gap-3 p-4 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition">
+          <input id="cg-photo" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0">
+          <div class="text-sm">
+            <div class="font-semibold text-slate-900">Store my photograph in the staff directory</div>
+            <div class="text-slate-500 text-xs mt-0.5">Used for visual identification. Decline and your initials will be shown instead.</div>
+          </div>
+        </label>
+
+      </div>
+
+      <div class="flex flex-wrap gap-3 mt-8 pt-6 border-t border-slate-100">
+        <button onclick="submitConsent()" id="cg-submit" disabled class="btn btn-primary flex-1 justify-center !py-3.5 !text-base disabled:opacity-50 disabled:cursor-not-allowed">
+          ${icon('check','w-4 h-4')} I agree, continue
+        </button>
+        <button onclick="logout()" class="btn btn-ghost">I disagree, log out</button>
+      </div>
+
+      <p class="text-[11px] text-slate-400 mt-4 leading-relaxed">By clicking "I agree, continue" you confirm consent to the optional items you have ticked above. Your acceptance is recorded in the database with a timestamp and version (${escapeHTML(CURRENT_CONSENT_VERSION)}). You may withdraw any optional consent at any time by writing to HR.</p>
+    </div>
+  </div>`;
+}
+
+// Enable Continue only when both required boxes are ticked.
+function updateConsentSubmit() {
+  const ack = document.getElementById('cg-ack')?.checked;
+  const xb  = document.getElementById('cg-xb')?.checked;
+  const btn = document.getElementById('cg-submit');
+  if (btn) btn.disabled = !(ack && xb);
+}
+
+async function submitConsent() {
+  const ack = document.getElementById('cg-ack')?.checked;
+  const xb  = document.getElementById('cg-xb')?.checked;
+  if (!ack || !xb) { toast('Please tick both required boxes', 'error'); return; }
+  const gps   = !!document.getElementById('cg-gps')?.checked;
+  const photo = !!document.getElementById('cg-photo')?.checked;
+  const btn = document.getElementById('cg-submit');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+  const { error } = await sb.rpc('record_consent', { p_gps: gps, p_photo: photo, p_version: CURRENT_CONSENT_VERSION });
+  if (error) {
+    if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+    toast('Could not save consent: ' + error.message, 'error');
+    return;
+  }
+  // Refresh the employee record so consent fields populate locally.
+  const me = currentEmployee();
+  if (me) {
+    const { data } = await sb.from('employees').select('*').eq('id', me.id).single();
+    if (data) Object.assign(me, mapEmployeeFromDb(data));
+  }
+  toast('Thank you — consent recorded.', 'success');
+  render();
+}
+
 function render() {
   document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
   if (!state.session) { stopClockTicker(); app.innerHTML = renderLogin(); return; }
+  // Block access to the app until PDPL consent is recorded.
+  if (!hasGivenConsent()) { stopClockTicker(); app.innerHTML = renderConsentGate(); return; }
   startClockTicker();
   const route = getRoute();
   let content = '';
