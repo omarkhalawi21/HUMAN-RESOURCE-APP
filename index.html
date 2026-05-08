@@ -1034,7 +1034,7 @@ function renderLogin() {
         </div>
 
         <div id="auth-mode-signup" style="${authMode==='signup'?'':'display:none'}">
-          <form onsubmit="event.preventDefault(); doSignup();" class="space-y-4">
+          <form onsubmit="event.preventDefault(); doSignup();" class="space-y-3">
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="label">First name</label>
@@ -1049,15 +1049,41 @@ function renderLogin() {
               <label class="label">Work email</label>
               <input id="signup-email" type="email" class="input" autocomplete="email" placeholder="you@hassad.coffee" />
             </div>
-            <div>
-              <label class="label">Password</label>
-              <input id="signup-password" type="password" class="input" autocomplete="new-password" placeholder="At least 6 characters" />
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">Phone number</label>
+                <input id="signup-phone" type="tel" class="input" autocomplete="tel" placeholder="05XXXXXXXX" />
+              </div>
+              <div>
+                <label class="label">Position</label>
+                <input id="signup-role" class="input" list="signup-role-list" placeholder="e.g. Barista" />
+                <datalist id="signup-role-list">
+                  ${SUGGESTED_DEPARTMENTS.map(d => `<option value="${escapeHTML(d)}">`).join('')}
+                </datalist>
+              </div>
             </div>
-            <button type="submit" id="signup-submit" class="btn btn-primary w-full justify-center !py-3.5 !text-base shadow-card hover:shadow-pop transition">
+            <div>
+              <label class="label">Branch</label>
+              <select id="signup-branch" class="input">
+                <option value="">— Select branch —</option>
+                ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">Password</label>
+                <input id="signup-password" type="password" class="input" autocomplete="new-password" placeholder="At least 6 characters" />
+              </div>
+              <div>
+                <label class="label">Confirm password</label>
+                <input id="signup-password2" type="password" class="input" autocomplete="new-password" placeholder="Re-enter password" />
+              </div>
+            </div>
+            <button type="submit" id="signup-submit" class="btn btn-primary w-full justify-center !py-3.5 !text-base shadow-card hover:shadow-pop transition !mt-4">
               Create account
               <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
-            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">This system is invite-only. Sign up using the email address your HR team registered for you. If they haven&rsquo;t added you yet, ask them to do so before signing up.</p>
+            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">After signup, your HR team will configure your salary, schedule, and document expiries.</p>
           </form>
           <div class="mt-8 pt-6 border-t border-brand-100 text-center">
             <span class="text-sm text-slate-500">Already have an account? </span>
@@ -1088,13 +1114,24 @@ async function doSignup() {
   const firstName = $('#signup-fn').value.trim();
   const lastName  = $('#signup-ln').value.trim();
   const email     = $('#signup-email').value.trim();
+  const phone     = $('#signup-phone')?.value.trim()  || '';
+  const role      = $('#signup-role')?.value.trim()   || '';
+  const branch    = $('#signup-branch')?.value        || '';
   const password  = $('#signup-password').value;
-  if (!firstName || !email) { toast('First name and email required', 'error'); return; }
+  const password2 = $('#signup-password2')?.value || '';
+  if (!firstName || !email)   { toast('First name and email required', 'error'); return; }
   if (!password || password.length < 6) { toast('Password must be at least 6 characters', 'error'); return; }
+  if (password !== password2) { toast('Passwords do not match', 'error'); return; }
   const btn = $('#signup-submit'); if (btn) { btn.disabled = true; btn.style.opacity='0.6'; }
   const { data, error } = await sb.auth.signUp({
     email, password,
-    options: { data: { first_name: firstName, last_name: lastName } }
+    options: { data: {
+      first_name: firstName,
+      last_name:  lastName,
+      phone,
+      role,    // becomes employees.job_title (and department on first row)
+      branch,  // becomes employee_extras.branch
+    } },
   });
   if (btn) { btn.disabled = false; btn.style.opacity=''; }
   if (error) { toast(error.message || 'Sign up failed', 'error'); return; }
@@ -4351,7 +4388,7 @@ function renderHelp() {
           </ul>
         </li>
         <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system warns 30 days before either expires.</li>
-        <li>Save. The employee then signs up at the live URL with the <strong>same email</strong> to set their own password &mdash; the system links the new auth account to the record you just created. <strong>If they sign up with a different email they&rsquo;ll be blocked</strong> with a "Not authorized" screen, since the app is invite-only.</li>
+        <li>Save. Or skip this step entirely &mdash; the employee can sign themselves up at the live URL (filling in their own name, phone, position, branch). Either way, when they sign up with the email you registered, the system links the auth account to the record. After signup, fill in their salary and schedule on this screen.</li>
       </ol>
       ` : ''}
 
@@ -4444,8 +4481,7 @@ function renderHelp() {
       ` : ''}
 
       <h2 id="guide-troubleshoot">Common problems &amp; fixes</h2>
-      <p><strong>Employee can't log in:</strong> they probably haven't signed up yet. Send them the live URL &mdash; they need to use the same email entered when their record was created, then click "Create one" under the login form.</p>
-      <p><strong>Employee sees a "Not authorized" screen after signing up:</strong> the email they used at signup doesn't match what HR registered. Either: HR didn't add them yet (add them in <strong>Employees &rarr; Add Employee</strong> with the exact email they used), or the spelling differs. Once HR's record matches, ask them to log out then log back in &mdash; the gate will clear.</p>
+      <p><strong>Employee can't log in:</strong> they probably haven't signed up yet. Send them the live URL &mdash; they click "Create one" under the login form, fill in their details, and they're in.</p>
       <p><strong>Clock-in fails with "outside branch radius":</strong> branch coordinates are wrong, or radius is too small. ${admin ? 'Settings &rarr; Branches &rarr; Edit &rarr; "Use my current location" while at the branch.' : 'Ask HR to check the branch coordinates.'}</p>
       <p><strong>Print preview blank:</strong> pop-ups blocked. Allow pop-ups for the site (Safari: top menu &rarr; Safari &rarr; Settings for this site &rarr; Pop-up Windows &rarr; Allow).</p>
       <p><strong>Modal won't close after save:</strong> the save errored. Look for a red toast at the top right.</p>

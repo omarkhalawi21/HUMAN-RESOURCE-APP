@@ -61,20 +61,18 @@ GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
 --    This is the safe place for that logic — never trust the
 --    client to set is_admin on signup.
 -- -------------------------------------------------------------
--- Invite-only signup. The signup form on the live site is open to the
--- internet, but only people HR has pre-added to the employees table
--- can actually use the system. Otherwise a stranger could find the
--- URL and create an account.
+-- Self-service signup. The signup form on the live site collects
+-- name, email, password, phone, branch, and position; the trigger
+-- creates the employee row from that metadata. Admin reviews each
+-- new employee in the directory and fills in salary, schedule, etc.
 --
 -- Logic, in order:
 --   1. If this auth user is already linked to an employee row, no-op.
 --   2. If HR has pre-added a row with this email and no user_id yet,
---      link them. They've been invited and can use the app.
---   3. If there are zero employees in the entire system, this is the
---      first-ever signup — bootstrap as admin so the system is usable.
---   4. Otherwise: do NOT create an employee row. The auth user exists
---      but the JS will catch the "no employee record" case, show a
---      "not authorized" page, and log them out.
+--      link them and merge any new metadata (phone, position, branch)
+--      that HR didn't already fill in.
+--   3. Otherwise: create a fresh employees row from the signup
+--      metadata. First-ever signup is bootstrapped as admin.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -84,15 +82,21 @@ AS $$
 DECLARE
   is_first       boolean;
   invited_emp_id uuid;
+  meta           jsonb;
+  new_emp_id     uuid;
+  signup_branch  text;
 BEGIN
+  meta := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
+  signup_branch := NULLIF(TRIM(COALESCE(meta->>'branch', '')), '');
+
   -- 1. Already linked.
   IF EXISTS (SELECT 1 FROM public.employees WHERE user_id = NEW.id) THEN
     RETURN NEW;
   END IF;
 
-  -- 2. HR has pre-added this email — link to the existing row.
-  --    Email comparison is case-insensitive (auth lowercases email
-  --    on insert; the employees table may have any casing).
+  -- 2. HR pre-added this email — link to existing row, fill in any
+  --    metadata they didn't enter (case-insensitive email match;
+  --    auth lowercases email but employees may have any casing).
   SELECT id INTO invited_emp_id
     FROM public.employees
    WHERE LOWER(email) = LOWER(NEW.email)
@@ -102,37 +106,51 @@ BEGIN
 
   IF invited_emp_id IS NOT NULL THEN
     UPDATE public.employees
-       SET user_id = NEW.id
+       SET user_id   = NEW.id,
+           phone     = COALESCE(NULLIF(TRIM(phone),'')    , NULLIF(TRIM(meta->>'phone'),'')),
+           job_title = COALESCE(NULLIF(TRIM(job_title),''), NULLIF(TRIM(meta->>'role'),''),  job_title)
      WHERE id = invited_emp_id;
+
+    -- Branch lives on employee_extras. Upsert the row.
+    IF signup_branch IS NOT NULL THEN
+      INSERT INTO public.employee_extras (employee_id, branch)
+      VALUES (invited_emp_id, signup_branch)
+      ON CONFLICT (employee_id) DO UPDATE
+        SET branch = COALESCE(NULLIF(TRIM(public.employee_extras.branch),''), EXCLUDED.branch);
+    END IF;
+
     RETURN NEW;
   END IF;
 
-  -- 3. First-ever signup. Bootstrap an admin record so somebody can
-  --    set up the company.
+  -- 3. New self-service signup. First-ever becomes admin; everyone
+  --    else lands as a regular Employee.
   SELECT NOT EXISTS (SELECT 1 FROM public.employees) INTO is_first;
-  IF is_first THEN
-    INSERT INTO public.employees (
-      user_id, email, first_name, last_name,
-      is_admin, status, job_title, department, hire_date, salary
-    ) VALUES (
-      NEW.id,
-      NEW.email,
-      COALESCE(NEW.raw_user_meta_data->>'first_name', ''),
-      COALESCE(NEW.raw_user_meta_data->>'last_name', ''),
-      true,
-      'active',
-      'Admin',
-      'Management',
-      CURRENT_DATE,
-      0
-    );
-    RETURN NEW;
+
+  INSERT INTO public.employees (
+    user_id, email, first_name, last_name, phone,
+    is_admin, status, job_title, department, hire_date, salary
+  ) VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(meta->>'first_name', ''),
+    COALESCE(meta->>'last_name', ''),
+    NULLIF(TRIM(meta->>'phone'), ''),
+    is_first,
+    'active',
+    COALESCE(NULLIF(TRIM(meta->>'role'), ''), CASE WHEN is_first THEN 'Admin'      ELSE 'Employee' END),
+    COALESCE(NULLIF(TRIM(meta->>'role'), ''), CASE WHEN is_first THEN 'Management' ELSE 'General'  END),
+    CURRENT_DATE,
+    0
+  )
+  RETURNING id INTO new_emp_id;
+
+  -- Branch lives on employee_extras.
+  IF signup_branch IS NOT NULL AND new_emp_id IS NOT NULL THEN
+    INSERT INTO public.employee_extras (employee_id, branch)
+    VALUES (new_emp_id, signup_branch)
+    ON CONFLICT (employee_id) DO UPDATE SET branch = EXCLUDED.branch;
   END IF;
 
-  -- 4. Not invited, not first-ever. Don't create an employee row.
-  --    The auth user exists (created by Supabase Auth) but they have
-  --    no record in our system. The JS catches this, shows a
-  --    "not authorized" screen, and logs them out.
   RETURN NEW;
 END;
 $$;
