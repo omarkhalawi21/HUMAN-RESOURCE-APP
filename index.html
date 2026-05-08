@@ -1057,7 +1057,7 @@ function renderLogin() {
               Create account
               <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
-            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">The first person to sign up becomes the admin. Subsequent signups are regular employees that the admin can manage.</p>
+            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">This system is invite-only. Sign up using the email address your HR team registered for you. If they haven&rsquo;t added you yet, ask them to do so before signing up.</p>
           </form>
           <div class="mt-8 pt-6 border-t border-brand-100 text-center">
             <span class="text-sm text-slate-500">Already have an account? </span>
@@ -4351,7 +4351,7 @@ function renderHelp() {
           </ul>
         </li>
         <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system warns 30 days before either expires.</li>
-        <li>Save. The employee then signs up at the live URL with the same email to set their own password.</li>
+        <li>Save. The employee then signs up at the live URL with the <strong>same email</strong> to set their own password &mdash; the system links the new auth account to the record you just created. <strong>If they sign up with a different email they&rsquo;ll be blocked</strong> with a "Not authorized" screen, since the app is invite-only.</li>
       </ol>
       ` : ''}
 
@@ -4445,6 +4445,7 @@ function renderHelp() {
 
       <h2 id="guide-troubleshoot">Common problems &amp; fixes</h2>
       <p><strong>Employee can't log in:</strong> they probably haven't signed up yet. Send them the live URL &mdash; they need to use the same email entered when their record was created, then click "Create one" under the login form.</p>
+      <p><strong>Employee sees a "Not authorized" screen after signing up:</strong> the email they used at signup doesn't match what HR registered. Either: HR didn't add them yet (add them in <strong>Employees &rarr; Add Employee</strong> with the exact email they used), or the spelling differs. Once HR's record matches, ask them to log out then log back in &mdash; the gate will clear.</p>
       <p><strong>Clock-in fails with "outside branch radius":</strong> branch coordinates are wrong, or radius is too small. ${admin ? 'Settings &rarr; Branches &rarr; Edit &rarr; "Use my current location" while at the branch.' : 'Ask HR to check the branch coordinates.'}</p>
       <p><strong>Print preview blank:</strong> pop-ups blocked. Allow pop-ups for the site (Safari: top menu &rarr; Safari &rarr; Settings for this site &rarr; Pop-up Windows &rarr; Allow).</p>
       <p><strong>Modal won't close after save:</strong> the save errored. Look for a red toast at the top right.</p>
@@ -6184,6 +6185,30 @@ async function submitModal() {
 }
 
 /* -------------------- MAIN RENDER -------------------- */
+/* -------------------- NOT-AUTHORIZED GATE -------------------- */
+// Shown when somebody completes the Supabase signup form but isn't
+// in the employees table — i.e. HR didn't pre-add them. The signup
+// trigger silently skips creating their employee record, so they
+// land here and can only log out.
+function renderNotAuthorizedGate() {
+  return `
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+    <div class="w-full max-w-lg bg-white rounded-2xl shadow-pop p-8 md:p-10 text-center">
+      <div class="w-14 h-14 mx-auto rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mb-5">
+        ${icon('shield','w-7 h-7')}
+      </div>
+      <h1 class="font-display text-2xl md:text-3xl font-semibold text-slate-900">Not authorized</h1>
+      <p class="mt-3 text-sm text-slate-600 leading-relaxed">
+        Your account was created, but you&rsquo;re not registered as an employee of <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong>. The HR system is invite-only.
+      </p>
+      <p class="mt-3 text-sm text-slate-600 leading-relaxed">
+        If you should have access, please ask your HR contact to add you to the system using the email address you signed up with: <strong>${escapeHTML(state.session?.email || '')}</strong>. You can then log back in.
+      </p>
+      <button onclick="logout()" class="btn btn-primary mt-6 w-full justify-center">${icon('logout','w-4 h-4')} Log out</button>
+    </div>
+  </div>`;
+}
+
 /* -------------------- TERMINATED GATE -------------------- */
 // Shown when a terminated employee tries to log in. Their data is
 // preserved server-side, but the app surface is read-blocked.
@@ -6339,9 +6364,12 @@ function render() {
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
   if (!state.session) { stopClockTicker(); app.innerHTML = renderLogin(); return; }
-  // Block access entirely if this employee has been terminated.
+  // Block: signed-in but not in the employees table (someone signed up
+  // who wasn't pre-added by HR). The DB trigger leaves them unlinked.
   const me = currentEmployee();
-  if (me && me.status === 'terminated') { stopClockTicker(); app.innerHTML = renderTerminatedGate(); return; }
+  if (!me) { stopClockTicker(); app.innerHTML = renderNotAuthorizedGate(); return; }
+  // Block access entirely if this employee has been terminated.
+  if (me.status === 'terminated') { stopClockTicker(); app.innerHTML = renderTerminatedGate(); return; }
   // Block access to the app until PDPL consent is recorded.
   if (!hasGivenConsent()) { stopClockTicker(); app.innerHTML = renderConsentGate(); return; }
   startClockTicker();
