@@ -1135,12 +1135,22 @@ async function doSignup() {
   });
   if (btn) { btn.disabled = false; btn.style.opacity=''; }
   if (error) { toast(error.message || 'Sign up failed', 'error'); return; }
-  // If email confirmation is on, session will be null until they confirm.
-  if (!data.session) {
-    toast('Check your email to confirm your account.', 'success');
-    return;
-  }
-  await afterAuth(data.user);
+  // If Supabase has email confirmation ON, data.session will be null
+  // until the user clicks the link. If it's OFF, Supabase auto-creates
+  // a session and we'd otherwise auto-login the user — explicitly
+  // sign them out and force them to log in deliberately so signup
+  // and login are two distinct, intentional steps.
+  const needsEmailConfirm = !data.session;
+  if (data.session) await sb.auth.signOut();
+  state.session = null;
+  toast(needsEmailConfirm
+    ? 'Account created — check your email to confirm, then log in.'
+    : 'Account created. Please log in below.',
+    'success');
+  setAuthMode('login');
+  // Pre-fill the email in the login form for convenience.
+  const loginEmail = document.getElementById('login-email');
+  if (loginEmail) loginEmail.value = email;
 }
 async function afterAuth(user) {
   state.session = { userId: user.id, email: user.email, loggedAt: new Date().toISOString() };
