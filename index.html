@@ -4160,6 +4160,7 @@ function renderHelp() {
     { id:'renew',       title:'Renewing IQAMA / Baladiya', adminOnly:true },
     { id:'cert',        title:'Issuing certificates', adminOnly:true },
     { id:'evidence',    title:'Evidence reports', adminOnly:true },
+    { id:'compliance',  title:'PDPL compliance', adminOnly:true },
     { id:'backup',      title:'Backup & data export', adminOnly:true },
     { id:'troubleshoot',title:'Common problems & fixes' },
   ];
@@ -4294,6 +4295,28 @@ function renderHelp() {
         <li>Click <strong>Print as evidence</strong> &mdash; has the letterhead, filter summary, statistics, full record table, signature lines.</li>
       </ol>
       <p>For payroll evidence, use <strong>Payroll &rarr; Open Report</strong> for the period in question.</p>
+
+      <h2 id="guide-compliance">PDPL compliance &mdash; onboarding new employees</h2>
+      <p>Saudi <strong>Personal Data Protection Law (PDPL)</strong> (enforceable September 2024) requires written consent before processing employee personal data. We've prepared two bilingual templates you must use for every new hire <strong>before</strong> adding them to the HR system:</p>
+      <ol>
+        <li><strong>Privacy Notice</strong> &mdash; explains what data we collect, why, who sees it, retention, the employee's rights. Given to read.<br><a href="https://github.com/omarkhalawi21/HUMAN-RESOURCE-APP/blob/main/PRIVACY_NOTICE.md" target="_blank" rel="noopener">Open Privacy Notice on GitHub</a></li>
+        <li><strong>Consent Form</strong> &mdash; signed by the employee acknowledging they read the notice and consenting to specific items (GPS, cross-border storage, photo storage).<br><a href="https://github.com/omarkhalawi21/HUMAN-RESOURCE-APP/blob/main/CONSENT_FORM.md" target="_blank" rel="noopener">Open Consent Form on GitHub</a></li>
+      </ol>
+      <div class="callout">
+        <strong>Onboarding workflow for every new hire:</strong>
+        <ol>
+          <li>Print both documents on Hassad letterhead (open the GitHub link, browser&rsquo;s Print menu &rarr; Save as PDF or print directly)</li>
+          <li>Give them to the new employee on day one. Walk through the Privacy Notice with them.</li>
+          <li>Have them complete and sign the Consent Form. Initials beside each optional consent item (GPS, cross-border, photo).</li>
+          <li>Counter-sign as the HR representative. Stamp it with the company stamp.</li>
+          <li>Scan the signed original. Upload the scan to <strong>Archive &rarr; Upload Document</strong> (category: <em>Policy</em>, name: &ldquo;Consent &mdash; [Employee Name] &mdash; [Date]&rdquo;).</li>
+          <li>File the paper original in the employee's personnel folder.</li>
+          <li><strong>Only now</strong> add them to the HR system via Employees &rarr; Add Employee.</li>
+        </ol>
+      </div>
+      <p><strong>If an employee declines</strong> any of the optional consents (GPS / cross-border / photo): the system can still work for them. Disable GPS at clock-in via <strong>Settings &rarr; Capture location on clock-in</strong> (this is global &mdash; consider keeping it on but documenting that this employee opted out manually). Cross-border declination means you can't use the cloud-based system for them at all &mdash; speak to legal counsel before proceeding.</p>
+      <p><strong>Withdrawal of consent</strong>: an employee can withdraw at any time in writing. Update their record accordingly. Note that statutory retention obligations (5 years for payroll/attendance) override consent withdrawal &mdash; you keep the records but stop new processing of the affected category.</p>
+      <p><strong>Reminder</strong>: these are templates, not legal advice. Have your lawyer review them before using them in production. The PDPL regulator is the <strong>Saudi Data and Artificial Intelligence Authority (SDAIA)</strong> &mdash; <a href="https://sdaia.gov.sa" target="_blank" rel="noopener">sdaia.gov.sa</a>.</p>
 
       <h2 id="guide-backup">Backup &amp; data export</h2>
       <p>Data lives in Supabase (cloud) but keep a local backup.</p>
