@@ -4304,15 +4304,19 @@ function renderHelp() {
       <p>For payroll evidence, use <strong>Payroll &rarr; Open Report</strong> for the period in question.</p>
 
       <h2 id="guide-compliance">PDPL compliance &mdash; onboarding new employees</h2>
-      <p>Saudi <strong>Personal Data Protection Law (PDPL)</strong> (enforceable September 2024) requires written consent before processing employee personal data. We've prepared two bilingual templates you must use for every new hire <strong>before</strong> adding them to the HR system:</p>
-      <ol>
-        <li><strong>Privacy Notice</strong> &mdash; explains what data we collect, why, who sees it, retention, the employee's rights. Given to read.<br><a href="https://github.com/omarkhalawi21/HUMAN-RESOURCE-APP/blob/main/PRIVACY_NOTICE.md" target="_blank" rel="noopener">Open Privacy Notice on GitHub</a></li>
-        <li><strong>Consent Form</strong> &mdash; signed by the employee acknowledging they read the notice and consenting to specific items (GPS, cross-border storage, photo storage).<br><a href="https://github.com/omarkhalawi21/HUMAN-RESOURCE-APP/blob/main/CONSENT_FORM.md" target="_blank" rel="noopener">Open Consent Form on GitHub</a></li>
-      </ol>
+      <p>Saudi <strong>Personal Data Protection Law (PDPL)</strong> (enforceable September 2024) requires written consent before processing employee personal data. We've prepared two bilingual templates you must use for every new hire <strong>before</strong> adding them to the HR system. Click to open a printable version on company letterhead:</p>
+      <div class="flex flex-wrap gap-3 my-4">
+        <button onclick="printPrivacyNotice()" class="btn btn-primary">${icon('file','w-4 h-4')} Print Privacy Notice</button>
+        <button onclick="printConsentForm()" class="btn btn-primary">${icon('file','w-4 h-4')} Print Consent Form</button>
+      </div>
+      <ul>
+        <li><strong>Privacy Notice</strong> &mdash; explains what data we collect, why, who sees it, retention, the employee's rights. Given to read.</li>
+        <li><strong>Consent Form</strong> &mdash; signed by the employee acknowledging they read the notice and consenting to specific items (GPS, cross-border storage, photo storage).</li>
+      </ul>
       <div class="callout">
         <strong>Onboarding workflow for every new hire:</strong>
         <ol>
-          <li>Print both documents on Hassad letterhead (open the GitHub link, browser&rsquo;s Print menu &rarr; Save as PDF or print directly)</li>
+          <li>Click the buttons above to open each document. Use the Print or Save as PDF button at the top of the popup window.</li>
           <li>Give them to the new employee on day one. Walk through the Privacy Notice with them.</li>
           <li>Have them complete and sign the Consent Form. Initials beside each optional consent item (GPS, cross-border, photo).</li>
           <li>Counter-sign as the HR representative. Stamp it with the company stamp.</li>
@@ -4756,6 +4760,337 @@ async function deleteWarning(id) {
   render();
   toast('Warning deleted', 'success');
 }
+/* -------------------- PDPL DOCUMENTS -------------------- */
+// Shared CSS for the long bilingual legal documents (Privacy Notice,
+// Consent Form). Adds an Arabic-page block with RTL text direction
+// and a page break before it so each language fits its own A4 sheet.
+const LEGAL_DOC_CSS = `
+  .legal-section h2 { font-size:18px; font-weight:700; color:#0f172a; margin:24px 0 8px; padding-bottom:4px; border-bottom:1px solid #e8dcc4; }
+  .legal-section h3 { font-size:14px; font-weight:700; color:#0f172a; margin:18px 0 6px; }
+  .legal-section p  { font-size:13px; line-height:1.65; color:#1a1a1a; margin:8px 0; }
+  .legal-section ul, .legal-section ol { font-size:13px; line-height:1.7; color:#1a1a1a; padding-inline-start:1.4em; margin:8px 0; }
+  .legal-section li { margin:4px 0; }
+  .legal-section table { width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; }
+  .legal-section table td, .legal-section table th { border:1px solid #d1d5db; padding:8px 10px; vertical-align:top; }
+  .legal-section table th { background:#fafafa; font-weight:700; text-align:left; color:#0f172a; }
+  .legal-section .callout { background:#fbf6ef; border:1px solid #e8dcc4; border-radius:8px; padding:12px 16px; font-size:12px; color:#5d4626; margin:12px 0; }
+  .legal-section strong { color:#0f172a; font-weight:700; }
+  .blank-line { display:inline-block; border-bottom:1px solid #1a1a1a; min-width:280px; height:14px; vertical-align:bottom; }
+  .checkbox-row { border:1px solid #d1d5db; padding:10px 14px; margin:8px 0; font-size:13px; line-height:1.5; }
+  .checkbox-row .cb { display:inline-block; width:14px; height:14px; border:1.5px solid #1a1a1a; vertical-align:middle; margin-inline-end:8px; }
+  .arabic-page { direction:rtl; text-align:right; page-break-before:always; padding-top:24px; margin-top:24px; }
+  .arabic-page .legal-section ul, .arabic-page .legal-section ol { padding-inline-start:0; padding-inline-end:1.4em; }
+  .arabic-page .blank-line { min-width:280px; }
+`;
+
+function printPrivacyNotice() {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Employee Privacy Notice</title>
+  <style>${LETTERHEAD_CSS}${LEGAL_DOC_CSS}</style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+
+  <div class="page legal-section">
+    ${letterheadHTML('EMPLOYEE PRIVACY NOTICE')}
+    <div class="doc-date">Last updated: ${fmtDate(todayISO())}</div>
+    <div class="callout"><strong>Important &mdash; read before signing the consent form.</strong> This notice explains what personal data we collect about you as our employee, how we use it, who has access, and the rights you have under the Saudi Personal Data Protection Law (PDPL). The accompanying Employee Consent Form must be signed before we can begin processing your data.</div>
+
+    <h2>1. Who is responsible for your data</h2>
+    <p>The data controller is <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong> ("the Company", "we", "us"). Questions or requests about your personal data should be addressed to the <strong>Human Resources Department</strong>.</p>
+
+    <h2>2. What personal data we collect</h2>
+    <table>
+      <thead><tr><th style="width:30%">Category</th><th>Examples</th></tr></thead>
+      <tbody>
+        <tr><td>Identity</td><td>Full name, nationality, date of birth, photograph</td></tr>
+        <tr><td>Government IDs</td><td>National ID / IQAMA number and expiry, Baladiya (health card) number and expiry</td></tr>
+        <tr><td>Contact</td><td>Personal email, phone number</td></tr>
+        <tr><td>Employment</td><td>Job title, department, branch, hire date, working schedule, salary</td></tr>
+        <tr><td>Attendance</td><td>Daily clock-in/out times, lateness, absences, GPS location at clock-in (if enabled)</td></tr>
+        <tr><td>Leave &amp; absence</td><td>Leave requests, dates, reasons, approval status, balance</td></tr>
+        <tr><td>Payroll</td><td>Salary breakdown, bonuses, deductions, net pay, pay date</td></tr>
+        <tr><td>Disciplinary</td><td>Warnings issued, severity, reason, management notes</td></tr>
+        <tr><td>Financial</td><td>Salary advance requests, amounts, repayment status</td></tr>
+        <tr><td>Recognition</td><td>Certificates of appreciation, employee-of-the-month awards</td></tr>
+        <tr><td>Documents</td><td>Scanned copies of HR documents you have signed</td></tr>
+      </tbody>
+    </table>
+
+    <h2>3. Why we collect it (lawful basis)</h2>
+    <ul>
+      <li><strong>Performance of your employment contract</strong> &mdash; pay, scheduling, leave, payroll</li>
+      <li><strong>Compliance with Saudi labour and tax law</strong> &mdash; records required by Ministry of HR, GOSI, tax authorities</li>
+      <li><strong>Legitimate business interests</strong> &mdash; attendance, fraud prevention, incident documentation, performance evaluation</li>
+      <li><strong>Your explicit consent</strong> &mdash; for GPS at clock-in and cross-border storage</li>
+    </ul>
+
+    <h2>4. Who can see your data</h2>
+    <ul>
+      <li><strong>You</strong> &mdash; all your own records</li>
+      <li><strong>HR Department</strong> &mdash; full access to employee records as required to perform their function</li>
+      <li><strong>Your direct manager</strong> &mdash; attendance and leave for their team only</li>
+      <li><strong>Company management</strong> &mdash; aggregated reports (department-level, totals)</li>
+      <li><strong>Government authorities</strong> &mdash; only when legally required (GOSI returns, Ministry inspections, court orders)</li>
+    </ul>
+    <p>We do <strong>not</strong> sell your data, share it with marketing companies, or disclose it to any third party not listed above.</p>
+
+    <h2>5. How long we keep it</h2>
+    <table>
+      <thead><tr><th>Record</th><th>Retention period</th></tr></thead>
+      <tbody>
+        <tr><td>Active employment records</td><td>Duration of employment</td></tr>
+        <tr><td>Attendance, payroll, leave</td><td>5 years after termination</td></tr>
+        <tr><td>Disciplinary records</td><td>5 years after termination</td></tr>
+        <tr><td>Government ID copies</td><td>30 days after termination, except where required to defend a legal claim</td></tr>
+        <tr><td>Salary advance records</td><td>5 years after final repayment</td></tr>
+      </tbody>
+    </table>
+
+    <h2>6. Where your data is stored (cross-border transfer)</h2>
+    <p>Our HR system uses <strong>Supabase</strong>, a cloud database whose servers may be located in the European Union or United States. This means your personal data may be transferred outside the Kingdom of Saudi Arabia. The transfer is necessary to provide the HR system. Supabase implements industry-standard security (encryption in transit and at rest, access controls, audit logging). By signing the consent form you authorize this transfer.</p>
+
+    <h2>7. Your rights under PDPL</h2>
+    <ul>
+      <li><strong>Be informed</strong> about how your data is processed (this notice)</li>
+      <li><strong>Access</strong> the data we hold about you</li>
+      <li><strong>Correct</strong> inaccurate or outdated information</li>
+      <li><strong>Destroy</strong> your data once the retention period ends</li>
+      <li><strong>Object</strong> to specific processing (e.g. decline GPS at clock-in)</li>
+      <li><strong>Withdraw consent</strong> at any time</li>
+    </ul>
+    <p>To exercise any of these rights, submit a written request to HR. We will respond within <strong>30 days</strong>.</p>
+
+    <h2>8. Security measures</h2>
+    <ul>
+      <li>Row-Level Security policies on every table (database-enforced access)</li>
+      <li>Encrypted transmission (HTTPS / TLS) and storage at rest</li>
+      <li>Strong password requirements and two-factor authentication for admins</li>
+      <li>Audit logging of administrative actions</li>
+      <li>Regular encrypted backups</li>
+    </ul>
+    <p>If a data breach occurs, we will notify you and the competent authority within <strong>72 hours</strong> as required by PDPL.</p>
+
+    <h2>9. Changes to this notice</h2>
+    <p>We may update this notice as our processing changes or as the law evolves. The "Last updated" date reflects the current version. Material changes will be communicated to you in writing.</p>
+
+    <h2>10. Complaints</h2>
+    <p>If you believe we have mishandled your data, contact HR first. If unsatisfied, you may file a complaint with the <strong>Saudi Data and Artificial Intelligence Authority (SDAIA)</strong>, the PDPL regulator.</p>
+
+    <div class="doc-footer">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)} &middot; Employee Privacy Notice &middot; ${fmtDate(todayISO())}</div>
+  </div>
+
+  <div class="page legal-section arabic-page">
+    ${letterheadHTML('إشعار خصوصية الموظفين')}
+    <div class="doc-date">آخر تحديث: ${fmtDate(todayISO())}</div>
+    <div class="callout"><strong>مهم &mdash; يُقرأ قبل توقيع نموذج الموافقة.</strong> يوضح هذا الإشعار البيانات الشخصية التي نجمعها عنك بصفتك موظفاً لدينا، وكيفية استخدامها، ومن يطلع عليها، وحقوقك بموجب نظام حماية البيانات الشخصية السعودي (PDPL). يجب توقيع نموذج موافقة الموظف المرفق قبل أن نتمكن من البدء في معالجة بياناتك.</div>
+
+    <h2>١. الجهة المسؤولة عن بياناتك</h2>
+    <p>الجهة المسؤولة عن البيانات هي <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong> ("الشركة"، "نحن"). تُوجَّه الاستفسارات والطلبات المتعلقة ببياناتك الشخصية إلى <strong>إدارة الموارد البشرية</strong>.</p>
+
+    <h2>٢. البيانات الشخصية التي نجمعها</h2>
+    <table>
+      <thead><tr><th style="width:30%">الفئة</th><th>أمثلة</th></tr></thead>
+      <tbody>
+        <tr><td>الهوية</td><td>الاسم الكامل، الجنسية، تاريخ الميلاد، الصورة الشخصية</td></tr>
+        <tr><td>الوثائق الحكومية</td><td>رقم الهوية / الإقامة وتاريخ انتهائها، رقم البلدية (البطاقة الصحية) وتاريخ انتهائها</td></tr>
+        <tr><td>التواصل</td><td>البريد الإلكتروني، رقم الجوال</td></tr>
+        <tr><td>التوظيف</td><td>المسمى الوظيفي، القسم، الفرع، تاريخ التعيين، جدول العمل، الراتب</td></tr>
+        <tr><td>الحضور</td><td>أوقات تسجيل الدخول والخروج، التأخر، الغياب، الموقع الجغرافي عند تسجيل الحضور (إن فُعِّل)</td></tr>
+        <tr><td>الإجازات</td><td>طلبات الإجازة، التواريخ، الأسباب، حالة الموافقة، الرصيد</td></tr>
+        <tr><td>الرواتب</td><td>تفاصيل الراتب، البدلات، الخصومات، الصافي، تاريخ الصرف</td></tr>
+        <tr><td>الإجراءات التأديبية</td><td>الإنذارات، الدرجة، السبب، ملاحظات الإدارة</td></tr>
+        <tr><td>المالية</td><td>طلبات السلف، المبالغ، حالة السداد</td></tr>
+        <tr><td>التكريم</td><td>شهادات التقدير، جوائز موظف الشهر</td></tr>
+        <tr><td>الوثائق</td><td>نسخ ممسوحة من المستندات التي وقّعتَها</td></tr>
+      </tbody>
+    </table>
+
+    <h2>٣. لماذا نجمعها (الأساس القانوني)</h2>
+    <ul>
+      <li><strong>تنفيذ عقد العمل</strong> &mdash; صرف الرواتب، الجدولة، الإجازات، تشغيل الرواتب</li>
+      <li><strong>الالتزام بأنظمة العمل والضرائب السعودية</strong> &mdash; السجلات المطلوبة من وزارة الموارد البشرية والتأمينات والهيئات الضريبية</li>
+      <li><strong>المصالح المشروعة للشركة</strong> &mdash; إدارة الحضور، منع الاحتيال، توثيق الحوادث، تقييم الأداء</li>
+      <li><strong>موافقتك الصريحة</strong> &mdash; لتسجيل الموقع الجغرافي وللنقل عبر الحدود</li>
+    </ul>
+
+    <h2>٤. من يطلع على بياناتك</h2>
+    <ul>
+      <li><strong>أنت</strong> &mdash; جميع سجلاتك</li>
+      <li><strong>إدارة الموارد البشرية</strong> &mdash; سجلات الموظفين بما يلزم</li>
+      <li><strong>مديرك المباشر</strong> &mdash; حضور وإجازات فريقه فقط</li>
+      <li><strong>إدارة الشركة</strong> &mdash; تقارير إجمالية</li>
+      <li><strong>الجهات الحكومية</strong> &mdash; فقط عند الطلب القانوني</li>
+    </ul>
+    <p>نحن <strong>لا</strong> نبيع بياناتك ولا نشاركها مع أي طرف ثالث غير المذكورين أعلاه.</p>
+
+    <h2>٥. مدة الاحتفاظ</h2>
+    <table>
+      <thead><tr><th>السجل</th><th>المدة</th></tr></thead>
+      <tbody>
+        <tr><td>سجلات التوظيف الفعّالة</td><td>طوال فترة العمل</td></tr>
+        <tr><td>الحضور، الرواتب، الإجازات</td><td>٥ سنوات بعد إنهاء الخدمة</td></tr>
+        <tr><td>السجلات التأديبية</td><td>٥ سنوات بعد إنهاء الخدمة</td></tr>
+        <tr><td>نسخ الوثائق الحكومية</td><td>٣٠ يوماً بعد إنهاء الخدمة</td></tr>
+        <tr><td>سجلات السلف</td><td>٥ سنوات بعد آخر سداد</td></tr>
+      </tbody>
+    </table>
+
+    <h2>٦. مكان تخزين بياناتك (نقل عبر الحدود)</h2>
+    <p>يستخدم نظامنا خدمة <strong>Supabase</strong> السحابية التي قد تقع خوادمها في الاتحاد الأوروبي أو الولايات المتحدة، مما يعني نقل بياناتك خارج المملكة. النقل ضروري لتشغيل النظام، وتُطبق Supabase معايير أمان قياسية. بتوقيعك على نموذج الموافقة، فإنك تأذن بهذا النقل.</p>
+
+    <h2>٧. حقوقك بموجب نظام PDPL</h2>
+    <ul>
+      <li>الاطلاع على كيفية معالجة بياناتك</li>
+      <li>الوصول إلى البيانات التي نحتفظ بها عنك</li>
+      <li>تصحيح المعلومات غير الدقيقة</li>
+      <li>إتلاف بياناتك بعد انتهاء مدة الاحتفاظ</li>
+      <li>الاعتراض على بعض أنشطة المعالجة</li>
+      <li>سحب الموافقة في أي وقت</li>
+    </ul>
+    <p>لممارسة أي من هذه الحقوق، قدّم طلباً خطياً للموارد البشرية. سنرد خلال <strong>٣٠ يوماً</strong>.</p>
+
+    <h2>٨. التدابير الأمنية</h2>
+    <ul>
+      <li>سياسات أمان على مستوى الصف لكل جدول</li>
+      <li>تشفير النقل (HTTPS / TLS) والتخزين</li>
+      <li>متطلبات كلمات مرور قوية، التحقق بخطوتين للمشرفين</li>
+      <li>سجلات تدقيق للإجراءات الإدارية</li>
+      <li>نسخ احتياطية مشفّرة منتظمة</li>
+    </ul>
+    <p>في حال خرق أمني، سنُبلغك والجهة المختصة خلال <strong>٧٢ ساعة</strong> وفقاً لـ PDPL.</p>
+
+    <h2>٩. التعديلات على هذا الإشعار</h2>
+    <p>قد نُحدِّث هذا الإشعار. يعكس تاريخ "آخر تحديث" الإصدار الحالي. ستُبلَّغ التعديلات الجوهرية كتابياً.</p>
+
+    <h2>١٠. الشكاوى</h2>
+    <p>إذا اعتقدت أننا أسأنا التعامل مع بياناتك، تواصل أولاً مع الموارد البشرية. ثم لك حق التقدم بشكوى إلى <strong>الهيئة السعودية للبيانات والذكاء الاصطناعي (سدايا)</strong>.</p>
+
+    <div class="doc-footer">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)} &middot; إشعار خصوصية الموظفين &middot; ${fmtDate(todayISO())}</div>
+  </div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
+  win.document.write(html); win.document.close();
+}
+
+function printConsentForm() {
+  const today = fmtDate(todayISO());
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Employee Personal Data Consent Form</title>
+  <style>${LETTERHEAD_CSS}${LEGAL_DOC_CSS}</style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+
+  <div class="page legal-section">
+    ${letterheadHTML('EMPLOYEE PERSONAL DATA CONSENT FORM')}
+    <div class="callout"><strong>For HR use:</strong> give the Privacy Notice to the employee to read first, then have them complete and sign this form. Store the original in their personnel file.</div>
+
+    <h2>Employee details</h2>
+    <table>
+      <tbody>
+        <tr><td style="width:35%"><strong>Full name</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>National ID / IQAMA number</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>Job title</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>Department / Branch</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>Date of hire</strong></td><td><span class="blank-line"></span></td></tr>
+      </tbody>
+    </table>
+
+    <h2>Acknowledgement and consent</h2>
+    <p>I, the undersigned employee of <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong>, hereby confirm and consent to the following:</p>
+
+    <p><strong>1. I have received and read the Employee Privacy Notice</strong>, which describes the personal data the Company collects, the purposes for which it is processed, who can access it, how long it is retained, that it is stored on cloud infrastructure (Supabase) which may be located outside the Kingdom of Saudi Arabia, and my rights under the Saudi PDPL.</p>
+
+    <p><strong>2. I consent to the Company collecting and processing the personal data listed in the Privacy Notice</strong> for payroll administration, attendance tracking, leave management, disciplinary records, and compliance with Saudi labour and tax law.</p>
+
+    <p><strong>3. I specifically consent to the following optional processing activities</strong> (initial each one to confirm):</p>
+
+    <div class="checkbox-row"><span class="cb"></span><strong>GPS location capture</strong> when I clock in or out, used solely to confirm I am physically at my assigned branch. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
+    <div class="checkbox-row"><span class="cb"></span><strong>Cross-border storage</strong> of my personal data on Supabase servers, which may be located in the EU or US, with the security safeguards described in the Privacy Notice. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
+    <div class="checkbox-row"><span class="cb"></span><strong>Storage of my photograph</strong> in the HR system for visual identification within the staff directory. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
+
+    <p><strong>4. I understand that:</strong></p>
+    <ul>
+      <li>I can withdraw any of the optional consents at any time by submitting a written request to HR</li>
+      <li>Withdrawing GPS consent means I will record attendance manually instead &mdash; it does not affect my employment</li>
+      <li>The Company is required by law to retain certain employment records for 5 years after termination regardless of consent withdrawal</li>
+      <li>I have the right to access, correct, or request destruction of my personal data, subject to legal obligations</li>
+      <li>I can file a complaint with the Saudi Data and Artificial Intelligence Authority (SDAIA) if I believe my rights have been violated</li>
+    </ul>
+
+    <p><strong>5. I confirm that the personal information I have provided is accurate</strong> and will inform HR promptly of any changes.</p>
+
+    <h2>Signatures</h2>
+    <table style="margin-top:14px">
+      <tbody>
+        <tr><td style="width:35%"><strong>Employee signature</strong></td><td style="height:50px"><span class="blank-line"></span></td></tr>
+        <tr><td><strong>Date</strong></td><td>${escapeHTML(today)}</td></tr>
+        <tr><td><strong>HR representative name</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>HR signature</strong></td><td style="height:50px"><span class="blank-line"></span></td></tr>
+        <tr><td><strong>Date</strong></td><td>${escapeHTML(today)}</td></tr>
+      </tbody>
+    </table>
+    ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : '<p style="margin-top:24px;font-style:italic;color:#6b7280;font-size:12px">Company stamp:</p>'}
+
+    <div class="doc-footer">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)} &middot; Employee Consent Form &middot; ${fmtDate(todayISO())}</div>
+  </div>
+
+  <div class="page legal-section arabic-page">
+    ${letterheadHTML('نموذج موافقة الموظف على معالجة البيانات الشخصية')}
+    <div class="callout"><strong>للاستخدام الداخلي:</strong> يُمنح إشعار الخصوصية للموظف للقراءة أولاً، ثم يُكمل ويُوقّع هذا النموذج. يُحفظ الأصل في ملفه الشخصي.</div>
+
+    <h2>بيانات الموظف</h2>
+    <table>
+      <tbody>
+        <tr><td style="width:35%"><strong>الاسم الكامل</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>رقم الهوية / الإقامة</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>المسمى الوظيفي</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>القسم / الفرع</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>تاريخ التعيين</strong></td><td><span class="blank-line"></span></td></tr>
+      </tbody>
+    </table>
+
+    <h2>الإقرار والموافقة</h2>
+    <p>أنا الموظف الموقّع أدناه لدى <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong>، أُقرّ وأوافق بموجب هذا النموذج على ما يلي:</p>
+
+    <p><strong>١. تسلّمتُ وقرأتُ إشعار خصوصية الموظفين</strong>، الذي يصف البيانات الشخصية التي تجمعها الشركة، والأغراض التي تُعالَج لأجلها، والجهات المخوَّلة بالاطلاع، ومدة الاحتفاظ، وأنها تُخزَّن على بنية تحتية سحابية (Supabase) قد تقع خارج المملكة العربية السعودية، وحقوقي بموجب نظام PDPL.</p>
+
+    <p><strong>٢. أوافق على جمع الشركة بياناتي الشخصية ومعالجتها</strong> لإدارة الرواتب، وتسجيل الحضور، وإدارة الإجازات، والسجلات التأديبية، والامتثال لأنظمة العمل والضرائب السعودية.</p>
+
+    <p><strong>٣. أوافق تحديداً على الأنشطة الاختيارية التالية</strong> (يُوقَّع بالأحرف الأولى أمام كل بند):</p>
+
+    <div class="checkbox-row"><span class="cb"></span><strong>تسجيل الموقع الجغرافي</strong> عند تسجيل الحضور والانصراف، لغرض التأكد من تواجدي في الفرع المخصَّص لي. &nbsp; الأحرف الأولى: <span class="blank-line" style="min-width:120px"></span></div>
+    <div class="checkbox-row"><span class="cb"></span><strong>التخزين خارج المملكة</strong> لبياناتي الشخصية على خوادم Supabase التي قد تقع في الاتحاد الأوروبي أو الولايات المتحدة. &nbsp; الأحرف الأولى: <span class="blank-line" style="min-width:120px"></span></div>
+    <div class="checkbox-row"><span class="cb"></span><strong>تخزين صورتي الشخصية</strong> في نظام الموارد البشرية لاستخدامها في التعريف البصري. &nbsp; الأحرف الأولى: <span class="blank-line" style="min-width:120px"></span></div>
+
+    <p><strong>٤. أُقرّ بأنني أفهم ما يلي:</strong></p>
+    <ul>
+      <li>يمكنني سحب أي من الموافقات الاختيارية في أي وقت بطلب خطي للموارد البشرية</li>
+      <li>سحب موافقة تسجيل الموقع يعني التسجيل اليدوي، ولا يؤثر على وظيفتي</li>
+      <li>الشركة ملزمة قانوناً بالاحتفاظ ببعض السجلات لمدة ٥ سنوات بعد إنهاء الخدمة</li>
+      <li>يحق لي الاطلاع على بياناتي وتصحيحها وطلب إتلافها مع مراعاة الالتزامات القانونية</li>
+      <li>يحق لي تقديم شكوى للهيئة السعودية للبيانات والذكاء الاصطناعي (سدايا)</li>
+    </ul>
+
+    <p><strong>٥. أؤكد أن المعلومات التي قدّمتها صحيحة</strong>، وسأُبلغ الموارد البشرية فوراً بأي تغيير.</p>
+
+    <h2>التوقيعات</h2>
+    <table style="margin-top:14px">
+      <tbody>
+        <tr><td style="width:35%"><strong>توقيع الموظف</strong></td><td style="height:50px"><span class="blank-line"></span></td></tr>
+        <tr><td><strong>التاريخ</strong></td><td>${escapeHTML(today)}</td></tr>
+        <tr><td><strong>اسم ممثل الموارد البشرية</strong></td><td><span class="blank-line"></span></td></tr>
+        <tr><td><strong>توقيع الموارد البشرية</strong></td><td style="height:50px"><span class="blank-line"></span></td></tr>
+        <tr><td><strong>التاريخ</strong></td><td>${escapeHTML(today)}</td></tr>
+      </tbody>
+    </table>
+
+    <div class="doc-footer">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)} &middot; نموذج موافقة الموظف &middot; ${fmtDate(todayISO())}</div>
+  </div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
+  win.document.write(html); win.document.close();
+}
+
 function printWarningLetter(id) {
   const w = (state.warnings||[]).find(x => x.id===id);
   if (!w) return;
