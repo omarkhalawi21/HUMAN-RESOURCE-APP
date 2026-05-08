@@ -509,32 +509,38 @@ function logoURL() {
 }
 
 /* -------------------- COMPANY LETTERHEAD --------------------
-   Hardcoded for now to match the official Hassad letterhead exactly.
-   TODO: move to Settings (companies table columns: legal_name,
-   registration_number, address_line1, address_line2, address_line3)
-   once the basic redesign lands.
+   Letterhead values live on the companies row (legal_name,
+   registration_number, address_line1..3). Editable via Settings.
+   These constants are the FALLBACK defaults used before the user
+   has loaded settings or for fresh deployments — they match the
+   existing Hassad letterhead.
 ============================================================ */
-const COMPANY_LETTERHEAD = {
-  legalName:  'Hassad Al-Khobar Trading Company',
-  regNumber:  '7037495061',
-  lines: [
-    'Kingdom of Saudi Arabia',
-    'Eastern Province',
-    'Khobar 33425',
-  ],
+const LETTERHEAD_DEFAULTS = {
+  legalName:    'Hassad Al-Khobar Trading Company',
+  regNumber:    '7037495061',
+  addressLine1: 'Kingdom of Saudi Arabia',
+  addressLine2: 'Eastern Province',
+  addressLine3: 'Khobar 33425',
 };
 // Renders the centered logo + company address block used at the top of
 // every official document (warning letter, payslip, advance slip, etc.).
 // `title` is the document title (e.g. "WARNING LETTER.") shown large below.
 function letterheadHTML(title) {
-  const c = COMPANY_LETTERHEAD;
+  const s = state?.settings || {};
+  const legal = s.legalName    || LETTERHEAD_DEFAULTS.legalName;
+  const reg   = s.regNumber    || LETTERHEAD_DEFAULTS.regNumber;
+  const lines = [
+    s.addressLine1 || LETTERHEAD_DEFAULTS.addressLine1,
+    s.addressLine2 || LETTERHEAD_DEFAULTS.addressLine2,
+    s.addressLine3 || LETTERHEAD_DEFAULTS.addressLine3,
+  ].filter(Boolean);
   return `
     <div class="letterhead">
       <img class="letterhead-logo" src="${logoURL()}" alt="" onerror="this.style.display='none'" />
       <h1 class="letterhead-title">${escapeHTML(title)}</h1>
       <div class="letterhead-address">
-        <div><strong>${escapeHTML(c.legalName)} &ndash; ${escapeHTML(c.regNumber)}</strong></div>
-        ${c.lines.map(l => `<div>${escapeHTML(l)}</div>`).join('')}
+        <div><strong>${escapeHTML(legal)} &ndash; ${escapeHTML(reg)}</strong></div>
+        ${lines.map(l => `<div>${escapeHTML(l)}</div>`).join('')}
       </div>
     </div>
   `;
@@ -601,7 +607,23 @@ function nearestBranch(lat, lng, accuracy=0) {
 /* -------------------- FIELD MAPPERS (DB snake_case ↔ JS camelCase) -------------------- */
 function mapCompanyFromDb(r) {
   if (!r) return null;
-  return { _id: r.id, companyName: r.name, workStart: (r.work_start||'09:00:00').slice(0,5), workEnd: (r.work_end||'17:00:00').slice(0,5), currency: r.currency, lang: r.language, requireLocation: r.require_location, companyStamp: r.company_stamp || '' };
+  return {
+    _id: r.id,
+    companyName: r.name,
+    workStart: (r.work_start||'09:00:00').slice(0,5),
+    workEnd: (r.work_end||'17:00:00').slice(0,5),
+    currency: r.currency,
+    lang: r.language,
+    requireLocation: r.require_location,
+    companyStamp: r.company_stamp || '',
+    // Letterhead — fall back to the Hassad defaults so existing rows
+    // without these columns still print correctly.
+    legalName:    r.legal_name           || 'Hassad Al-Khobar Trading Company',
+    regNumber:    r.registration_number  || '7037495061',
+    addressLine1: r.address_line1        || 'Kingdom of Saudi Arabia',
+    addressLine2: r.address_line2        || 'Eastern Province',
+    addressLine3: r.address_line3        || 'Khobar 33425',
+  };
 }
 function mapEmployeeFromDb(r) {
   return {
@@ -781,7 +803,17 @@ async function loadAll() {
     if (companyR.data) {
       const c = mapCompanyFromDb(companyR.data);
       state.companyId = c._id;
-      state.settings = { companyName: c.companyName, workStart: c.workStart, workEnd: c.workEnd, currency: c.currency, lang: c.lang || state.settings.lang, requireLocation: c.requireLocation };
+      state.settings = {
+        companyName: c.companyName,
+        workStart: c.workStart, workEnd: c.workEnd,
+        currency: c.currency, lang: c.lang || state.settings.lang,
+        requireLocation: c.requireLocation,
+        legalName:    c.legalName,
+        regNumber:    c.regNumber,
+        addressLine1: c.addressLine1,
+        addressLine2: c.addressLine2,
+        addressLine3: c.addressLine3,
+      };
       state.companyStamp = c.companyStamp || '';
     }
     state.employees = (employeesR.data || []).map(mapEmployeeFromDb);
@@ -3861,6 +3893,20 @@ function renderSettings() {
             <input id="set-loc" type="checkbox" ${s.requireLocation?'checked':''} class="w-4 h-4 accent-brand-600">
             <label for="set-loc" class="text-sm text-slate-700">Capture location on clock-in (browser geolocation)</label>
           </div>
+
+          <div class="pt-5 mt-2 border-t border-slate-100">
+            <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Letterhead</div>
+            <p class="text-xs text-slate-500 mb-4">Shown at the top of every printed HR document (warning letter, payslip, advance slip, attendance evidence, payroll report).</p>
+            <div class="space-y-3">
+              <div><label class="label">Legal entity name</label><input id="set-legal" class="input" value="${escapeHTML(s.legalName||'')}" placeholder="e.g. Hassad Al-Khobar Trading Company"></div>
+              <div><label class="label">Commercial registration number</label><input id="set-reg" class="input" value="${escapeHTML(s.regNumber||'')}" placeholder="7037495061"></div>
+              <div><label class="label">Address line 1</label><input id="set-addr1" class="input" value="${escapeHTML(s.addressLine1||'')}" placeholder="Kingdom of Saudi Arabia"></div>
+              <div class="grid grid-cols-2 gap-3">
+                <div><label class="label">Address line 2</label><input id="set-addr2" class="input" value="${escapeHTML(s.addressLine2||'')}" placeholder="Eastern Province"></div>
+                <div><label class="label">Address line 3</label><input id="set-addr3" class="input" value="${escapeHTML(s.addressLine3||'')}" placeholder="Khobar 33425"></div>
+              </div>
+            </div>
+          </div>
         </div>
         <button onclick="saveSettings()" class="btn btn-primary mt-5">${icon('check','w-4 h-4')} ${escapeHTML(t('save'))}</button>
       </div>
@@ -4103,6 +4149,11 @@ async function saveSettings() {
     currency: $('#set-cur').value,
     require_location: $('#set-loc').checked,
     language: $('#set-lang').value,
+    legal_name:          $('#set-legal')?.value.trim() || null,
+    registration_number: $('#set-reg')?.value.trim()   || null,
+    address_line1:       $('#set-addr1')?.value.trim() || null,
+    address_line2:       $('#set-addr2')?.value.trim() || null,
+    address_line3:       $('#set-addr3')?.value.trim() || null,
   };
   const { error } = await sb.from('companies').update(updates).eq('id', state.companyId);
   if (error) { toast(error.message, 'error'); return; }
@@ -4111,6 +4162,11 @@ async function saveSettings() {
   state.settings.workEnd = updates.work_end;
   state.settings.currency = updates.currency;
   state.settings.requireLocation = updates.require_location;
+  state.settings.legalName    = updates.legal_name          || LETTERHEAD_DEFAULTS.legalName;
+  state.settings.regNumber    = updates.registration_number || LETTERHEAD_DEFAULTS.regNumber;
+  state.settings.addressLine1 = updates.address_line1       || LETTERHEAD_DEFAULTS.addressLine1;
+  state.settings.addressLine2 = updates.address_line2       || LETTERHEAD_DEFAULTS.addressLine2;
+  state.settings.addressLine3 = updates.address_line3       || LETTERHEAD_DEFAULTS.addressLine3;
   if (updates.language !== state.settings.lang) { setLang(updates.language); }
   render();
   toast('Settings saved', 'success');

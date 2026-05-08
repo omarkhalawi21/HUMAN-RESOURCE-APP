@@ -1,54 +1,59 @@
-# HR App
+# Hassad HR
 
-A clean, single-file employee management web app focused on attendance and HR essentials. Inspired by [Availo](https://availo.app) (branding, attendance focus) and [Foodics](https://foodics.com) (console UI).
+Single-file employee management web app for Hassad Coffee Roasters. Attendance, leave, payroll, warnings, advances, certificates, IQAMA/Baladiya tracking, and printable HR documents.
 
 ## Features
 
-- Attendance — daily clock-in / clock-out with automatic late detection and optional location capture
-- Employee directory — add, edit, search, and filter employees by department
-- Leave requests — submit requests, manager approve/reject, balance tracking
-- Payroll — monthly run, payslip history, export to CSV
-- Admin dashboard — live stats, 7-day attendance chart, department breakdown, activity feed
-- Reports — date-ranged attendance, leave, and payroll summaries
-- Bilingual — English and العربية with full RTL support
-- Multi-role auth — admin and employee accounts
+- **Attendance** — daily clock-in / clock-out with automatic late detection, optional GPS geofencing per branch
+- **Employee directory** — add, edit, search, filter by department or branch
+- **Leave requests** — submit, manager approves/rejects, balance tracking
+- **Payroll** — monthly run with live preview, automatic advance deduction, printable payslip + payroll report
+- **Warnings** — issue verbal/written/final warnings, printable letter on official letterhead
+- **Salary advances** — request, approve, repaid in next payroll or installments
+- **Certificates** — Employee of the Month, Appreciation, Completion, Custom
+- **Documents** — IQAMA + Baladiya number/expiry tracking, auto-renewal periods, expiry alerts
+- **Archive** — upload company-wide PDFs, Word docs, images
+- **Reports** — date-ranged attendance, leave, and payroll summaries
+- **Bilingual** — English and العربية with full RTL
+- **Printable templates** — every official document uses the Hassad letterhead
 
-## How to run
+## How it runs
 
-It's one HTML file. Two ways to use it:
+Static HTML file deployed to GitHub Pages. Backend is Supabase (Auth + Postgres) for core tables (employees, attendance, leave, payroll, branches, warnings, advances, certificates, archive, employee extras, company stamp).
 
-**Locally** — just open `index.html` in any modern browser. That's it.
+**Live**: https://omarkhalawi21.github.io/HUMAN-RESOURCE-APP/
 
-**Hosted** — push this repo to GitHub and enable GitHub Pages (Settings → Pages → Deploy from branch → main → root). Your live URL will be at `https://<your-username>.github.io/hr-app/`.
+**Local development**: open `index.html` in any modern browser. Connects to the same Supabase project.
 
-## Demo accounts
+## First-time setup (new deployment)
 
-The app seeds itself with sample data on first load — 8 employees, ~100 attendance records, sample leave and payroll cycles.
+If you're standing this up on a fresh Supabase project:
 
-| Username | Password | Role |
-|----------|----------|------|
-| `admin`  | `admin123`  | Admin |
-| `sara`   | `sara123`   | Admin (HR Manager) |
-| `khaled` | `khaled123` | Employee |
-| `layla`  | `layla123`  | Employee |
+1. **Apply the schema + RLS**: Supabase dashboard → SQL Editor → New query → paste `supabase-rls.sql` → Run. The script is idempotent.
+2. **Sign up** at the deployed URL — the **first user to sign up automatically becomes admin** (handled by a server-side trigger in the SQL). Subsequent signups are regular employees.
+3. From the admin account, go to **Settings** to fill in company info, work hours, currency, and upload the company stamp.
+4. Add your other employees from the **Employees** screen, or have them sign up themselves and you can promote/configure from Settings.
+
+## Security
+
+The Supabase publishable key in `index.html` is safe to ship **only because Row Level Security is enforced on every table**. Without RLS, any logged-in employee could self-promote to admin or wipe data via browser DevTools.
+
+`supabase-rls.sql` is the source of truth — re-run it any time you change schema. The policies cover: admin-only mutations on employees/payroll/branches/warnings/certificates/archive, self-only inserts on attendance and leave requests, and a database trigger that prevents anyone from changing their own admin status.
 
 ## Tech
 
-Plain HTML + CSS + vanilla JavaScript. Tailwind via CDN. Backend: Supabase (auth + Postgres) for core tables; `localStorage` for v2 features (warnings, advances, certificates, archive, document expiries).
-
-## Security setup (REQUIRED for shared deployments)
-
-The Supabase publishable key in `index.html` is safe to ship **only if Row Level Security is enabled** on every table. Without it, any logged-in employee can self-promote to admin or wipe data via DevTools.
-
-Apply `supabase-rls.sql` once: open Supabase dashboard → SQL Editor → New query → paste the file → Run. The script is idempotent.
+- Plain HTML + CSS + vanilla JavaScript, single file
+- Tailwind via Play CDN (development); compile locally for production
+- Supabase JS SDK pinned to v2.45.4 with SRI integrity check
+- CSP meta tag restricting external resources to declared CDNs
 
 ## Roadmap
 
-- Real backend (Node + database) for true multi-user support
+- Real-time updates via Supabase subscriptions
 - Webcam selfie verification on clock-in
 - Calendar export for leave (.ics)
-- Payslip PDF generation
-- Email notifications on leave approval
+- Payslip PDF generation (in-app, no popup)
+- Email notifications on leave / warning issuance
 - Mobile app
 
 ## License

@@ -424,6 +424,16 @@ CREATE TABLE IF NOT EXISTS public.employee_extras (
 ALTER TABLE public.companies
   ADD COLUMN IF NOT EXISTS company_stamp text;
 
+-- Letterhead fields shown at the top of every printed HR document.
+-- Defaults match the existing Hassad letterhead so the migration is
+-- a no-op for the live deployment until the admin edits them.
+ALTER TABLE public.companies
+  ADD COLUMN IF NOT EXISTS legal_name text,
+  ADD COLUMN IF NOT EXISTS registration_number text,
+  ADD COLUMN IF NOT EXISTS address_line1 text,
+  ADD COLUMN IF NOT EXISTS address_line2 text,
+  ADD COLUMN IF NOT EXISTS address_line3 text;
+
 -- -------------------------------------------------------------
 -- 11. RLS for v2 tables
 -- -------------------------------------------------------------
