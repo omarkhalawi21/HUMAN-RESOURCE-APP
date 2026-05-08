@@ -916,6 +916,7 @@ function statusBadge(status) {
     active:   ['badge-green',  'Active'],
     on_leave: ['badge-blue',   t('on_leave')],
     terminated: ['badge-red',  'Terminated'],
+    pending:    ['badge-amber','Pending approval'],
   };
   const [cls, label] = map[status] || ['badge-slate', status];
   return `<span class="badge ${cls}">${escapeHTML(label)}</span>`;
@@ -1365,7 +1366,24 @@ function renderDashboard() {
     }))
   ].sort((a,b)=>b.at.localeCompare(a.at)).slice(0, 8);
 
+  // Pending signups awaiting admin approval — surfaced as a prominent
+  // amber alert at the top of the dashboard so admins can't miss them.
+  const pendingApprovals = admin ? state.employees.filter(e => e.status === 'pending') : [];
+
   return `
+    ${admin && pendingApprovals.length > 0 ? `
+    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-5 flex items-start gap-4">
+      <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+        ${icon('warning','w-5 h-5')}
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-amber-900">${pendingApprovals.length} ${pendingApprovals.length===1?'employee is':'employees are'} awaiting your approval</div>
+        <div class="text-sm text-amber-800 mt-1">${escapeHTML(pendingApprovals.slice(0,3).map(e=>(e.firstName+' '+(e.lastName||'')).trim()).join(', '))}${pendingApprovals.length>3?` and ${pendingApprovals.length-3} more`:''}. They cannot use the system until you approve them.</div>
+        <a href="#/employees" class="btn btn-primary btn-sm mt-3">${icon('check','w-4 h-4')} Review now</a>
+      </div>
+    </div>
+    ` : ''}
+
     <!-- Greeting + clock-in widget -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
       <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6 md:p-8 relative overflow-hidden">
@@ -1905,8 +1923,13 @@ function renderEmployees() {
                 <td class="font-medium">${fmtMoney(e.salary)}</td>
                 <td>${statusBadge(e.status)}</td>
                 <td class="!text-end whitespace-nowrap">
-                  <button onclick="openEmployeeModal('${e.id}')" aria-label="Edit ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-                  <button onclick="deleteEmployee('${e.id}')" aria-label="Delete ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                  ${e.status === 'pending' ? `
+                    <button onclick="approvePendingEmployee('${e.id}')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} Approve</button>
+                    <button onclick="rejectPendingEmployee('${e.id}')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} Reject</button>
+                  ` : `
+                    <button onclick="openEmployeeModal('${e.id}')" aria-label="Edit ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                    <button onclick="deleteEmployee('${e.id}')" aria-label="Delete ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                  `}
                 </td>
               </tr>`;}).join('')}
           </tbody>
@@ -1930,8 +1953,11 @@ async function deleteEmployee(id) {
    their attendance, payroll, warning, and other historical records
    remain available for audit and statutory retention.
 ============================================================ */
+// "Active" means the employee can actually use the system: not
+// pending admin approval and not terminated. Used for headcount,
+// payroll runs, dashboards, etc.
 function isActiveEmployee(e) {
-  return !!e && e.status !== 'terminated';
+  return !!e && e.status !== 'terminated' && e.status !== 'pending';
 }
 function openTerminationModal(empId) {
   const e = getEmployee(empId);
@@ -4314,6 +4340,7 @@ function renderHelp() {
     { id:'sign-in',     title:'Signing in' },
     { id:'first-setup', title:'First-time setup', adminOnly:true },
     { id:'add-emp',     title:'Adding an employee', adminOnly:true },
+    { id:'approve',     title:'Approving new signups', adminOnly:true },
     { id:'attendance',  title:'Daily attendance' },
     { id:'leave',       title:'Leave requests' },
     { id:'warning',     title:'Issuing a warning', adminOnly:true },
@@ -4398,8 +4425,19 @@ function renderHelp() {
           </ul>
         </li>
         <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system warns 30 days before either expires.</li>
-        <li>Save. Or skip this step entirely &mdash; the employee can sign themselves up at the live URL (filling in their own name, phone, position, branch). Either way, when they sign up with the email you registered, the system links the auth account to the record. After signup, fill in their salary and schedule on this screen.</li>
+        <li>Save. Or skip this step entirely &mdash; the employee can sign themselves up at the live URL (filling in their own name, phone, position, branch). Either way, after they sign up they land in <strong>Pending approval</strong> &mdash; you must explicitly approve them before they can use the system (see next section). After approval, fill in their salary and schedule.</li>
       </ol>
+
+      <h2 id="guide-approve">Approving new signups</h2>
+      <p>Anyone can sign up at the live URL, but no one can use the system until an admin approves them. This is your access control.</p>
+      <ol>
+        <li>When someone signs up, an amber alert appears at the top of your <strong>Dashboard</strong>: <em>"X employees are awaiting your approval."</em> Click <strong>Review now</strong>.</li>
+        <li>In the <strong>Employees</strong> directory, pending signups have an <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-xs font-semibold">Pending approval</span> badge in their status column.</li>
+        <li>Verify the submitted info (name, email, phone, position, branch) is plausible &mdash; e.g. the email matches someone you actually hired.</li>
+        <li>Click <strong>Approve</strong> &mdash; their status flips to Active and they can log in normally on next refresh.</li>
+        <li>Click <strong>Reject</strong> if they shouldn&rsquo;t have access &mdash; they are permanently blocked. (You can later reinstate them from the directory if it was a mistake.)</li>
+      </ol>
+      <p>The pending employee sees an <strong>Awaiting approval</strong> screen if they try to log in before you decide. They cannot reach the app.</p>
       ` : ''}
 
       <h2 id="guide-attendance">Daily attendance</h2>
@@ -6231,6 +6269,76 @@ async function submitModal() {
 }
 
 /* -------------------- MAIN RENDER -------------------- */
+/* -------------------- PENDING APPROVAL GATE -------------------- */
+// Shown when the logged-in employee has status='pending' — they've
+// signed up but admin hasn't approved their access yet.
+function renderPendingApprovalGate() {
+  const me = currentEmployee();
+  const ex = me ? getEmpExtras(me.id) : null;
+  return `
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+    <div class="w-full max-w-lg bg-white rounded-2xl shadow-pop p-8 md:p-10 text-center">
+      <div class="w-14 h-14 mx-auto rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mb-5">
+        ${icon('clock','w-7 h-7')}
+      </div>
+      <h1 class="font-display text-2xl md:text-3xl font-semibold text-slate-900">Awaiting approval</h1>
+      <p class="mt-3 text-sm text-slate-600 leading-relaxed">
+        Hi ${escapeHTML(me?.firstName||'')}, thanks for signing up to <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong>. Your account is awaiting review by HR.
+      </p>
+      <div class="mt-6 text-left bg-slate-50 rounded-xl p-4 text-sm">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Submitted info</div>
+        <div class="space-y-1.5 text-slate-700">
+          <div><span class="text-slate-500 inline-block w-20">Name</span><span class="font-medium">${escapeHTML((me?.firstName||'') + ' ' + (me?.lastName||''))}</span></div>
+          <div><span class="text-slate-500 inline-block w-20">Email</span><span class="font-medium">${escapeHTML(me?.email||'')}</span></div>
+          ${me?.phone ? `<div><span class="text-slate-500 inline-block w-20">Phone</span><span class="font-medium">${escapeHTML(me.phone)}</span></div>` : ''}
+          ${me?.role  ? `<div><span class="text-slate-500 inline-block w-20">Position</span><span class="font-medium">${escapeHTML(me.role)}</span></div>` : ''}
+          ${ex?.branch ? `<div><span class="text-slate-500 inline-block w-20">Branch</span><span class="font-medium">${escapeHTML(ex.branch)}</span></div>` : ''}
+        </div>
+      </div>
+      <p class="mt-5 text-xs text-slate-500 leading-relaxed">
+        You&rsquo;ll be able to log in normally once an admin approves your access. If anything above is wrong, log out and re-register, or contact HR.
+      </p>
+      <button onclick="logout()" class="btn btn-primary mt-6 w-full justify-center">${icon('logout','w-4 h-4')} Log out</button>
+    </div>
+  </div>`;
+}
+
+// Approve a pending signup — flips status to 'active' so they can
+// log in. Only admins can call this (RLS enforces it on the server).
+async function approvePendingEmployee(empId) {
+  const e = getEmployee(empId);
+  if (!e || !isAdmin()) return;
+  const { data, error } = await sb.from('employees')
+    .update({ status: 'active' })
+    .eq('id', empId)
+    .select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(e, mapEmployeeFromDb(data));
+  render();
+  toast(`${e.firstName} approved`, 'success');
+}
+
+// Reject a pending signup — marks them as terminated with a "signup
+// not approved" reason. Their auth account stays (Supabase admin
+// API would be needed to delete) but they're permanently blocked.
+async function rejectPendingEmployee(empId) {
+  const e = getEmployee(empId);
+  const me = currentEmployee();
+  if (!e || !me || !isAdmin()) return;
+  if (!confirm(`Reject ${e.firstName}'s signup? They will be permanently blocked from logging in. To approve later you'd need to reinstate them from the directory.`)) return;
+  const updates = {
+    status: 'terminated',
+    termination_date: todayISO(),
+    termination_reason: 'Signup not approved',
+    terminated_by: me.id,
+  };
+  const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(e, mapEmployeeFromDb(data));
+  render();
+  toast(`${e.firstName} rejected`, 'success');
+}
+
 /* -------------------- NOT-AUTHORIZED GATE -------------------- */
 // Shown when somebody completes the Supabase signup form but isn't
 // in the employees table — i.e. HR didn't pre-add them. The signup
@@ -6414,6 +6522,8 @@ function render() {
   // who wasn't pre-added by HR). The DB trigger leaves them unlinked.
   const me = currentEmployee();
   if (!me) { stopClockTicker(); app.innerHTML = renderNotAuthorizedGate(); return; }
+  // Block: signup awaiting admin approval.
+  if (me.status === 'pending') { stopClockTicker(); app.innerHTML = renderPendingApprovalGate(); return; }
   // Block access entirely if this employee has been terminated.
   if (me.status === 'terminated') { stopClockTicker(); app.innerHTML = renderTerminatedGate(); return; }
   // Block access to the app until PDPL consent is recorded.
