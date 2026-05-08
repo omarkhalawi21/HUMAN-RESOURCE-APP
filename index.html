@@ -607,6 +607,9 @@ function mapEmployeeFromDb(r) {
     consentVersion: r.consent_version,
     consentGps:     r.consent_gps,
     consentPhoto:   r.consent_photo,
+    terminationDate:   r.termination_date,
+    terminationReason: r.termination_reason,
+    terminatedBy:      r.terminated_by,
   };
 }
 function employeeToDb(e) {
@@ -912,6 +915,7 @@ function statusBadge(status) {
     paid:     ['badge-green',  'Paid'],
     active:   ['badge-green',  'Active'],
     on_leave: ['badge-blue',   t('on_leave')],
+    terminated: ['badge-red',  'Terminated'],
   };
   const [cls, label] = map[status] || ['badge-slate', status];
   return `<span class="badge ${cls}">${escapeHTML(label)}</span>`;
@@ -1344,13 +1348,17 @@ function renderDashboard() {
     </div>
 
     <!-- Stat cards (admin only — full-team metrics) -->
-    ${admin ? `
+    ${admin ? (() => {
+      // Exclude terminated employees from headline counts.
+      const activeEmps = state.employees.filter(isActiveEmployee);
+      return `
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      ${statCard(t('total_employees'), state.employees.length, '+2 this month', 'up', 'users')}
-      ${statCard(t('present_today'),  presentToday.length, `${state.employees.length-presentToday.length} away`, 'up', 'check')}
+      ${statCard(t('total_employees'), activeEmps.length, '+2 this month', 'up', 'users')}
+      ${statCard(t('present_today'),  presentToday.length, `${activeEmps.length-presentToday.length} away`, 'up', 'check')}
       ${statCard(t('on_leave'),       onLeave.length,       `${pending.length} pending`,                'down', 'calendar')}
       ${statCard(t('payroll_month'),  fmtMoney(totalPayroll), 'last cycle',                              'up', 'wallet')}
-    </div>` : ''}
+    </div>`;
+    })() : ''}
 
     <!-- Attendance Snapshot — date + branch filterable (admin only) -->
     ${admin ? (() => {
@@ -1763,9 +1771,12 @@ function statCard(label, value, caption, dir, ico) {
 }
 
 /* -------------------- EMPLOYEES -------------------- */
-let empFilter = { dept: 'all', branch: 'all', nationality: 'all', q: '' };
+let empFilter = { dept: 'all', branch: 'all', nationality: 'all', q: '', showTerminated: false };
 function renderEmployees() {
+  const terminatedCount = state.employees.filter(e => e.status === 'terminated').length;
   const emps = state.employees.filter(e => {
+    // Hide terminated employees unless the toggle is on.
+    if (!empFilter.showTerminated && e.status === 'terminated') return false;
     if (empFilter.dept !== 'all' && e.department !== empFilter.dept) return false;
     const ex = getEmpExtras(e.id);
     if (empFilter.branch === 'none') {
@@ -1782,15 +1793,22 @@ function renderEmployees() {
   // Branch filter: only the 3 official branches
   const branches = SUGGESTED_BRANCHES.slice();
   const activeFilters = (empFilter.branch!=='all'?1:0) + (empFilter.q?1:0);
+  const totalShown = empFilter.showTerminated ? state.employees.length : (state.employees.length - terminatedCount);
 
   return `
     <div class="bg-white rounded-2xl shadow-card">
       <div class="flex items-center justify-between gap-3 p-5 border-b border-slate-100 flex-wrap">
         <div>
           <h2 class="font-semibold text-slate-900">${escapeHTML(t('employees'))}</h2>
-          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${state.employees.length} employees${activeFilters?` · <button onclick="empFilter={dept:'all',branch:'all',nationality:'all',q:''}; render();" class="text-brand-600 hover:underline">clear filters</button>`:''}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${totalShown} employees${terminatedCount && !empFilter.showTerminated ? ` · <span class="text-slate-400">${terminatedCount} terminated hidden</span>` : ''}${activeFilters?` · <button onclick="empFilter={dept:'all',branch:'all',nationality:'all',q:'',showTerminated:empFilter.showTerminated}; render();" class="text-brand-600 hover:underline">clear filters</button>`:''}</div>
         </div>
-        <div class="flex gap-2 flex-wrap">
+        <div class="flex gap-2 flex-wrap items-center">
+          ${terminatedCount > 0 ? `
+            <label class="text-xs text-slate-600 flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" ${empFilter.showTerminated?'checked':''} onchange="empFilter.showTerminated = this.checked; render();" class="w-3.5 h-3.5 accent-brand-700">
+              Show terminated
+            </label>
+          ` : ''}
           <button onclick="exportCSV('employees')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
           <button onclick="openEmployeeModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
         </div>
@@ -1860,6 +1878,75 @@ async function deleteEmployee(id) {
   toast('Employee removed', 'success');
 }
 
+/* -------------------- TERMINATION (offboarding) --------------------
+   Marks an employee as terminated rather than deleting them, so all
+   their attendance, payroll, warning, and other historical records
+   remain available for audit and statutory retention.
+============================================================ */
+function isActiveEmployee(e) {
+  return !!e && e.status !== 'terminated';
+}
+function openTerminationModal(empId) {
+  const e = getEmployee(empId);
+  if (!e) return;
+  const me = currentEmployee();
+  if (!me || !isAdmin()) return;
+  if (e.id === me.id) { toast('You cannot terminate your own account', 'error'); return; }
+  const fullName = (e.firstName + ' ' + (e.lastName||'')).trim();
+  const form = `
+    <div class="space-y-4">
+      <div class="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-900">
+        <div class="font-semibold mb-1">You are about to terminate ${escapeHTML(fullName)}.</div>
+        <div class="text-rose-800 text-xs leading-relaxed">All their attendance, payroll, warnings, advances, certificates, and document expiries will be <strong>preserved</strong> for legal retention. They will be <strong>blocked from logging in</strong> from the termination date, and removed from active employee counts. You can later reverse this from their profile if needed.</div>
+      </div>
+      <div>
+        <label class="label">Termination effective date</label>
+        <input id="term-date" type="date" class="input" value="${escapeHTML(todayISO())}">
+      </div>
+      <div>
+        <label class="label">Reason (optional, for HR records)</label>
+        <textarea id="term-reason" class="input" rows="3" placeholder="e.g. Resigned, end of contract, dismissal for cause..."></textarea>
+      </div>
+      <div>
+        <label class="label">Type the employee&rsquo;s first name to confirm</label>
+        <input id="term-confirm" class="input" placeholder="${escapeHTML(e.firstName||'')}" autocomplete="off">
+      </div>
+    </div>
+  `;
+  openModal('Terminate employee', form, async () => {
+    const date    = $('#term-date').value;
+    const reason  = $('#term-reason').value.trim();
+    const confirm = $('#term-confirm').value.trim();
+    if (!date) { toast('Termination date required', 'error'); return false; }
+    if (confirm.toLowerCase() !== (e.firstName||'').toLowerCase()) {
+      toast('First name confirmation does not match', 'error'); return false;
+    }
+    const updates = {
+      status: 'terminated',
+      termination_date: date,
+      termination_reason: reason || null,
+      terminated_by: me.id,
+    };
+    const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    Object.assign(e, mapEmployeeFromDb(data));
+    render();
+    toast(`${escapeHTML(fullName)} terminated effective ${fmtDate(date)}`, 'success');
+    return true;
+  }, { saveLabel: 'Terminate' });
+}
+async function reinstateEmployee(empId) {
+  const e = getEmployee(empId);
+  if (!e || !isAdmin()) return;
+  if (!confirm(`Reinstate ${e.firstName} ${e.lastName||''}? Their account will be reactivated and they'll be able to log in again.`)) return;
+  const updates = { status: 'active', termination_date: null, termination_reason: null, terminated_by: null };
+  const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(e, mapEmployeeFromDb(data));
+  render();
+  toast(`${e.firstName} reinstated`, 'success');
+}
+
 /* -------------------- EMPLOYEE PROFILE (admin drill-down) -------------------- */
 function renderEmployeeProfile(empId) {
   const e = getEmployee(empId);
@@ -1927,13 +2014,28 @@ function renderEmployeeProfile(empId) {
       <span class="text-slate-700 font-semibold">${escapeHTML(e.firstName+' '+e.lastName)}</span>
     </div>
 
-    <div class="bg-white rounded-2xl shadow-card overflow-hidden mb-5 relative">
-      <div class="h-28 relative" style="background:linear-gradient(135deg,#6e4220 0%,#a87035 60%,#c2914a 100%);">
+    ${e.status === 'terminated' ? `
+      <div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 mb-4 flex items-start gap-3">
+        ${icon('warning','w-5 h-5 text-rose-700 shrink-0 mt-0.5')}
+        <div class="flex-1">
+          <div class="font-semibold text-rose-900">Terminated &middot; ${fmtDate(e.terminationDate)}</div>
+          ${e.terminationReason ? `<div class="text-sm text-rose-800 mt-1">Reason: ${escapeHTML(e.terminationReason)}</div>` : ''}
+          ${e.terminatedBy ? (() => { const tb = getEmployee(e.terminatedBy); return tb ? `<div class="text-xs text-rose-700 mt-1">Actioned by ${escapeHTML(tb.firstName+' '+(tb.lastName||''))}</div>` : ''; })() : ''}
+          <div class="text-xs text-rose-700 mt-1">This employee can no longer log in. All historical records are preserved.</div>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden mb-5 relative ${e.status==='terminated' ? 'opacity-90' : ''}">
+      <div class="h-28 relative" style="background:linear-gradient(135deg,#6e4220 0%,#a87035 60%,#c2914a 100%); ${e.status==='terminated' ? 'filter:grayscale(0.6);' : ''}">
         <div class="absolute -bottom-12 left-6 md:left-8">
           <div class="rounded-full ring-4 ring-white">${avatarHTML(e, 96)}</div>
         </div>
         <div class="absolute top-4 right-4 flex gap-2">
           <button onclick="openEmployeeModal('${e.id}')" class="btn btn-sm bg-white/95 text-brand-700 hover:bg-white">${icon('edit','w-4 h-4')} Edit</button>
+          ${e.status === 'terminated'
+            ? `<button onclick="reinstateEmployee('${e.id}')" class="btn btn-sm bg-white/95 text-emerald-700 hover:bg-white">${icon('refresh','w-4 h-4')} Reinstate</button>`
+            : `<button onclick="openTerminationModal('${e.id}')" class="btn btn-sm bg-white/95 text-rose-700 hover:bg-white">${icon('logout','w-4 h-4')} Terminate</button>`}
         </div>
       </div>
       <div class="pt-16 pb-6 px-6 md:px-8">
@@ -3472,7 +3574,9 @@ function openPayslip(payrollId) {
 // preview in the modal and by the actual run.
 function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
-  const rows = state.employees.map(e => {
+  // Skip terminated employees — they should not appear in payroll runs
+  // after their termination date.
+  const rows = state.employees.filter(isActiveEmployee).map(e => {
     const empAdvances = (state.advances||[]).filter(a =>
       a.employeeId === e.id &&
       a.status === 'approved' &&
@@ -6080,6 +6184,32 @@ async function submitModal() {
 }
 
 /* -------------------- MAIN RENDER -------------------- */
+/* -------------------- TERMINATED GATE -------------------- */
+// Shown when a terminated employee tries to log in. Their data is
+// preserved server-side, but the app surface is read-blocked.
+function renderTerminatedGate() {
+  const me = currentEmployee();
+  const tb = me?.terminatedBy ? getEmployee(me.terminatedBy) : null;
+  return `
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+    <div class="w-full max-w-lg bg-white rounded-2xl shadow-pop p-8 md:p-10 text-center">
+      <div class="w-14 h-14 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-5">
+        ${icon('warning','w-7 h-7')}
+      </div>
+      <h1 class="font-display text-2xl md:text-3xl font-semibold text-slate-900">Account deactivated</h1>
+      <p class="mt-3 text-sm text-slate-600 leading-relaxed">
+        Hi ${escapeHTML(me?.firstName || '')}, your employment with <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong> ended on ${fmtDate(me?.terminationDate)}. You no longer have access to the HR system.
+      </p>
+      ${me?.terminationReason ? `<p class="mt-2 text-sm text-slate-500"><strong>Reason on file:</strong> ${escapeHTML(me.terminationReason)}</p>` : ''}
+      ${tb ? `<p class="mt-2 text-xs text-slate-400">Actioned by ${escapeHTML((tb.firstName + ' ' + (tb.lastName||'')).trim())}.</p>` : ''}
+      <p class="mt-5 text-xs text-slate-500 leading-relaxed">
+        Your records (attendance, payroll, leave history) are retained for the period required by Saudi labour law. To request a final payslip, certificate of employment, or copies of your data, contact HR directly.
+      </p>
+      <button onclick="logout()" class="btn btn-primary mt-6 w-full justify-center">${icon('logout','w-4 h-4')} Log out</button>
+    </div>
+  </div>`;
+}
+
 /* -------------------- PDPL CONSENT GATE -------------------- */
 const CURRENT_CONSENT_VERSION = '1.0';
 
@@ -6209,6 +6339,9 @@ function render() {
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
   if (!state.session) { stopClockTicker(); app.innerHTML = renderLogin(); return; }
+  // Block access entirely if this employee has been terminated.
+  const me = currentEmployee();
+  if (me && me.status === 'terminated') { stopClockTicker(); app.innerHTML = renderTerminatedGate(); return; }
   // Block access to the app until PDPL consent is recorded.
   if (!hasGivenConsent()) { stopClockTicker(); app.innerHTML = renderConsentGate(); return; }
   startClockTicker();

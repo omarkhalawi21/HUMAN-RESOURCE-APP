@@ -446,6 +446,17 @@ ALTER TABLE public.employees
   ADD COLUMN IF NOT EXISTS consent_gps     boolean,
   ADD COLUMN IF NOT EXISTS consent_photo   boolean;
 
+-- Offboarding fields. When an employee leaves, mark them as terminated
+-- (rather than deleting) so all their attendance/payroll/warning history
+-- is preserved for audit and statutory retention. The `status` column
+-- already exists with values like 'active' / 'on_leave'; we add
+-- 'terminated' as a third value. The trio below records when, why,
+-- and who actioned it.
+ALTER TABLE public.employees
+  ADD COLUMN IF NOT EXISTS termination_date   date,
+  ADD COLUMN IF NOT EXISTS termination_reason text,
+  ADD COLUMN IF NOT EXISTS terminated_by      uuid REFERENCES public.employees(id);
+
 -- record_consent() lets an authenticated employee write ONLY their
 -- consent fields, without granting them general UPDATE on employees
 -- (which would let them change their own salary, admin flag, etc.).
