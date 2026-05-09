@@ -789,6 +789,39 @@ END;
 $$;
 
 -- =============================================================
+-- 14. RECEIPTS RLS — broaden to admin OR accounting
+--    The accounting role is the day-to-day owner of receipts.
+--    Admins keep full access for oversight. All other roles
+--    are still blocked from this financial data.
+-- =============================================================
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'receipts'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "receipts_select_admin_or_accounting"
+  ON public.receipts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','accounting']));
+CREATE POLICY "receipts_insert_admin_or_accounting"
+  ON public.receipts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','accounting']));
+CREATE POLICY "receipts_update_admin_or_accounting"
+  ON public.receipts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','accounting']))
+  WITH CHECK (public.has_role(ARRAY['admin','accounting']));
+CREATE POLICY "receipts_delete_admin_or_accounting"
+  ON public.receipts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','accounting']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

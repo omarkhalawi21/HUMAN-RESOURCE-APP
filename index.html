@@ -1274,7 +1274,7 @@ function renderShell(routeContent) {
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
-    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:admin, group:'company' },
+    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:admin, group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:admin, group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
@@ -6542,6 +6542,158 @@ function renderReceipts() {
   `;
 }
 
+function renderRoleDashboard() {
+  const role = currentRole();
+  if (role === 'accounting') return renderAccountingDashboard();
+  // HR, ops, baristas, etc. fall through to the existing HR dashboard for now.
+  // Each gets its own renderXxxDashboard() in a follow-up PR.
+  return renderDashboard();
+}
+
+function renderAccountingDashboard() {
+  const me = currentEmployee();
+  const all = (state.receipts || []).slice();
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0,10);
+  const ym = todayISO.slice(0,7);
+  const lastMonthDate = new Date(today.getFullYear(), today.getMonth()-1, 1);
+  const lm = lastMonthDate.toISOString().slice(0,7);
+  const yearStart = today.getFullYear() + '-01-01';
+
+  const sum = list => list.reduce((s,r) => s + (Number(r.amount)||0), 0);
+  const thisMonthList = all.filter(r => (r.receiptDate||'').slice(0,7) === ym);
+  const lastMonthList = all.filter(r => (r.receiptDate||'').slice(0,7) === lm);
+  const ytdList       = all.filter(r => (r.receiptDate||'') >= yearStart && (r.receiptDate||'') <= todayISO);
+  const tmTotal = sum(thisMonthList);
+  const lmTotal = sum(lastMonthList);
+  const ytdTotal = sum(ytdList);
+  const diffPct = lmTotal > 0 ? Math.round((tmTotal - lmTotal) / lmTotal * 100) : null;
+
+  // Top categories this month
+  const catTotals = {};
+  thisMonthList.forEach(r => {
+    const c = r.category || 'other';
+    catTotals[c] = (catTotals[c] || 0) + (Number(r.amount)||0);
+  });
+  const topCats = Object.entries(catTotals).sort((a,b) => b[1] - a[1]).slice(0, 5);
+  const topCatMax = topCats.length ? topCats[0][1] : 0;
+
+  const recent = all.slice().sort((a,b) =>
+    (b.receiptDate||'').localeCompare(a.receiptDate||'') ||
+    (b.uploadedAt||'').localeCompare(a.uploadedAt||'')
+  ).slice(0, 5);
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('receipt','w-3.5 h-3.5')} Accounting</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Welcome back, ${escapeHTML(me?.firstName||'')}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Here's your accounting snapshot for ${escapeHTML(monthLabel(ym))}.</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="location.hash='#/receipts'" class="btn btn-ghost">${icon('archive','w-4 h-4')} View all receipts</button>
+          <button onclick="openReceiptModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add receipt</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(monthLabel(ym))}</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${fmtMoney(tmTotal)}</div>
+        <div class="text-xs text-slate-500 mt-1">${thisMonthList.length} receipt${thisMonthList.length===1?'':'s'}${diffPct===null?'':` &middot; <span class="${diffPct>0?'text-rose-600':'text-emerald-600'} font-semibold">${diffPct>0?'+':''}${diffPct}%</span> vs last month`}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(monthLabel(lm))}</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${fmtMoney(lmTotal)}</div>
+        <div class="text-xs text-slate-500 mt-1">${lastMonthList.length} receipt${lastMonthList.length===1?'':'s'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Year to date</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${fmtMoney(ytdTotal)}</div>
+        <div class="text-xs text-slate-500 mt-1">${ytdList.length} receipt${ytdList.length===1?'':'s'} in ${today.getFullYear()}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">All-time receipts</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${all.length}</div>
+        <div class="text-xs text-slate-500 mt-1">across ${new Set(all.map(r => (r.vendor||'').trim().toLowerCase()).filter(Boolean)).size} vendor${(new Set(all.map(r => (r.vendor||'').trim().toLowerCase()).filter(Boolean)).size)===1?'':'s'}</div>
+      </div>
+    </div>
+
+    <!-- Top categories + Recent receipts -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Top categories</div>
+            <div class="font-display text-lg font-semibold text-slate-900">${escapeHTML(monthLabel(ym))}</div>
+          </div>
+        </div>
+        ${topCats.length === 0 ? `
+          <div class="text-sm text-slate-500 text-center py-8">No spending recorded this month yet.</div>
+        ` : `
+          <div class="space-y-3">
+            ${topCats.map(([k, total]) => {
+              const cat = RECEIPT_CATEGORIES[k] || RECEIPT_CATEGORIES.other;
+              const pct = topCatMax > 0 ? Math.round(total/topCatMax*100) : 0;
+              return `
+                <div>
+                  <div class="flex items-center justify-between text-sm mb-1">
+                    <div class="flex items-center gap-2">
+                      <div class="w-7 h-7 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-4 h-4')}</div>
+                      <span class="font-medium text-slate-900">${escapeHTML(cat.label)}</span>
+                    </div>
+                    <span class="font-semibold text-slate-900">${fmtMoney(total)}</span>
+                  </div>
+                  <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div class="h-full bg-brand-500" style="width:${pct}%"></div>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Recent receipts</div>
+            <div class="font-display text-lg font-semibold text-slate-900">Latest activity</div>
+          </div>
+          ${all.length > 5 ? `<a href="#/receipts" class="text-sm text-brand-700 hover:underline">View all &rarr;</a>` : ''}
+        </div>
+        ${recent.length === 0 ? `
+          <div class="text-center py-8">
+            <div class="w-14 h-14 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-3">${icon('receipt','w-7 h-7')}</div>
+            <div class="text-sm text-slate-600">No receipts yet.</div>
+            <button onclick="openReceiptModal()" class="btn btn-primary btn-sm mt-3">${icon('plus','w-4 h-4')} Add your first receipt</button>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${recent.map(r => {
+              const cat = RECEIPT_CATEGORIES[r.category] || RECEIPT_CATEGORIES.other;
+              const uploader = getEmployee(r.uploadedBy);
+              return `
+                <div class="px-1 py-3 flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-4 h-4')}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-medium text-slate-900 truncate">${escapeHTML(r.vendor||'—')}</div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML(fmtDate(r.receiptDate||''))} &middot; ${escapeHTML(cat.label)}${uploader?' &middot; '+escapeHTML(uploader.firstName||''):''}</div>
+                  </div>
+                  <div class="font-semibold text-slate-900 shrink-0">${fmtMoney(r.amount)}</div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 function openReceiptModal() {
   _receiptFile = null;
   const today = new Date().toISOString().slice(0,10);
@@ -7173,7 +7325,7 @@ function render() {
   const route = getRoute();
   let content = '';
   switch (route) {
-    case 'dashboard':    content = renderDashboard(); break;
+    case 'dashboard':    content = renderRoleDashboard(); break;
     case 'employees':    content = isAdmin() ? renderEmployees() : renderDashboard(); break;
     case 'employee':     content = isAdmin() ? renderEmployeeProfile(getRouteParam()) : renderDashboard(); break;
     case 'attendance':   content = renderAttendance(); break;
@@ -7184,7 +7336,7 @@ function render() {
     case 'certificates': content = renderCertificates(); break;
     case 'documents':    content = renderDocuments(); break;
     case 'archive':      content = renderArchive(); break;
-    case 'receipts':     content = isAdmin() ? renderReceipts() : renderDashboard(); break;
+    case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
     case 'reports':      content = isAdmin() ? renderReports() : renderDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderDashboard(); break;
     case 'help':         content = renderHelp(); break;
