@@ -1250,6 +1250,64 @@ CREATE POLICY "inventory_delete_roles"
   USING (public.has_role(ARRAY['admin','head_barista','roaster']));
 
 -- =============================================================
+-- 20. INVENTORY MOVEMENTS (audit/history ledger)
+--    Captures every change to an inventory_items.quantity over
+--    time so the roaster can reproduce the spreadsheets they
+--    were keeping (daily roasting log, weekly snapshots,
+--    inter-branch transfers). The current quantity stays on
+--    inventory_items.quantity (faster reads, simpler list view);
+--    movements are the historical record kept in sync by the
+--    frontend on every adjust/log action.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_movements (
+  id           uuid primary key default gen_random_uuid(),
+  item_id      uuid not null references public.inventory_items(id) on delete cascade,
+  qty_delta    numeric(12,2) not null,
+  type         text not null default 'adjust'
+    CHECK (type IN ('adjust','roast','transfer','restock','sale','other')),
+  branch       text,
+  occurred_at  date not null default current_date,
+  notes        text,
+  recorded_by  uuid references public.employees(id),
+  created_at   timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS inventory_movements_item_idx     ON public.inventory_movements(item_id);
+CREATE INDEX IF NOT EXISTS inventory_movements_occurred_idx ON public.inventory_movements(occurred_at DESC);
+CREATE INDEX IF NOT EXISTS inventory_movements_type_idx     ON public.inventory_movements(type);
+
+ALTER TABLE public.inventory_movements ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'inventory_movements'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+-- SELECT mirrors inventory_items SELECT: anyone who can see stock
+-- can see how it moved. Writes are roaster-shaped (admin, head
+-- barista, roaster) — same group that adjusts inventory.
+CREATE POLICY "inventory_movements_select_roles"
+  ON public.inventory_movements FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','hr','operations','head_barista','roaster']));
+CREATE POLICY "inventory_movements_insert_roles"
+  ON public.inventory_movements FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+CREATE POLICY "inventory_movements_update_roles"
+  ON public.inventory_movements FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','roaster']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+CREATE POLICY "inventory_movements_delete_roles"
+  ON public.inventory_movements FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','roaster']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

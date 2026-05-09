@@ -392,8 +392,9 @@ function emptyState() {
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
-    inventory: [],      // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, branch, notes, createdBy, createdAt, updatedAt }]
-    maintenance: [],    // [{ id, title, description, branch, location, asset, priority, status, reportedBy, assignedTo, resolution, resolvedAt, createdAt, updatedAt }]
+    inventory: [],          // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, branch, notes, createdBy, createdAt, updatedAt }]
+    inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
+    maintenance: [],        // [{ id, title, description, branch, location, asset, priority, status, reportedBy, assignedTo, resolution, resolvedAt, createdAt, updatedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
   };
@@ -565,7 +566,13 @@ const COMMON_NATIONALITIES = [
   'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
 ];
 const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH'];
-const SUGGESTED_DEPARTMENTS = ['Barista', 'Cashier', 'Operations'];
+// Department names track the system roles where they overlap, so HR
+// can assign both fields consistently (department is the free-text
+// label shown on the profile; system_role is the strict permission).
+const SUGGESTED_DEPARTMENTS = [
+  'Barista', 'Cashier', 'Roaster', 'Operations',
+  'HR', 'Accounting', 'Inventory', 'Maintenance',
+];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
 function distanceMeters(lat1, lng1, lat2, lng2) {
@@ -820,6 +827,30 @@ function inventoryItemToDb(i) {
     created_by: i.createdBy || null,
   };
 }
+function mapMovementFromDb(r) {
+  return {
+    id: r.id,
+    itemId: r.item_id,
+    qtyDelta: Number(r.qty_delta) || 0,
+    type: r.type || 'adjust',
+    branch: r.branch || '',
+    occurredAt: r.occurred_at,
+    notes: r.notes || '',
+    recordedBy: r.recorded_by,
+    createdAt: r.created_at,
+  };
+}
+function movementToDb(m) {
+  return {
+    item_id: m.itemId,
+    qty_delta: Number(m.qtyDelta) || 0,
+    type: m.type || 'adjust',
+    branch: m.branch || null,
+    occurred_at: m.occurredAt || null,
+    notes: m.notes || null,
+    recorded_by: m.recordedBy || null,
+  };
+}
 function mapMaintenanceFromDb(r) {
   return {
     id: r.id,
@@ -891,7 +922,7 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
@@ -910,6 +941,11 @@ async function loadAll() {
       // see only their own reports — the same query works for both.
       sb.from('maintenance_requests').select('*').order('created_at', { ascending: false }),
       sb.from('employee_extras').select('*'),
+      // Inventory movements: ledger of every adjust/roast/transfer/etc.
+      // Same SELECT scope as inventory_items SELECT (admin/hr/ops/
+      // head_barista/roaster); empty for other roles. Capped at the
+      // most recent 2000 — older history can be exported if needed.
+      sb.from('inventory_movements').select('*').order('occurred_at', { ascending: false }).limit(2000),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -945,8 +981,9 @@ async function loadAll() {
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
-    state.inventory    = (inventoryR.data    || []).map(mapInventoryItemFromDb);
-    state.maintenance  = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
+    state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
+    state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
+    state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -968,7 +1005,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts','inventory_items','maintenance_requests'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -7874,15 +7911,134 @@ function openInventoryItemModal(id) {
   }, { saveLabel: editing ? 'Save changes' : 'Add item' });
 }
 
+// Single source of truth for changing inventory quantity. Updates
+// the item's current `quantity` AND inserts a row in
+// inventory_movements so the change is in the audit ledger.
+// `opts` may include type (default 'adjust'), branch, occurredAt
+// (date), notes. Pass an explicit qtyDelta — positive to add,
+// negative to remove. Quantity is floored at 0.
+async function logInventoryMovement(itemId, qtyDelta, opts = {}) {
+  const it = (state.inventory||[]).find(i => i.id === itemId);
+  if (!it) return null;
+  const me = currentEmployee();
+  const delta = Number(qtyDelta) || 0;
+  if (!delta) return null;
+  const targetQty = Math.max(0, Number(it.quantity) + delta);
+  // Effective delta after the floor — what actually moved on the item.
+  const effectiveDelta = targetQty - Number(it.quantity);
+  if (effectiveDelta === 0) return null;
+
+  const movementRow = movementToDb({
+    itemId,
+    qtyDelta: effectiveDelta,
+    type: opts.type || 'adjust',
+    branch: opts.branch || it.branch || null,
+    occurredAt: opts.occurredAt || todayISO(),
+    notes: opts.notes || null,
+    recordedBy: me?.id || null,
+  });
+
+  // Insert movement first so the ledger doesn't drift if the qty
+  // update succeeds but the audit row never lands.
+  const mIns = await sb.from('inventory_movements').insert(movementRow).select().single();
+  if (mIns.error) { toast(mIns.error.message, 'error'); return null; }
+  const newMovement = mapMovementFromDb(mIns.data);
+
+  const qIns = await sb.from('inventory_items').update({ quantity: targetQty }).eq('id', itemId).select().single();
+  if (qIns.error) {
+    // Compensating delete — roll back the ledger row so we don't
+    // claim a movement that never actually happened.
+    await sb.from('inventory_movements').delete().eq('id', newMovement.id);
+    toast(qIns.error.message, 'error');
+    return null;
+  }
+
+  Object.assign(it, mapInventoryItemFromDb(qIns.data));
+  state.inventoryMovements.unshift(newMovement);
+  return newMovement;
+}
+
 async function adjustInventoryQuantity(id, delta) {
-  const it = (state.inventory||[]).find(i => i.id === id);
-  if (!it) return;
-  const newQty = Math.max(0, Number(it.quantity) + Number(delta));
-  if (newQty === Number(it.quantity)) return;
-  const { data, error } = await sb.from('inventory_items').update({ quantity: newQty }).eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
-  Object.assign(it, mapInventoryItemFromDb(data));
-  render();
+  const m = await logInventoryMovement(id, delta, { type: 'adjust' });
+  if (m) render();
+}
+
+const MOVEMENT_TYPES = {
+  adjust:    { label: 'Adjustment' },
+  roast:     { label: 'Roasted' },
+  transfer:  { label: 'Transfer' },
+  restock:   { label: 'Restock / In' },
+  sale:      { label: 'Sold / Used' },
+  other:     { label: 'Other' },
+};
+
+function openLogMovementModal(prefilledItemId) {
+  const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
+  const today = todayISO();
+  const branches = SUGGESTED_BRANCHES;
+  const form = `
+    <div class="space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2">
+          <label class="label">Item</label>
+          <select id="mv-item" class="input">
+            ${items.map(i => `<option value="${i.id}" ${prefilledItemId===i.id?'selected':''}>${escapeHTML(i.name)}${i.branch?' &middot; '+escapeHTML(i.branch):''} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')})</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Type</label>
+          <select id="mv-type" class="input">
+            ${Object.entries(MOVEMENT_TYPES).map(([k,m]) => `<option value="${k}" ${k==='adjust'?'selected':''}>${escapeHTML(m.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Direction</label>
+          <select id="mv-dir" class="input">
+            <option value="-1" selected>Out (decrease)</option>
+            <option value="1">In (increase)</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Quantity</label>
+          <input id="mv-qty" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+        </div>
+        <div>
+          <label class="label">Date</label>
+          <input id="mv-date" type="date" class="input" value="${today}">
+        </div>
+        <div class="md:col-span-2">
+          <label class="label">Branch (optional)</label>
+          <select id="mv-branch" class="input">
+            <option value="">— Use item's branch —</option>
+            ${branches.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="md:col-span-2">
+          <label class="label">Notes (optional)</label>
+          <textarea id="mv-notes" class="input" rows="2" placeholder="batch ID, transfer destination, supplier, etc."></textarea>
+        </div>
+      </div>
+    </div>
+  `;
+  openModal('Log inventory entry', form, async () => {
+    const itemId = $('#mv-item').value;
+    const type   = $('#mv-type').value;
+    const dir    = parseInt($('#mv-dir').value, 10) || -1;
+    const qty    = parseFloat($('#mv-qty').value);
+    const date   = $('#mv-date').value;
+    const branch = $('#mv-branch').value;
+    const notes  = $('#mv-notes').value.trim();
+    if (!itemId)                  { toast('Pick an item', 'error');     return false; }
+    if (isNaN(qty) || qty <= 0)   { toast('Enter a positive quantity', 'error'); return false; }
+    const m = await logInventoryMovement(itemId, dir * qty, {
+      type, branch: branch || null, occurredAt: date, notes,
+    });
+    if (!m) return false;
+    render();
+    toast('Entry logged', 'success');
+    return true;
+  }, { saveLabel: 'Log entry' });
 }
 
 async function deleteInventoryItem(id) {
@@ -7931,7 +8087,10 @@ function renderRoaster() {
           <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('roaster'))}</h2>
           <p class="text-slate-500 mt-1 text-sm max-w-md">Track green beans, the daily roasted shelf, and what's moved this week. Bean items are kept in the main inventory under <em>beans_raw</em> and <em>beans_roast</em>.</p>
         </div>
-        <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
+          <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
+        </div>
       </div>
     </div>
 
@@ -7973,40 +8132,76 @@ function renderRoaster() {
         }</p>
         ${roasterTab !== 'weekly' ? `<button onclick="openInventoryItemModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add bean</button>` : ''}
       </div>
-    ` : `
-      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
-        <div class="divide-y divide-slate-100">
-          ${items.map(it => {
-            const cat = INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other;
-            const low = isLowStock(it);
-            return `
-              <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
-                <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'—')}</span>
-                    ${it.sku ? `<span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(it.sku)}</span>` : ''}
-                    ${low ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Low</span>` : ''}
+    ` : (() => {
+      const rowHTML = (it) => {
+        const cat = INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other;
+        const low = isLowStock(it);
+        return `
+          <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
+            <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'—')}</span>
+                ${it.sku ? `<span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(it.sku)}</span>` : ''}
+                ${low ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Low</span>` : ''}
+              </div>
+              <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.supplier?' &middot; '+escapeHTML(it.supplier):''}${it.updatedAt?' &middot; updated '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
+              <div class="text-right min-w-[80px] tabular-nums">
+                <div class="font-semibold ${low?'text-rose-600':'text-slate-900'}">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
+                ${Number(it.reorderThreshold) > 0 ? `<div class="text-[10px] text-slate-400">reorder &le; ${Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2})}</div>` : ''}
+              </div>
+              <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
+            </div>
+            <div class="flex gap-1 shrink-0">
+              <button onclick="openInventoryItemModal('${it.id}')" title="Edit" aria-label="Edit item" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+              <button onclick="deleteInventoryItem('${it.id}')" title="Delete" aria-label="Delete item" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+            </div>
+          </div>`;
+      };
+
+      // Daily shelf tab is grouped by branch (FAISALIYAH/KHOBAR/RAYYAN
+      // first, then any other branches present, then 'Unassigned').
+      // Other tabs render a flat list.
+      if (roasterTab === 'shelf') {
+        const groups = {};
+        items.forEach(it => {
+          const b = (it.branch || '').trim() || 'Unassigned';
+          (groups[b] = groups[b] || []).push(it);
+        });
+        const orderedBranches = [
+          ...SUGGESTED_BRANCHES.filter(b => groups[b]),
+          ...Object.keys(groups).filter(b => !SUGGESTED_BRANCHES.includes(b) && b !== 'Unassigned').sort(),
+          ...(groups['Unassigned'] ? ['Unassigned'] : []),
+        ];
+        return `
+          <div class="space-y-5">
+            ${orderedBranches.map(b => {
+              const list = groups[b];
+              const total = list.reduce((s,i) => s + (Number(i.quantity)||0), 0);
+              return `
+                <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+                  <div class="px-5 py-3 flex items-center justify-between bg-slate-50/60 border-b border-slate-100">
+                    <div class="font-display text-base font-semibold text-slate-900">${escapeHTML(b)}</div>
+                    <div class="text-xs text-slate-600 font-semibold tabular-nums">${Number(total).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(list[0]?.unit||'units')} &middot; ${list.length} SKU${list.length===1?'':'s'}</div>
                   </div>
-                  <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.supplier?' &middot; '+escapeHTML(it.supplier):''}${it.updatedAt?' &middot; updated '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>
-                </div>
-                <div class="flex items-center gap-1 shrink-0">
-                  <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
-                  <div class="text-right min-w-[80px] tabular-nums">
-                    <div class="font-semibold ${low?'text-rose-600':'text-slate-900'}">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
-                    ${Number(it.reorderThreshold) > 0 ? `<div class="text-[10px] text-slate-400">reorder &le; ${Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2})}</div>` : ''}
+                  <div class="divide-y divide-slate-100">
+                    ${list.map(rowHTML).join('')}
                   </div>
-                  <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
-                </div>
-                <div class="flex gap-1 shrink-0">
-                  <button onclick="openInventoryItemModal('${it.id}')" title="Edit" aria-label="Edit item" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-                  <button onclick="deleteInventoryItem('${it.id}')" title="Delete" aria-label="Delete item" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
-                </div>
-              </div>`;
-          }).join('')}
-        </div>
-      </div>
-    `}
+                </div>`;
+            }).join('')}
+          </div>`;
+      }
+
+      return `
+        <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+          <div class="divide-y divide-slate-100">
+            ${items.map(rowHTML).join('')}
+          </div>
+        </div>`;
+    })()}
   `;
 }
 
