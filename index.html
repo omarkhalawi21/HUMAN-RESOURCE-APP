@@ -565,7 +565,13 @@ const COMMON_NATIONALITIES = [
   'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
 ];
 const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH'];
-const SUGGESTED_DEPARTMENTS = ['Barista', 'Cashier', 'Operations'];
+// Department names track the system roles where they overlap, so HR
+// can assign both fields consistently (department is the free-text
+// label shown on the profile; system_role is the strict permission).
+const SUGGESTED_DEPARTMENTS = [
+  'Barista', 'Cashier', 'Roasting', 'Operations',
+  'HR', 'Accounting', 'Inventory', 'Maintenance',
+];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
 function distanceMeters(lat1, lng1, lat2, lng2) {
