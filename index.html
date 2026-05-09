@@ -6559,8 +6559,12 @@ function renderReceipts() {
 function renderRoleDashboard() {
   const role = currentRole();
   if (role === 'accounting') return renderAccountingDashboard();
-  // HR, ops, baristas, etc. fall through to the existing HR dashboard for now.
-  // Each gets its own renderXxxDashboard() in a follow-up PR.
+  // Personal-view roles share one focused employee dashboard. Each
+  // can get a more specialised view in a follow-up PR.
+  if (role === 'barista' || role === 'head_barista' || role === 'maintenance' || role === 'employee') {
+    return renderBaristaDashboard();
+  }
+  // admin, hr, operations, inventory still use the existing HR dashboard.
   return renderDashboard();
 }
 
@@ -6699,6 +6703,184 @@ function renderAccountingDashboard() {
                     <div class="text-xs text-slate-500 truncate">${escapeHTML(fmtDate(r.receiptDate||''))} &middot; ${escapeHTML(cat.label)}${uploader?' &middot; '+escapeHTML(uploader.firstName||''):''}</div>
                   </div>
                   <div class="font-semibold text-slate-900 shrink-0">${fmtMoney(r.amount)}</div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function renderBaristaDashboard() {
+  const me = currentEmployee();
+  if (!me) return renderDashboard();
+
+  const today = todayISO();
+  const myAttendance = (state.attendance||[]).filter(a => a.employeeId === me.id);
+  const myToday = myAttendance.find(a => a.date === today);
+
+  const now = new Date();
+  // Week starts Monday: dow=0 → Mon. Saturday is dow 5, Sunday is 6.
+  const dow = (now.getDay() + 6) % 7;
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - dow);
+  weekStart.setHours(0,0,0,0);
+  const weekStartISO = weekStart.toISOString().slice(0,10);
+  const weekRecords = myAttendance.filter(a => a.date >= weekStartISO && a.date <= today);
+  const weekMinutes = weekRecords.reduce((s,a) => s + (a.clockIn && a.clockOut ? diffMinutes(a.clockIn, a.clockOut) : 0), 0);
+  const weekHours = (weekMinutes / 60).toFixed(1);
+  const weekDays = new Set(weekRecords.map(a => a.date)).size;
+
+  const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
+
+  const myPayroll = (state.payroll||[])
+    .filter(p => p.employeeId === me.id)
+    .slice().sort((a,b) => (b.period||'').localeCompare(a.period||''))
+    .slice(0, 3);
+
+  const myLeave = (state.leaveRequests||[])
+    .filter(r => r.employeeId === me.id)
+    .slice().sort((a,b) => (b.startDate||'').localeCompare(a.startDate||''))
+    .slice(0, 3);
+
+  const ex = getEmpExtras(me.id);
+  const todayDow = now.getDay();
+  const sched = (ex && ex.schedule && ex.schedule[todayDow]) || { off:false, start: state.settings.workStart||'09:00', end: state.settings.workEnd||'17:00' };
+
+  // Status text + CTA label
+  let statusText, statusSub, ctaLabel;
+  if (sched.off) {
+    statusText = 'Day off'; statusSub = 'Enjoy your rest day.';
+    ctaLabel = null;
+  } else if (!myToday) {
+    statusText = 'Not clocked in yet'; statusSub = `Shift ${sched.start} – ${sched.end}`;
+    ctaLabel = t('clock_in');
+  } else if (!myToday.clockOut) {
+    statusText = 'On the floor';
+    statusSub = `Clocked in at ${myToday.clockIn || '—'}`;
+    ctaLabel = t('clock_out');
+  } else {
+    const mins = diffMinutes(myToday.clockIn, myToday.clockOut);
+    statusText = 'Done for today';
+    statusSub = `${myToday.clockIn} – ${myToday.clockOut} · ${(mins/60).toFixed(1)} hrs`;
+    ctaLabel = null;
+  }
+
+  const roleName = roleLabel(me.systemRole);
+
+  return `
+    <!-- Hero + clock -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div class="md:col-span-2 bg-white rounded-2xl shadow-card p-6 relative overflow-hidden">
+        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+        <div class="relative">
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${escapeHTML(roleName)}</div>
+          <h2 class="font-display text-3xl md:text-4xl font-semibold text-slate-900 mt-2 leading-tight">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName)}.</h2>
+          <p class="text-slate-500 mt-2 max-w-md">Track your day, request time off, and check your payroll.</p>
+          ${ctaLabel ? `<a href="#/attendance" class="btn btn-primary shadow-card hover:shadow-pop mt-4 inline-flex">${icon('clock','w-4 h-4')} ${escapeHTML(ctaLabel)}</a>` : ''}
+        </div>
+      </div>
+      <div class="clock-tile rounded-2xl shadow-card p-6 flex flex-col justify-center relative">
+        <div class="relative z-10">
+          <div class="text-white/70 text-[11px] uppercase tracking-[0.2em] font-semibold">${escapeHTML(t('today'))}</div>
+          <div class="font-display text-5xl font-semibold mt-2 tabular-nums" id="dash-clock">${new Date().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}</div>
+          <div class="flex items-center gap-2 mt-4 text-white/85 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            ${sched.off ? 'Day off' : `Shift ${sched.start} – ${sched.end}`}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Today's status + week hours -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Today's status</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${escapeHTML(statusText)}</div>
+        <div class="text-sm text-slate-500 mt-1">${escapeHTML(statusSub)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">This week</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${weekHours} hrs</div>
+        <div class="text-sm text-slate-500 mt-1">${weekDays} day${weekDays===1?'':'s'} present</div>
+      </div>
+    </div>
+
+    <!-- Leave balance -->
+    <div class="grid grid-cols-3 gap-3 mb-6">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Annual leave</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${balances.annual||0}</div>
+        <div class="text-xs text-slate-500">days remaining</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Sick leave</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${balances.sick||0}</div>
+        <div class="text-xs text-slate-500">days remaining</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Personal leave</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${balances.personal||0}</div>
+        <div class="text-xs text-slate-500">days remaining</div>
+      </div>
+    </div>
+
+    <!-- Recent payslips + leave requests -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Recent payslips</div>
+            <div class="font-display text-lg font-semibold text-slate-900">Latest pay</div>
+          </div>
+          <a href="#/payroll" class="text-sm text-brand-700 hover:underline">View all &rarr;</a>
+        </div>
+        ${myPayroll.length === 0 ? `
+          <div class="text-sm text-slate-500 text-center py-6">No payslips yet.</div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${myPayroll.map(p => `
+              <div class="px-1 py-3 flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon('wallet','w-4 h-4')}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium text-slate-900 truncate">${escapeHTML(p.period||'')}</div>
+                  <div class="text-xs text-slate-500 truncate">${escapeHTML((p.status||'').toString().toUpperCase())}${p.paidAt?' &middot; paid '+escapeHTML(fmtDate(p.paidAt)):''}</div>
+                </div>
+                <div class="font-semibold text-slate-900 shrink-0">${fmtMoney(p.net)}</div>
+              </div>`).join('')}
+          </div>
+        `}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Leave requests</div>
+            <div class="font-display text-lg font-semibold text-slate-900">My recent leave</div>
+          </div>
+          <a href="#/leave" class="text-sm text-brand-700 hover:underline">${myLeave.length ? 'View all &rarr;' : escapeHTML(t('request_leave'))}</a>
+        </div>
+        ${myLeave.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-2">${icon('calendar','w-6 h-6')}</div>
+            <div class="text-sm text-slate-600">No leave requests on record.</div>
+            <a href="#/leave" class="btn btn-primary btn-sm mt-3 inline-flex">${icon('plus','w-4 h-4')} ${escapeHTML(t('request_leave'))}</a>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${myLeave.map(r => {
+              const pillClass = r.status==='approved' ? 'bg-emerald-50 text-emerald-700'
+                              : r.status==='rejected' ? 'bg-rose-50 text-rose-700'
+                              : 'bg-amber-50 text-amber-700';
+              return `
+                <div class="px-1 py-3 flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon('calendar','w-4 h-4')}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-medium text-slate-900 truncate">${escapeHTML((r.type||'leave').toString().replace(/_/g,' '))} &middot; ${r.days||0} day${(r.days||0)===1?'':'s'}</div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML(fmtDate(r.startDate||''))}${r.endDate && r.endDate !== r.startDate ? ' – '+escapeHTML(fmtDate(r.endDate)):''}</div>
+                  </div>
+                  <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-1 rounded-full ${pillClass}">${escapeHTML(t(r.status||'pending'))}</span>
                 </div>`;
             }).join('')}
           </div>
