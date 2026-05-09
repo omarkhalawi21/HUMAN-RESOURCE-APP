@@ -196,6 +196,8 @@ const ICONS = {
   upload:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
   star:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
   receipt:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 1 2V2l-1 2-3-2-3 2-3-2-3 2-3-2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>`,
+  box:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`,
+  minus:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
 };
 
 const icon = (name, className='w-5 h-5') => `<span class="inline-block ${className}">${ICONS[name]||''}</span>`;
@@ -258,6 +260,7 @@ const I18N = {
     certificates: "Certificates",
     archive: "Archive",
     receipts: "Receipts",
+    inventory: "Inventory",
     documents: "Documents",
     iqama: "IQAMA",
     baladiya: "Baladiya",
@@ -331,6 +334,7 @@ const I18N = {
     certificates: "الشهادات",
     archive: "الأرشيف",
     receipts: "الإيصالات",
+    inventory: "المخزون",
     documents: "المستندات",
     iqama: "الإقامة",
     baladiya: "البلدية",
@@ -381,6 +385,7 @@ function emptyState() {
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
+    inventory: [],      // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, branch, notes, createdBy, createdAt, updatedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
   };
@@ -776,6 +781,37 @@ function receiptToDb(r) {
     uploaded_by: r.uploadedBy || null,
   };
 }
+function mapInventoryItemFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    sku: r.sku || '',
+    category: r.category || 'other',
+    unit: r.unit || 'units',
+    quantity: Number(r.quantity) || 0,
+    reorderThreshold: Number(r.reorder_threshold) || 0,
+    supplier: r.supplier || '',
+    branch: r.branch || '',
+    notes: r.notes || '',
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+function inventoryItemToDb(i) {
+  return {
+    name: i.name,
+    sku: i.sku || null,
+    category: i.category || null,
+    unit: i.unit || 'units',
+    quantity: Number(i.quantity) || 0,
+    reorder_threshold: Number(i.reorderThreshold) || 0,
+    supplier: i.supplier || null,
+    branch: i.branch || null,
+    notes: i.notes || null,
+    created_by: i.createdBy || null,
+  };
+}
 function mapExtrasFromDb(r) {
   const x = {
     schedule: r.schedule || defaultSchedule(),
@@ -814,7 +850,7 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, extrasR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, extrasR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
@@ -826,6 +862,9 @@ async function loadAll() {
       sb.from('certificates').select('*').order('issued_at', { ascending: false }),
       sb.from('archive_documents').select('*').order('uploaded_at', { ascending: false }),
       sb.from('receipts').select('*').order('receipt_date', { ascending: false }),
+      // Inventory: SELECT is RLS-restricted to admin/inventory; for other
+      // roles the call returns an empty array, which is what we want.
+      sb.from('inventory_items').select('*').order('name'),
       sb.from('employee_extras').select('*'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
@@ -862,6 +901,7 @@ async function loadAll() {
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
+    state.inventory    = (inventoryR.data    || []).map(mapInventoryItemFromDb);
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -883,7 +923,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts','inventory_items'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -1001,7 +1041,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'reports', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'reports', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1282,6 +1322,7 @@ function renderShell(routeContent) {
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
+    { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','inventory'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
@@ -6560,12 +6601,13 @@ function renderRoleDashboard() {
   const role = currentRole();
   if (role === 'accounting')  return renderAccountingDashboard();
   if (role === 'operations')  return renderOperationsDashboard();
+  if (role === 'inventory')   return renderInventoryDashboard();
   // Personal-view roles share one focused employee dashboard. Each
   // can get a more specialised view in a follow-up PR.
   if (role === 'barista' || role === 'head_barista' || role === 'maintenance' || role === 'employee') {
     return renderBaristaDashboard();
   }
-  // admin, hr, inventory still use the existing HR dashboard.
+  // admin and hr still use the existing HR dashboard.
   return renderDashboard();
 }
 
@@ -6888,6 +6930,423 @@ function renderOperationsDashboard() {
                   <div class="flex-1 min-w-0">
                     <div class="font-medium text-slate-900 truncate">${escapeHTML(((emp.firstName||'')+' '+(emp.lastName||'')).trim())}</div>
                     <div class="text-xs text-slate-500 truncate">${escapeHTML((r.type||'leave').toString().replace(/_/g,' '))} &middot; ${r.days||0} day${(r.days||0)===1?'':'s'} from ${escapeHTML(fmtDate(r.startDate||''))}</div>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+/* -------------------- INVENTORY (admin or inventory) -------------------- */
+const INVENTORY_CATEGORIES = {
+  beans_raw:    { label: 'Coffee — Green Beans', icon: 'cash' },
+  beans_roast:  { label: 'Coffee — Roasted',     icon: 'cash' },
+  milk_dairy:   { label: 'Milk & Dairy',         icon: 'inbox' },
+  syrups:       { label: 'Syrups & Flavoring',   icon: 'inbox' },
+  cups_lids:    { label: 'Cups & Lids',          icon: 'archive' },
+  packaging:    { label: 'Packaging',            icon: 'box' },
+  cleaning:     { label: 'Cleaning Supplies',    icon: 'archive' },
+  parts:        { label: 'Equipment Parts',      icon: 'settings' },
+  office:       { label: 'Office',               icon: 'file' },
+  other:        { label: 'Other',                icon: 'box' },
+};
+const INVENTORY_UNITS = ['units','kg','g','L','mL','box','pack','bag'];
+
+let inventoryFilter = { category:'all', q:'', lowStock:false };
+let _inventoryFilterTimer = null;
+
+function setInventoryFilter(updates) {
+  Object.assign(inventoryFilter, updates);
+  if ('q' in updates) {
+    clearTimeout(_inventoryFilterTimer);
+    _inventoryFilterTimer = setTimeout(() => {
+      render();
+      const inp = document.getElementById('inv-q');
+      if (inp) { inp.focus(); const v = inp.value; inp.setSelectionRange(v.length, v.length); }
+    }, 200);
+    return;
+  }
+  render();
+}
+function clearInventoryFilter() {
+  inventoryFilter = { category:'all', q:'', lowStock:false };
+  render();
+}
+function isLowStock(item) {
+  return Number(item.reorderThreshold) > 0 && Number(item.quantity) <= Number(item.reorderThreshold);
+}
+function getInventoryFiltered() {
+  const f = inventoryFilter;
+  const q = (f.q||'').trim().toLowerCase();
+  return (state.inventory || []).filter(it => {
+    if (f.category && f.category !== 'all' && it.category !== f.category) return false;
+    if (f.lowStock && !isLowStock(it)) return false;
+    if (q) {
+      const hay = `${it.name} ${it.sku||''} ${it.supplier||''} ${it.notes||''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderInventory() {
+  const all = (state.inventory || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const filtered = getInventoryFiltered();
+  const f = inventoryFilter;
+  const lowCount = all.filter(isLowStock).length;
+  const totalQty = all.reduce((s,i) => s + (Number(i.quantity)||0), 0);
+  const hasFilter = (f.category && f.category !== 'all') || !!f.q || !!f.lowStock;
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Inventory</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('inventory'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Track stock on hand: beans, milk, cups, supplies. Items at or below their reorder threshold are flagged.</p>
+        </div>
+        <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add item</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total items</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${all.length}</div>
+        <div class="text-xs text-slate-500 mt-1">SKUs in stock</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Low stock</div>
+        <div class="font-display text-2xl font-semibold ${lowCount>0?'text-rose-600':'text-slate-900'} mt-1">${lowCount}</div>
+        <div class="text-xs text-slate-500 mt-1">${lowCount>0?'need restock':'all healthy'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total quantity</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${Number(totalQty).toLocaleString(undefined,{maximumFractionDigits:1})}</div>
+        <div class="text-xs text-slate-500 mt-1">across all items</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Categories</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${new Set(all.map(i=>i.category||'other')).size}</div>
+        <div class="text-xs text-slate-500 mt-1">in use</div>
+      </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-5">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div>
+          <label class="label">Search</label>
+          <input id="inv-q" type="text" class="input" placeholder="name, SKU, supplier..." value="${escapeHTML(f.q||'')}" oninput="setInventoryFilter({q:this.value})">
+        </div>
+        <div>
+          <label class="label">Category</label>
+          <select class="input" onchange="setInventoryFilter({category:this.value})">
+            <option value="all">All categories</option>
+            ${Object.entries(INVENTORY_CATEGORIES).map(([k,c]) => `<option value="${k}" ${f.category===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="flex items-end gap-2">
+          <label class="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input type="checkbox" class="w-4 h-4" ${f.lowStock?'checked':''} onchange="setInventoryFilter({lowStock:this.checked})">
+            Low stock only
+          </label>
+          ${hasFilter ? `<button onclick="clearInventoryFilter()" class="btn btn-ghost btn-sm ml-auto">${icon('close','w-3.5 h-3.5')} Clear</button>` : ''}
+        </div>
+      </div>
+    </div>
+
+    ${filtered.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('box','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">No items ${hasFilter?'match this filter':'yet'}</h3>
+        <p class="text-sm text-slate-500 mt-1">${hasFilter?'Try clearing the filter or adjusting search.':'Add your first inventory item to start tracking stock.'}</p>
+        ${hasFilter
+          ? `<button onclick="clearInventoryFilter()" class="btn btn-ghost mt-4">Clear filters</button>`
+          : `<button onclick="openInventoryItemModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add item</button>`}
+      </div>
+    ` : `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+          <div class="text-sm text-slate-600">${filtered.length} item${filtered.length===1?'':'s'}${hasFilter?' in filter':''}</div>
+        </div>
+        <div class="divide-y divide-slate-100">
+          ${filtered.map(it => {
+            const cat = INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other;
+            const low = isLowStock(it);
+            return `
+              <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
+                <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'—')}</span>
+                    ${it.sku ? `<span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(it.sku)}</span>` : ''}
+                    ${low ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Low</span>` : ''}
+                  </div>
+                  <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.supplier?' &middot; '+escapeHTML(it.supplier):''}${it.branch?' &middot; '+escapeHTML(it.branch):''}</div>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                  <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
+                  <div class="text-right min-w-[80px] tabular-nums">
+                    <div class="font-semibold ${low?'text-rose-600':'text-slate-900'}">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
+                    ${Number(it.reorderThreshold) > 0 ? `<div class="text-[10px] text-slate-400">reorder &le; ${Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2})}</div>` : ''}
+                  </div>
+                  <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
+                </div>
+                <div class="flex gap-1 shrink-0">
+                  <button onclick="openInventoryItemModal('${it.id}')" title="Edit" aria-label="Edit item" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                  <button onclick="deleteInventoryItem('${it.id}')" title="Delete" aria-label="Delete item" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `}
+  `;
+}
+
+function openInventoryItemModal(id) {
+  const editing = id ? (state.inventory||[]).find(i => i.id === id) : null;
+  const form = `
+    <div class="space-y-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2">
+          <label class="label">Item name</label>
+          <input id="inv-name" class="input" placeholder="e.g. House Espresso Beans" value="${escapeHTML(editing?.name||'')}">
+        </div>
+        <div>
+          <label class="label">SKU (optional)</label>
+          <input id="inv-sku" class="input" placeholder="e.g. BEAN-ESP-001" value="${escapeHTML(editing?.sku||'')}">
+        </div>
+        <div>
+          <label class="label">Category</label>
+          <select id="inv-cat" class="input">
+            ${Object.entries(INVENTORY_CATEGORIES).map(([k,c]) => `<option value="${k}" ${(editing?.category||'other')===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Unit</label>
+          <select id="inv-unit" class="input">
+            ${INVENTORY_UNITS.map(u => `<option value="${u}" ${(editing?.unit||'units')===u?'selected':''}>${escapeHTML(u)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Quantity on hand</label>
+          <input id="inv-qty" type="number" min="0" step="0.01" class="input" value="${editing?.quantity ?? 0}">
+        </div>
+        <div>
+          <label class="label">Reorder threshold</label>
+          <input id="inv-thr" type="number" min="0" step="0.01" class="input" value="${editing?.reorderThreshold ?? 0}">
+          <div class="text-[10px] text-slate-500 mt-1">Item is flagged "Low" when qty &le; this. Use 0 to disable.</div>
+        </div>
+        <div>
+          <label class="label">Supplier (optional)</label>
+          <input id="inv-sup" class="input" placeholder="e.g. Hassad Roastery" value="${escapeHTML(editing?.supplier||'')}">
+        </div>
+        <div>
+          <label class="label">Branch (optional)</label>
+          <input id="inv-br" class="input" placeholder="leave blank for shared stock" value="${escapeHTML(editing?.branch||'')}">
+        </div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="inv-notes" class="input" rows="2" placeholder="storage location, lot number, etc.">${escapeHTML(editing?.notes||'')}</textarea>
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit item' : 'Add item', form, async () => {
+    const me = currentEmployee();
+    const name = $('#inv-name').value.trim();
+    if (!name) { toast('Item name is required', 'error'); return false; }
+    const data = {
+      name,
+      sku:              $('#inv-sku').value.trim(),
+      category:         $('#inv-cat').value,
+      unit:             $('#inv-unit').value,
+      quantity:         parseFloat($('#inv-qty').value) || 0,
+      reorderThreshold: parseFloat($('#inv-thr').value) || 0,
+      supplier:         $('#inv-sup').value.trim(),
+      branch:           $('#inv-br').value.trim(),
+      notes:            $('#inv-notes').value.trim(),
+      createdBy:        editing?.createdBy || me?.id,
+    };
+    const dbRow = inventoryItemToDb(data);
+    if (editing) {
+      const { data: row, error } = await sb.from('inventory_items').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapInventoryItemFromDb(row));
+      toast('Item updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('inventory_items').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.inventory.push(mapInventoryItemFromDb(row));
+      toast('Item added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add item' });
+}
+
+async function adjustInventoryQuantity(id, delta) {
+  const it = (state.inventory||[]).find(i => i.id === id);
+  if (!it) return;
+  const newQty = Math.max(0, Number(it.quantity) + Number(delta));
+  if (newQty === Number(it.quantity)) return;
+  const { data, error } = await sb.from('inventory_items').update({ quantity: newQty }).eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(it, mapInventoryItemFromDb(data));
+  render();
+}
+
+async function deleteInventoryItem(id) {
+  const it = (state.inventory||[]).find(i => i.id === id);
+  if (!it) return;
+  if (!confirm(`Delete "${it.name}" from inventory? This cannot be undone.`)) return;
+  const { error } = await sb.from('inventory_items').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.inventory = state.inventory.filter(i => i.id !== id);
+  render();
+  toast('Item deleted', 'success');
+}
+
+function renderInventoryDashboard() {
+  const me = currentEmployee();
+  if (!me) return renderDashboard();
+
+  const all = (state.inventory||[]).slice();
+  const lowItems = all.filter(isLowStock).sort((a,b) => {
+    // Most urgent first: lowest qty/threshold ratio
+    const ra = a.reorderThreshold > 0 ? a.quantity / a.reorderThreshold : 1;
+    const rb = b.reorderThreshold > 0 ? b.quantity / b.reorderThreshold : 1;
+    return ra - rb;
+  });
+
+  // Top categories by item count
+  const catCounts = {};
+  all.forEach(i => {
+    const k = i.category || 'other';
+    catCounts[k] = (catCounts[k] || 0) + 1;
+  });
+  const topCats = Object.entries(catCounts).sort((a,b) => b[1] - a[1]).slice(0, 5);
+  const topMax = topCats.length ? topCats[0][1] : 0;
+
+  // Recently updated
+  const recent = all.slice().sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||'')).slice(0, 5);
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Inventory</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Stock at a glance &mdash; what's running low and what was last touched.</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="location.hash='#/inventory'" class="btn btn-ghost">${icon('archive','w-4 h-4')} View all stock</button>
+          <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add item</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Low stock alert -->
+    ${lowItems.length > 0 ? `
+      <div class="bg-rose-50 border border-rose-200 rounded-2xl p-5 mb-5 flex items-start gap-4">
+        <div class="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-rose-900">${lowItems.length} item${lowItems.length===1?'':'s'} at or below the reorder threshold</div>
+          <div class="text-sm text-rose-800 mt-1">${escapeHTML(lowItems.slice(0,3).map(i => i.name).join(', '))}${lowItems.length>3?` and ${lowItems.length-3} more`:''}.</div>
+          <button onclick="inventoryFilter={category:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="btn btn-primary btn-sm mt-3">${icon('eye','w-4 h-4')} Review low stock</button>
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Stat cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total items</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${all.length}</div>
+        <div class="text-xs text-slate-500 mt-1">SKUs tracked</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Low stock</div>
+        <div class="font-display text-2xl font-semibold ${lowItems.length>0?'text-rose-600':'text-slate-900'} mt-1">${lowItems.length}</div>
+        <div class="text-xs text-slate-500 mt-1">${lowItems.length>0?'need restock':'all healthy'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Categories</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${topCats.length}</div>
+        <div class="text-xs text-slate-500 mt-1">in use</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Suppliers</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${new Set(all.map(i => (i.supplier||'').trim().toLowerCase()).filter(Boolean)).size}</div>
+        <div class="text-xs text-slate-500 mt-1">distinct</div>
+      </div>
+    </div>
+
+    <!-- Top categories + Recent updates -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Top categories</div>
+        <div class="font-display text-lg font-semibold text-slate-900 mb-4">By item count</div>
+        ${topCats.length === 0 ? `<div class="text-sm text-slate-500 text-center py-6">No items yet.</div>` : `
+        <div class="space-y-3">
+          ${topCats.map(([k, n]) => {
+            const cat = INVENTORY_CATEGORIES[k] || INVENTORY_CATEGORIES.other;
+            const pct = topMax > 0 ? Math.round(n/topMax*100) : 0;
+            return `
+              <div>
+                <div class="flex items-center justify-between text-sm mb-1">
+                  <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-4 h-4')}</div>
+                    <span class="font-medium text-slate-900">${escapeHTML(cat.label)}</span>
+                  </div>
+                  <span class="font-semibold text-slate-900">${n} item${n===1?'':'s'}</span>
+                </div>
+                <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div class="h-full bg-brand-500" style="width:${pct}%"></div>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>`}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Recently updated</div>
+            <div class="font-display text-lg font-semibold text-slate-900">Latest movements</div>
+          </div>
+          ${all.length > 5 ? `<a href="#/inventory" class="text-sm text-brand-700 hover:underline">View all &rarr;</a>` : ''}
+        </div>
+        ${recent.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-2">${icon('box','w-6 h-6')}</div>
+            <div class="text-sm text-slate-600">No items yet.</div>
+            <button onclick="openInventoryItemModal()" class="btn btn-primary btn-sm mt-3">${icon('plus','w-4 h-4')} Add your first item</button>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${recent.map(it => {
+              const cat = INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other;
+              const low = isLowStock(it);
+              return `
+                <div class="px-1 py-3 flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-4 h-4')}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'')}</div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.updatedAt?' &middot; '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>
+                  </div>
+                  <div class="text-right shrink-0">
+                    <div class="font-semibold ${low?'text-rose-600':'text-slate-900'} tabular-nums">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
                   </div>
                 </div>`;
             }).join('')}
@@ -7719,6 +8178,7 @@ function render() {
     case 'documents':    content = renderDocuments(); break;
     case 'archive':      content = renderArchive(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
+    case 'inventory':    content = hasRole('admin','inventory') ? renderInventory() : renderRoleDashboard(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
