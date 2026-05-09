@@ -195,6 +195,7 @@ const ICONS = {
   file:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
   upload:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
   star:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+  receipt:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 1 2V2l-1 2-3-2-3 2-3-2-3 2-3-2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>`,
 };
 
 const icon = (name, className='w-5 h-5') => `<span class="inline-block ${className}">${ICONS[name]||''}</span>`;
@@ -256,6 +257,7 @@ const I18N = {
     advances: "Salary Advances",
     certificates: "Certificates",
     archive: "Archive",
+    receipts: "Receipts",
     documents: "Documents",
     iqama: "IQAMA",
     baladiya: "Baladiya",
@@ -328,6 +330,7 @@ const I18N = {
     advances: "سُلف الرواتب",
     certificates: "الشهادات",
     archive: "الأرشيف",
+    receipts: "الإيصالات",
     documents: "المستندات",
     iqama: "الإقامة",
     baladiya: "البلدية",
@@ -377,6 +380,7 @@ function emptyState() {
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
+    receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
   };
@@ -722,6 +726,36 @@ function archiveToDb(d) {
     description: d.description||null, uploaded_by: d.uploadedBy||null,
   };
 }
+function mapReceiptFromDb(r) {
+  return {
+    id: r.id,
+    vendor: r.vendor || '',
+    receiptDate: r.receipt_date || '',
+    amount: Number(r.amount) || 0,
+    currency: r.currency || '',
+    category: r.category || 'other',
+    notes: r.notes || '',
+    mime: r.mime || '',
+    size: Number(r.size) || 0,
+    dataUrl: r.data_url || '',
+    uploadedBy: r.uploaded_by,
+    uploadedAt: r.uploaded_at,
+  };
+}
+function receiptToDb(r) {
+  return {
+    vendor: r.vendor,
+    receipt_date: r.receiptDate,
+    amount: Number(r.amount) || 0,
+    currency: r.currency || null,
+    category: r.category || null,
+    notes: r.notes || null,
+    mime: r.mime || null,
+    size: Number(r.size) || 0,
+    data_url: r.dataUrl || null,
+    uploaded_by: r.uploadedBy || null,
+  };
+}
 function mapExtrasFromDb(r) {
   const x = {
     schedule: r.schedule || defaultSchedule(),
@@ -760,7 +794,7 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, extrasR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, extrasR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
@@ -771,6 +805,7 @@ async function loadAll() {
       sb.from('advances').select('*').order('requested_at', { ascending: false }),
       sb.from('certificates').select('*').order('issued_at', { ascending: false }),
       sb.from('archive_documents').select('*').order('uploaded_at', { ascending: false }),
+      sb.from('receipts').select('*').order('receipt_date', { ascending: false }),
       sb.from('employee_extras').select('*'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
@@ -806,6 +841,7 @@ async function loadAll() {
     state.advances     = (advancesR.data     || []).map(mapAdvanceFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
+    state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -827,7 +863,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -930,7 +966,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'reports', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'reports', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1210,6 +1246,7 @@ function renderShell(routeContent) {
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
+    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:admin, group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:admin, group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:admin, group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
@@ -6185,6 +6222,269 @@ async function deleteArchiveDoc(id) {
   toast('Document deleted', 'success');
 }
 
+/* -------------------- RECEIPTS (accounting) -------------------- */
+let receiptsFilter = 'all'; // 'all' | category key | 'YYYY-MM'
+let _receiptFile = null;
+
+const RECEIPT_CATEGORIES = {
+  coffee_beans:  { label: 'Coffee Beans',     icon: 'cash' },
+  food_beverage: { label: 'Food & Beverages', icon: 'inbox' },
+  equipment:     { label: 'Equipment',        icon: 'building' },
+  supplies:      { label: 'Supplies',         icon: 'archive' },
+  utilities:     { label: 'Utilities',        icon: 'wallet' },
+  maintenance:   { label: 'Maintenance',      icon: 'settings' },
+  rent:          { label: 'Rent',             icon: 'building' },
+  transport:     { label: 'Transport / Fuel', icon: 'pin' },
+  office:        { label: 'Office',           icon: 'file' },
+  other:         { label: 'Other',            icon: 'receipt' },
+};
+
+const RECEIPT_ALLOWED_MIMES = new Set([
+  'image/png','image/jpeg','image/gif','image/webp','application/pdf',
+]);
+function isAllowedReceiptMime(m) { return RECEIPT_ALLOWED_MIMES.has((m||'').toLowerCase()); }
+function safeReceiptDataUrl(r) {
+  const url = String(r.dataUrl || '');
+  if (!/^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i.test(url)) return '';
+  if (!isAllowedReceiptMime(r.mime)) return '';
+  return url;
+}
+function monthLabel(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym||'')) return ym || '';
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString(state.settings.lang==='ar'?'ar':undefined, { year:'numeric', month:'long' });
+}
+
+function renderReceipts() {
+  const all = (state.receipts || []).slice().sort((a,b) =>
+    (b.receiptDate||'').localeCompare(a.receiptDate||'') ||
+    (b.uploadedAt||'').localeCompare(a.uploadedAt||'')
+  );
+  const months = Array.from(new Set(all.map(r => (r.receiptDate||'').slice(0,7)).filter(Boolean))).sort().reverse();
+
+  let filtered = all;
+  if (receiptsFilter && receiptsFilter !== 'all') {
+    if (/^\d{4}-\d{2}$/.test(receiptsFilter)) {
+      filtered = all.filter(r => (r.receiptDate||'').slice(0,7) === receiptsFilter);
+    } else {
+      filtered = all.filter(r => r.category === receiptsFilter);
+    }
+  }
+
+  const monthlyTotals = {};
+  all.forEach(r => {
+    const m = (r.receiptDate||'').slice(0,7);
+    if (!m) return;
+    monthlyTotals[m] = (monthlyTotals[m] || 0) + (Number(r.amount) || 0);
+  });
+
+  const byDay = {};
+  filtered.forEach(r => {
+    const d = r.receiptDate || 'Unknown';
+    (byDay[d] = byDay[d] || []).push(r);
+  });
+  const days = Object.keys(byDay).sort().reverse();
+  const grandTotal = filtered.reduce((s,r) => s + (Number(r.amount) || 0), 0);
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('receipt','w-3.5 h-3.5')} Accounting</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('receipts'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Snap or upload paper receipts. Each one is stored digitally with vendor, date, amount, and category &mdash; grouped by day and totalled per month.</p>
+        </div>
+        <button onclick="openReceiptModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add receipt</button>
+      </div>
+    </div>
+
+    ${months.length > 0 ? `
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        ${months.slice(0, 4).map(m => {
+          const count = all.filter(r=>(r.receiptDate||'').slice(0,7)===m).length;
+          return `
+            <button onclick="receiptsFilter='${m}'; render();" class="text-left bg-white rounded-2xl shadow-card p-4 hover:shadow-pop transition-all ${receiptsFilter===m?'ring-2 ring-brand-500':''}">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(monthLabel(m))}</div>
+              <div class="font-display text-xl font-semibold text-slate-900 mt-1">${fmtMoney(monthlyTotals[m]||0)}</div>
+              <div class="text-xs text-slate-500 mt-1">${count} receipt${count===1?'':'s'}</div>
+            </button>`;
+        }).join('')}
+      </div>
+    ` : ''}
+
+    <div class="flex flex-wrap gap-2 mb-5">
+      <button onclick="receiptsFilter='all'; render();" class="btn btn-sm ${receiptsFilter==='all'?'btn-primary':'btn-ghost'}">All <span class="ml-1 opacity-70">${all.length}</span></button>
+      ${Object.entries(RECEIPT_CATEGORIES).map(([k,c]) => {
+        const n = all.filter(r=>r.category===k).length;
+        if (n === 0) return '';
+        return `<button onclick="receiptsFilter='${k}'; render();" class="btn btn-sm ${receiptsFilter===k?'btn-primary':'btn-ghost'}">${escapeHTML(c.label)} <span class="ml-1 opacity-70">${n}</span></button>`;
+      }).join('')}
+    </div>
+
+    ${filtered.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('receipt','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">No receipts ${receiptsFilter==='all'?'yet':'in this view'}</h3>
+        <p class="text-sm text-slate-500 mt-1">${receiptsFilter==='all' ? 'Add your first receipt &mdash; snap a photo or upload an image/PDF.' : 'Try a different filter, or clear it to see everything.'}</p>
+        ${receiptsFilter==='all'
+          ? `<button onclick="openReceiptModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add receipt</button>`
+          : `<button onclick="receiptsFilter='all'; render();" class="btn btn-ghost mt-4">Clear filter</button>`}
+      </div>
+    ` : `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+          <div class="text-sm text-slate-600">${filtered.length} receipt${filtered.length===1?'':'s'}${receiptsFilter!=='all'?' in filter':''}</div>
+          <div class="text-sm font-semibold text-slate-900">Total: ${fmtMoney(grandTotal)}</div>
+        </div>
+        <div class="divide-y divide-slate-100">
+          ${days.map(day => {
+            const list = byDay[day];
+            const dayTotal = list.reduce((s,r) => s + (Number(r.amount)||0), 0);
+            return `
+              <div>
+                <div class="px-5 py-2 bg-slate-50 flex items-center justify-between">
+                  <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(fmtDate(day))}</div>
+                  <div class="text-xs text-slate-600 font-semibold">${fmtMoney(dayTotal)} &middot; ${list.length} item${list.length===1?'':'s'}</div>
+                </div>
+                ${list.map(r => {
+                  const cat = RECEIPT_CATEGORIES[r.category] || RECEIPT_CATEGORIES.other;
+                  const uploader = getEmployee(r.uploadedBy);
+                  return `
+                    <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
+                      <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
+                      <div class="flex-1 min-w-0">
+                        <div class="font-medium text-slate-900 truncate" title="${escapeHTML(r.vendor)}">${escapeHTML(r.vendor)}</div>
+                        <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${r.notes?' &middot; '+escapeHTML(r.notes):''}${uploader?' &middot; by '+escapeHTML(uploader.firstName||''):''}</div>
+                      </div>
+                      <div class="text-right shrink-0">
+                        <div class="font-semibold text-slate-900">${fmtMoney(r.amount)}</div>
+                      </div>
+                      <div class="flex gap-1 shrink-0">
+                        ${r.dataUrl ? `<button onclick="previewReceipt('${r.id}')" title="View" aria-label="View receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>` : ''}
+                        <button onclick="deleteReceipt('${r.id}')" title="Delete" aria-label="Delete receipt" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                      </div>
+                    </div>`;
+                }).join('')}
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `}
+  `;
+}
+
+function openReceiptModal() {
+  _receiptFile = null;
+  const today = new Date().toISOString().slice(0,10);
+  const cur = state.settings.currency || 'SAR';
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Receipt photo / scan</label>
+        <input id="rc-file" type="file" class="input" accept="image/*,application/pdf" capture="environment" onchange="handleReceiptFile(event)">
+        <div class="text-xs text-slate-500 mt-1">Max 5MB. Image (PNG/JPG/WebP) or PDF. On phones, the camera will open.</div>
+        <div id="rc-preview" class="mt-2"></div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Vendor / Supplier</label>
+          <input id="rc-vendor" class="input" placeholder="e.g. Tamimi Markets">
+        </div>
+        <div>
+          <label class="label">Date</label>
+          <input id="rc-date" type="date" class="input" value="${today}">
+        </div>
+        <div>
+          <label class="label">Amount (${escapeHTML(cur)})</label>
+          <input id="rc-amount" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+        </div>
+        <div>
+          <label class="label">Category</label>
+          <select id="rc-cat" class="input">
+            ${Object.entries(RECEIPT_CATEGORIES).map(([k,c]) => `<option value="${k}">${escapeHTML(c.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="rc-notes" class="input" rows="2" placeholder="e.g. weekly bean restock, invoice #..."></textarea>
+      </div>
+    </div>
+  `;
+  openModal('Add receipt', form, async () => {
+    const me = currentEmployee();
+    const vendor   = $('#rc-vendor').value.trim();
+    const date     = $('#rc-date').value;
+    const amount   = parseFloat($('#rc-amount').value);
+    const category = $('#rc-cat').value;
+    const notes    = $('#rc-notes').value.trim();
+    if (!vendor) { toast('Vendor is required', 'error'); return false; }
+    if (!date)   { toast('Date is required', 'error');   return false; }
+    if (isNaN(amount) || amount < 0) { toast('Amount must be a positive number', 'error'); return false; }
+    const payload = receiptToDb({
+      vendor, receiptDate: date, amount, category, notes,
+      currency: state.settings.currency || 'SAR',
+      mime: _receiptFile?.mime || null,
+      size: _receiptFile?.size || 0,
+      dataUrl: _receiptFile?.dataUrl || null,
+      uploadedBy: me?.id,
+    });
+    const { data, error } = await sb.from('receipts').insert(payload).select().single();
+    if (error) { toast(error.message, 'error'); return false; }
+    state.receipts.unshift(mapReceiptFromDb(data));
+    _receiptFile = null;
+    render();
+    toast('Receipt saved', 'success');
+    return true;
+  }, { saveLabel: 'Save receipt' });
+}
+
+function handleReceiptFile(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  if (file.size > 5*1024*1024) { toast('File too large (max 5MB)', 'error'); ev.target.value=''; return; }
+  if (!isAllowedReceiptMime(file.type)) {
+    toast('Unsupported file type. Use an image (PNG/JPG/WebP) or PDF.', 'error');
+    ev.target.value = ''; return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    _receiptFile = { name: file.name, mime: file.type, size: file.size, dataUrl: e.target.result };
+    const p = document.getElementById('rc-preview');
+    if (!p) return;
+    if (file.type.startsWith('image/')) {
+      p.innerHTML = `<img src="${e.target.result}" alt="Receipt preview" class="max-h-48 rounded-lg border border-slate-200" />`;
+    } else {
+      p.innerHTML = `<div class="text-sm text-slate-700">${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)</div>`;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function previewReceipt(id) {
+  const r = (state.receipts||[]).find(x => x.id === id);
+  if (!r) return;
+  const url = safeReceiptDataUrl(r);
+  if (!url) { toast('Cannot preview this receipt', 'error'); return; }
+  const w = window.open();
+  if (!w) { toast('Popup blocked', 'error'); return; }
+  if ((r.mime||'').startsWith('image/')) {
+    w.document.write(`<title>${escapeHTML(r.vendor)} &mdash; receipt</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${url}" alt="" style="max-width:100%;max-height:100vh" /></body>`);
+  } else {
+    w.location.href = url;
+  }
+}
+
+async function deleteReceipt(id) {
+  if (!confirm('Delete this receipt permanently?')) return;
+  const { error } = await sb.from('receipts').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.receipts = state.receipts.filter(r => r.id !== id);
+  render();
+  toast('Receipt deleted', 'success');
+}
+
 /* -------------------- MODAL SYSTEM -------------------- */
 let modalOnSave = null;
 let _modalPrevFocus = null;       // element to restore focus to on close
@@ -6248,6 +6548,7 @@ function closeModal() {
   // Reset transient form state so it can't bleed into the next modal.
   if (typeof _pendingPhoto !== 'undefined')  _pendingPhoto = null;
   if (typeof _archiveFile !== 'undefined')   _archiveFile = null;
+  if (typeof _receiptFile !== 'undefined')   _receiptFile = null;
   if (_modalTrapHandler) {
     document.removeEventListener('keydown', _modalTrapHandler);
     _modalTrapHandler = null;
@@ -6543,6 +6844,7 @@ function render() {
     case 'certificates': content = renderCertificates(); break;
     case 'documents':    content = renderDocuments(); break;
     case 'archive':      content = renderArchive(); break;
+    case 'receipts':     content = isAdmin() ? renderReceipts() : renderDashboard(); break;
     case 'reports':      content = isAdmin() ? renderReports() : renderDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderDashboard(); break;
     case 'help':         content = renderHelp(); break;

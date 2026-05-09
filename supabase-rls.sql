@@ -639,6 +639,55 @@ CREATE POLICY "employee_extras_delete_admin"
   ON public.employee_extras FOR DELETE TO authenticated USING (public.is_admin());
 
 -- =============================================================
+-- 12. RECEIPTS (accounting)
+--    Scanned/uploaded receipts for the accounting workflow.
+--    Image is stored as a base64 data URL (same pattern as
+--    archive_documents) so no Storage bucket is required.
+--    SELECT is admin-only because receipts contain financial
+--    info; this becomes admin-or-accounting once roles land.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.receipts (
+  id            uuid primary key default gen_random_uuid(),
+  vendor        text not null,
+  receipt_date  date not null default current_date,
+  amount        numeric(12,2) not null default 0,
+  currency      text,
+  category      text,
+  notes         text,
+  mime          text,
+  size          bigint,
+  data_url      text,
+  uploaded_by   uuid references public.employees(id),
+  uploaded_at   timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS receipts_date_idx ON public.receipts(receipt_date DESC);
+
+ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'receipts'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "receipts_select_admin"
+  ON public.receipts FOR SELECT TO authenticated USING (public.is_admin());
+CREATE POLICY "receipts_insert_admin"
+  ON public.receipts FOR INSERT TO authenticated WITH CHECK (public.is_admin());
+CREATE POLICY "receipts_update_admin"
+  ON public.receipts FOR UPDATE TO authenticated
+  USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "receipts_delete_admin"
+  ON public.receipts FOR DELETE TO authenticated USING (public.is_admin());
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
