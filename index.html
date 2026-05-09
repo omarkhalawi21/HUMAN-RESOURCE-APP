@@ -260,8 +260,10 @@ const I18N = {
     advances: "Salary Advances",
     certificates: "Certificates",
     archive: "Archive",
+    resources: "Resources",
     receipts: "Receipts",
     inventory: "Inventory",
+    roaster: "Roaster",
     maintenance: "Maintenance",
     documents: "Documents",
     iqama: "IQAMA",
@@ -335,8 +337,10 @@ const I18N = {
     advances: "سُلف الرواتب",
     certificates: "الشهادات",
     archive: "الأرشيف",
+    resources: "الموارد",
     receipts: "الإيصالات",
     inventory: "المخزون",
+    roaster: "محمصة",
     maintenance: "الصيانة",
     documents: "المستندات",
     iqama: "الإقامة",
@@ -614,6 +618,7 @@ const ROLES = {
   operations:   { label: 'Operations' },
   accounting:   { label: 'Accounting' },
   head_barista: { label: 'Head Barista' },
+  roaster:      { label: 'Roaster' },
   barista:      { label: 'Barista' },
   maintenance:  { label: 'Maintenance' },
   employee:     { label: 'Employee' },
@@ -1081,7 +1086,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'maintenance', 'reports', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'roaster', 'maintenance', 'reports', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1362,8 +1367,10 @@ function renderShell(routeContent) {
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
-    { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista'), group:'company' },
+    { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
+    { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
+    { key:'resources',    icon:'shield',    label:t('resources'),    show:true, group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
@@ -6233,6 +6240,8 @@ function renderArchive() {
     'warning_template':   { label: 'Warning Templates',   icon: 'warning', color: 'rose' },
     'certificate_template':{ label: 'Certificate Templates', icon: 'award',   color: 'amber' },
     'policy':             { label: 'Policies',             icon: 'shield',  color: 'blue' },
+    'sop':                { label: 'SOPs',                 icon: 'shield',  color: 'emerald' },
+    'company_resource':   { label: 'Company Resources',    icon: 'building',color: 'brand' },
     'contract':           { label: 'Contracts',            icon: 'file',    color: 'slate' },
     'training':           { label: 'Training Material',    icon: 'file',    color: 'emerald' },
     'other':              { label: 'Other',                icon: 'archive', color: 'slate' },
@@ -6311,6 +6320,8 @@ function openArchiveUploadModal() {
         <select id="ar-cat" class="input">
           <option value="warning_template">Warning Letter Template</option>
           <option value="certificate_template">Certificate Template</option>
+          <option value="sop">SOP</option>
+          <option value="company_resource">Company Resource</option>
           <option value="policy">Policy</option>
           <option value="contract">Contract / Employment doc</option>
           <option value="training">Training material</option>
@@ -6724,6 +6735,7 @@ function renderRoleDashboard() {
   if (role === 'operations')   return renderOperationsDashboard();
   if (role === 'maintenance')  return renderMaintenanceDashboard();
   if (role === 'head_barista') return renderHeadBaristaDashboard();
+  if (role === 'roaster')      return renderRoasterDashboard();
   // Personal-view roles share one focused employee dashboard.
   if (role === 'barista' || role === 'employee') {
     return renderBaristaDashboard();
@@ -7578,7 +7590,7 @@ function isLowStock(item) {
 function inventorySnapshotHTML() {
   const all = (state.inventory || []).slice();
   if (all.length === 0) {
-    const canAdd = hasRole('admin','head_barista');
+    const canAdd = hasRole('admin','head_barista','roaster');
     return `
       <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
         <div class="flex items-center justify-between gap-4 flex-wrap">
@@ -7882,6 +7894,252 @@ async function deleteInventoryItem(id) {
   state.inventory = state.inventory.filter(i => i.id !== id);
   render();
   toast('Item deleted', 'success');
+}
+
+/* -------------------- ROASTER (admin / head_barista / roaster) -------------------- */
+let roasterTab = 'green'; // 'green' | 'shelf' | 'weekly'
+function setRoasterTab(t) { roasterTab = t; render(); }
+
+function renderRoaster() {
+  const all = (state.inventory || []);
+  const green = all.filter(i => i.category === 'beans_raw');
+  const shelf = all.filter(i => i.category === 'beans_roast');
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+  const weekly = all
+    .filter(i => i.updatedAt && new Date(i.updatedAt) >= weekAgo)
+    .sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
+
+  const sumQty = list => list.reduce((s,i) => s + (Number(i.quantity)||0), 0);
+  const greenTotal = sumQty(green);
+  const shelfTotal = sumQty(shelf);
+  const greenLow   = green.filter(isLowStock).length;
+  const shelfLow   = shelf.filter(isLowStock).length;
+
+  let items = green;
+  if (roasterTab === 'shelf')  items = shelf;
+  if (roasterTab === 'weekly') items = weekly;
+
+  const tabBtn = (key, label, count) => `
+    <button onclick="setRoasterTab('${key}')" class="tab ${roasterTab===key?'active':''}">${escapeHTML(label)}<span class="ml-1.5 text-xs text-slate-400">${count}</span></button>`;
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Roaster</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('roaster'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Track green beans, the daily roasted shelf, and what's moved this week. Bean items are kept in the main inventory under <em>beans_raw</em> and <em>beans_roast</em>.</p>
+        </div>
+        <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Green beans on hand</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${Number(greenTotal).toLocaleString(undefined,{maximumFractionDigits:1})}</div>
+        <div class="text-xs text-slate-500 mt-1">${green.length} SKU${green.length===1?'':'s'}${greenLow?` &middot; <span class="text-rose-600 font-semibold">${greenLow} low</span>`:''}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">On the shelf (roasted)</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${Number(shelfTotal).toLocaleString(undefined,{maximumFractionDigits:1})}</div>
+        <div class="text-xs text-slate-500 mt-1">${shelf.length} SKU${shelf.length===1?'':'s'}${shelfLow?` &middot; <span class="text-rose-600 font-semibold">${shelfLow} low</span>`:''}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Updated this week</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${weekly.length}</div>
+        <div class="text-xs text-slate-500 mt-1">items moved in last 7d</div>
+      </div>
+    </div>
+
+    <div class="flex gap-1 border-b border-slate-200 mb-4">
+      ${tabBtn('green',  'Green beans',  green.length)}
+      ${tabBtn('shelf',  'Daily shelf',  shelf.length)}
+      ${tabBtn('weekly', 'This week',    weekly.length)}
+    </div>
+
+    ${items.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('cash','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">${
+          roasterTab==='green' ? 'No green beans tracked yet'
+          : roasterTab==='shelf' ? 'Nothing on the shelf yet'
+          : 'No movement in the last 7 days'
+        }</h3>
+        <p class="text-sm text-slate-500 mt-1">${
+          roasterTab==='weekly' ? 'Bean updates from the past week will show up here.'
+          : 'Add a bean item to start tracking. Pick the matching category from the dropdown.'
+        }</p>
+        ${roasterTab !== 'weekly' ? `<button onclick="openInventoryItemModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add bean</button>` : ''}
+      </div>
+    ` : `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="divide-y divide-slate-100">
+          ${items.map(it => {
+            const cat = INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other;
+            const low = isLowStock(it);
+            return `
+              <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
+                <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'—')}</span>
+                    ${it.sku ? `<span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(it.sku)}</span>` : ''}
+                    ${low ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Low</span>` : ''}
+                  </div>
+                  <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.supplier?' &middot; '+escapeHTML(it.supplier):''}${it.updatedAt?' &middot; updated '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                  <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
+                  <div class="text-right min-w-[80px] tabular-nums">
+                    <div class="font-semibold ${low?'text-rose-600':'text-slate-900'}">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
+                    ${Number(it.reorderThreshold) > 0 ? `<div class="text-[10px] text-slate-400">reorder &le; ${Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2})}</div>` : ''}
+                  </div>
+                  <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
+                </div>
+                <div class="flex gap-1 shrink-0">
+                  <button onclick="openInventoryItemModal('${it.id}')" title="Edit" aria-label="Edit item" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                  <button onclick="deleteInventoryItem('${it.id}')" title="Delete" aria-label="Delete item" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `}
+  `;
+}
+
+function renderRoasterDashboard() {
+  const me = currentEmployee();
+  if (!me) return renderDashboard();
+
+  const all = (state.inventory || []);
+  const green = all.filter(i => i.category === 'beans_raw');
+  const shelf = all.filter(i => i.category === 'beans_roast');
+  const beans = [...green, ...shelf];
+  const lowBeans = beans.filter(isLowStock).sort((a,b) => {
+    const ra = a.reorderThreshold > 0 ? a.quantity / a.reorderThreshold : 1;
+    const rb = b.reorderThreshold > 0 ? b.quantity / b.reorderThreshold : 1;
+    return ra - rb;
+  });
+
+  const sumQty = list => list.reduce((s,i) => s + (Number(i.quantity)||0), 0);
+  const greenTotal = sumQty(green);
+  const shelfTotal = sumQty(shelf);
+
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+  const recentUpdates = beans
+    .filter(i => i.updatedAt && new Date(i.updatedAt) >= weekAgo)
+    .sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''))
+    .slice(0, 5);
+
+  // Personal essentials
+  const today = todayISO();
+  const myAttendance = (state.attendance||[]).filter(a => a.employeeId === me.id);
+  const myToday = myAttendance.find(a => a.date === today);
+  const ex = getEmpExtras(me.id);
+  const todayDow = new Date().getDay();
+  const sched = (ex && ex.schedule && ex.schedule[todayDow]) || { off:false, start: state.settings.workStart||'09:00', end: state.settings.workEnd||'17:00' };
+
+  let statusText, statusSub, ctaLabel;
+  if (sched.off) { statusText = 'Day off'; statusSub = 'Enjoy your rest day.'; ctaLabel = null; }
+  else if (!myToday) { statusText = 'Not clocked in'; statusSub = `Shift ${sched.start} – ${sched.end}`; ctaLabel = t('clock_in'); }
+  else if (!myToday.clockOut) { statusText = 'On the floor'; statusSub = `Clocked in at ${myToday.clockIn || '—'}`; ctaLabel = t('clock_out'); }
+  else { const mins = diffMinutes(myToday.clockIn, myToday.clockOut); statusText = 'Done for today'; statusSub = `${myToday.clockIn} – ${myToday.clockOut} · ${(mins/60).toFixed(1)} hrs`; ctaLabel = null; }
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Roaster</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Your shift &mdash; plus the beans you're running today.</p>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          ${ctaLabel ? `<a href="#/attendance" class="btn btn-primary">${icon('clock','w-4 h-4')} ${escapeHTML(ctaLabel)}</a>` : ''}
+          <button onclick="location.hash='#/roaster'" class="btn btn-ghost">${icon('cash','w-4 h-4')} Open roaster</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Today</div>
+        <div class="font-display text-lg font-semibold text-slate-900 mt-1">${escapeHTML(statusText)}</div>
+        <div class="text-xs text-slate-500 mt-1">${escapeHTML(statusSub)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Green beans</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${Number(greenTotal).toLocaleString(undefined,{maximumFractionDigits:1})}</div>
+        <div class="text-xs text-slate-500 mt-1">${green.length} SKU${green.length===1?'':'s'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Roasted shelf</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${Number(shelfTotal).toLocaleString(undefined,{maximumFractionDigits:1})}</div>
+        <div class="text-xs text-slate-500 mt-1">${shelf.length} SKU${shelf.length===1?'':'s'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Bean low stock</div>
+        <div class="font-display text-2xl font-semibold ${lowBeans.length>0?'text-rose-600':'text-slate-900'} mt-1">${lowBeans.length}</div>
+        <div class="text-xs text-slate-500 mt-1">${lowBeans.length>0?'need restock':'all healthy'}</div>
+      </div>
+    </div>
+
+    ${lowBeans.length > 0 ? `
+      <div class="bg-rose-50 border border-rose-200 rounded-2xl p-5 mb-5 flex items-start gap-4">
+        <div class="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-rose-900">${lowBeans.length} bean SKU${lowBeans.length===1?'':'s'} at or below the reorder threshold</div>
+          <div class="text-sm text-rose-800 mt-1">${escapeHTML(lowBeans.slice(0,3).map(i=>i.name).join(', '))}${lowBeans.length>3?` and ${lowBeans.length-3} more`:''}.</div>
+          <button onclick="location.hash='#/roaster'" class="btn btn-primary btn-sm mt-3">${icon('eye','w-4 h-4')} Open roaster</button>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="bg-white rounded-2xl shadow-card p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Recent updates</div>
+          <div class="font-display text-lg font-semibold text-slate-900">Last 7 days</div>
+        </div>
+        <a href="#/roaster" class="text-sm text-brand-700 hover:underline">Open roaster &rarr;</a>
+      </div>
+      ${recentUpdates.length === 0 ? `
+        <div class="text-sm text-slate-500 text-center py-6">No bean movement in the last 7 days.</div>
+      ` : `
+        <div class="divide-y divide-slate-100 -mx-1">
+          ${recentUpdates.map(it => {
+            const cat = INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other;
+            const low = isLowStock(it);
+            return `
+              <div class="px-1 py-3 flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-4 h-4')}</div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'')}</div>
+                  <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.updatedAt?' &middot; '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>
+                </div>
+                <div class="font-semibold ${low?'text-rose-600':'text-slate-900'} tabular-nums shrink-0">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
+              </div>`;
+          }).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+/* -------------------- RESOURCES (SOPs & company resources) -------------------- */
+// Thin lens over the existing Archive page. First visit pre-filters
+// to SOPs so the user lands on what they came for; chips let them
+// flip to other categories without leaving the page.
+let _resourcesPrimed = false;
+function renderResources() {
+  if (!_resourcesPrimed && archiveFilter === 'all') {
+    archiveFilter = 'sop';
+    _resourcesPrimed = true;
+  }
+  return renderArchive();
 }
 
 function renderHeadBaristaDashboard() {
@@ -8897,8 +9155,10 @@ function render() {
     case 'documents':    content = renderDocuments(); break;
     case 'archive':      content = renderArchive(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
-    case 'inventory':    content = hasRole('admin','head_barista') ? renderInventory() : renderRoleDashboard(); break;
+    case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
+    case 'roaster':      content = hasRole('admin','head_barista','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
+    case 'resources':    content = renderResources(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
