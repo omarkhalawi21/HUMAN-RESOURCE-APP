@@ -977,6 +977,73 @@ CREATE POLICY "archive_delete_hr"
   USING (public.has_role(ARRAY['admin','hr']));
 
 -- =============================================================
+-- 16. INVENTORY (admin or inventory role)
+--    Tracks stock items: name, category, unit, quantity on hand,
+--    reorder threshold, supplier, optional branch, notes. Designed
+--    for a coffee roastery's daily ops (beans, milk, cups, etc.).
+--    SELECT is restricted (operational data) — admin or inventory only.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_items (
+  id                 uuid primary key default gen_random_uuid(),
+  name               text not null,
+  sku                text,
+  category           text,
+  unit               text default 'units',
+  quantity           numeric(12,2) not null default 0,
+  reorder_threshold  numeric(12,2) not null default 0,
+  supplier           text,
+  branch             text,
+  notes              text,
+  created_by         uuid references public.employees(id),
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS inventory_items_name_idx     ON public.inventory_items(LOWER(name));
+CREATE INDEX IF NOT EXISTS inventory_items_category_idx ON public.inventory_items(category);
+
+-- Auto-update updated_at on every UPDATE.
+CREATE OR REPLACE FUNCTION public.touch_inventory_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS inventory_items_touch_updated_at ON public.inventory_items;
+CREATE TRIGGER inventory_items_touch_updated_at
+  BEFORE UPDATE ON public.inventory_items
+  FOR EACH ROW EXECUTE FUNCTION public.touch_inventory_updated_at();
+
+ALTER TABLE public.inventory_items ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'inventory_items'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "inventory_select_admin_or_inventory"
+  ON public.inventory_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','inventory']));
+CREATE POLICY "inventory_insert_admin_or_inventory"
+  ON public.inventory_items FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','inventory']));
+CREATE POLICY "inventory_update_admin_or_inventory"
+  ON public.inventory_items FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','inventory']))
+  WITH CHECK (public.has_role(ARRAY['admin','inventory']));
+CREATE POLICY "inventory_delete_admin_or_inventory"
+  ON public.inventory_items FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','inventory']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
