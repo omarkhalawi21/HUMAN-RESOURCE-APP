@@ -6714,6 +6714,11 @@ function renderReceipts() {
 }
 
 function renderRoleDashboard() {
+  // Belt-and-braces: legacy is_admin=true always wins, even if
+  // system_role drifted to something else (early migrations could
+  // leave admins on system_role='employee'). Without this fallback
+  // such an admin would be served the barista personal dashboard.
+  if (isAdmin()) return renderDashboard();
   const role = currentRole();
   if (role === 'accounting')   return renderAccountingDashboard();
   if (role === 'operations')   return renderOperationsDashboard();

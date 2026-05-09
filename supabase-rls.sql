@@ -708,10 +708,16 @@ ALTER TABLE public.employees
     'inventory','accounting','maintenance','employee'
   ));
 
--- Backfill: anyone currently is_admin becomes 'admin', otherwise 'employee'.
+-- Backfill: anyone currently is_admin becomes 'admin'. Cannot use
+-- `WHERE system_role IS NULL` here because the ADD COLUMN above
+-- carries DEFAULT 'employee', so existing rows immediately have a
+-- non-null value and the IS NULL filter would silently skip them
+-- (this masked admins as 'employee' on first migrate). The condition
+-- below is also idempotent for re-runs.
 UPDATE public.employees
-   SET system_role = CASE WHEN is_admin THEN 'admin' ELSE 'employee' END
- WHERE system_role IS NULL;
+   SET system_role = 'admin'
+ WHERE is_admin = true
+   AND system_role IS DISTINCT FROM 'admin';
 
 -- BEFORE INSERT trigger: if system_role wasn't supplied, derive it from
 -- is_admin so the existing handle_new_user trigger keeps working unchanged.
