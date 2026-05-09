@@ -6558,13 +6558,14 @@ function renderReceipts() {
 
 function renderRoleDashboard() {
   const role = currentRole();
-  if (role === 'accounting') return renderAccountingDashboard();
+  if (role === 'accounting')  return renderAccountingDashboard();
+  if (role === 'operations')  return renderOperationsDashboard();
   // Personal-view roles share one focused employee dashboard. Each
   // can get a more specialised view in a follow-up PR.
   if (role === 'barista' || role === 'head_barista' || role === 'maintenance' || role === 'employee') {
     return renderBaristaDashboard();
   }
-  // admin, hr, operations, inventory still use the existing HR dashboard.
+  // admin, hr, inventory still use the existing HR dashboard.
   return renderDashboard();
 }
 
@@ -6703,6 +6704,191 @@ function renderAccountingDashboard() {
                     <div class="text-xs text-slate-500 truncate">${escapeHTML(fmtDate(r.receiptDate||''))} &middot; ${escapeHTML(cat.label)}${uploader?' &middot; '+escapeHTML(uploader.firstName||''):''}</div>
                   </div>
                   <div class="font-semibold text-slate-900 shrink-0">${fmtMoney(r.amount)}</div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function renderOperationsDashboard() {
+  const me = currentEmployee();
+  if (!me) return renderDashboard();
+
+  const today = todayISO();
+  const activeEmps = state.employees.filter(isActiveEmployee);
+  const presentToday = state.attendance.filter(a => a.date===today && a.status!=='absent');
+  const lateToday    = state.attendance.filter(a => a.date===today && a.status==='late');
+  const onLeaveToday = state.leaveRequests.filter(r => r.status==='approved' && r.startDate<=today && r.endDate>=today);
+  const onLeaveIds = new Set(onLeaveToday.map(r => r.employeeId));
+  const presentIds = new Set(presentToday.map(a => a.employeeId));
+  const absentToday = activeEmps.filter(e => !presentIds.has(e.id) && !onLeaveIds.has(e.id));
+  const pendingLeave = state.leaveRequests.filter(r => r.status==='pending');
+
+  // Branch headcount with present/leave/absent breakdown
+  const branchStats = {};
+  activeEmps.forEach(e => {
+    const ex = getEmpExtras(e.id);
+    const b = ((ex && ex.branch) || 'Unassigned').trim() || 'Unassigned';
+    if (!branchStats[b]) branchStats[b] = { total:0, present:0, leave:0 };
+    branchStats[b].total++;
+    if (presentIds.has(e.id)) branchStats[b].present++;
+    if (onLeaveIds.has(e.id)) branchStats[b].leave++;
+  });
+  const branches = Object.entries(branchStats).sort((a,b) => b[1].total - a[1].total);
+
+  // Last 7 days attendance trend (Mon..Sun rolling)
+  const last7 = [];
+  for (let i=6;i>=0;i--) {
+    const d = new Date(); d.setDate(d.getDate()-i);
+    const iso = d.toISOString().slice(0,10);
+    const count = state.attendance.filter(a => a.date===iso && a.status!=='absent').length;
+    last7.push({ count, label: d.toLocaleDateString(undefined,{weekday:'short'}) });
+  }
+  const max7 = Math.max(...last7.map(x=>x.count), 1);
+
+  // Out today (combined absent + on-leave) — capped at 8
+  const outToday = [
+    ...absentToday.map(e => ({ emp: e, kind: 'absent' })),
+    ...onLeaveToday.map(r => ({ emp: getEmployee(r.employeeId), kind: r.type || 'leave' })).filter(x => x.emp),
+  ].slice(0, 8);
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('building','w-3.5 h-3.5')} Operations</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
+        <p class="text-slate-500 mt-1 text-sm max-w-md">Today's floor at a glance &mdash; coverage, branches, and people who are out.</p>
+      </div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Active staff</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${activeEmps.length}</div>
+        <div class="text-xs text-slate-500 mt-1">across ${branches.length} branch${branches.length===1?'':'es'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Present today</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${presentToday.length}</div>
+        <div class="text-xs text-slate-500 mt-1">${lateToday.length} late</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">On leave today</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${onLeaveToday.length}</div>
+        <div class="text-xs text-slate-500 mt-1">${pendingLeave.length} pending</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Absent today</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${absentToday.length}</div>
+        <div class="text-xs text-slate-500 mt-1">${absentToday.length === 0 ? 'all accounted for' : 'no clock-in or leave'}</div>
+      </div>
+    </div>
+
+    <!-- Branches + 7-day trend -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Branch coverage</div>
+        <div class="font-display text-lg font-semibold text-slate-900 mb-4">Today's headcount</div>
+        ${branches.length === 0 ? `<div class="text-sm text-slate-500 text-center py-6">No branches with active staff.</div>` : `
+        <div class="space-y-4">
+          ${branches.map(([name, s]) => {
+            const presentPct = s.total > 0 ? Math.round(s.present / s.total * 100) : 0;
+            const absentN = Math.max(0, s.total - s.present - s.leave);
+            return `
+              <div>
+                <div class="flex items-center justify-between text-sm mb-1">
+                  <span class="font-medium text-slate-900">${escapeHTML(name)}</span>
+                  <span class="text-slate-600 tabular-nums">${s.present}/${s.total} <span class="text-slate-400">in</span></span>
+                </div>
+                <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div class="h-full bg-emerald-500" style="width:${presentPct}%"></div>
+                </div>
+                <div class="text-xs text-slate-500 mt-1">${s.leave} on leave${absentN > 0 ? ' &middot; '+absentN+' absent' : ''}</div>
+              </div>`;
+          }).join('')}
+        </div>`}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Last 7 days</div>
+        <div class="font-display text-lg font-semibold text-slate-900 mb-4">Attendance trend</div>
+        <div class="flex items-end gap-2 h-32">
+          ${last7.map(d => `
+            <div class="flex-1 flex flex-col items-center gap-1 h-full justify-end">
+              <div class="text-[10px] font-semibold text-slate-700">${d.count}</div>
+              <div class="w-full bg-brand-500 rounded-t" style="height:${(d.count/max7)*100}%; min-height:2px" title="${d.count} present"></div>
+              <div class="text-[10px] text-slate-500">${escapeHTML(d.label)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+
+    <!-- Out today + Pending leave -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Out today</div>
+            <div class="font-display text-lg font-semibold text-slate-900">Who's missing</div>
+          </div>
+        </div>
+        ${outToday.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2">${icon('check','w-6 h-6')}</div>
+            <div class="text-sm text-slate-600">Everyone's accounted for today.</div>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${outToday.map(({emp, kind}) => {
+              const ex = getEmpExtras(emp.id);
+              const isLeave = kind !== 'absent';
+              const pillClass = isLeave ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700';
+              const label = isLeave ? `${kind.toString().replace(/_/g,' ')} leave` : 'absent';
+              return `
+                <div class="px-1 py-3 flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-full bg-brand-50 text-brand-700 flex items-center justify-center text-xs font-semibold shrink-0">${escapeHTML((emp.firstName||'?').charAt(0).toUpperCase())}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-medium text-slate-900 truncate">${escapeHTML(((emp.firstName||'')+' '+(emp.lastName||'')).trim()||'—')}</div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML((ex && ex.branch) || 'Unassigned')} &middot; ${escapeHTML(emp.role||'—')}</div>
+                  </div>
+                  <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-1 rounded-full ${pillClass}">${escapeHTML(label)}</span>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Pending leave</div>
+            <div class="font-display text-lg font-semibold text-slate-900">Awaiting approval</div>
+          </div>
+        </div>
+        ${pendingLeave.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-2">${icon('calendar','w-6 h-6')}</div>
+            <div class="text-sm text-slate-600">No pending leave requests.</div>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${pendingLeave.slice(0, 6).map(r => {
+              const emp = getEmployee(r.employeeId);
+              if (!emp) return '';
+              return `
+                <div class="px-1 py-3 flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-full bg-amber-50 text-amber-700 flex items-center justify-center text-xs font-semibold shrink-0">${escapeHTML((emp.firstName||'?').charAt(0).toUpperCase())}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-medium text-slate-900 truncate">${escapeHTML(((emp.firstName||'')+' '+(emp.lastName||'')).trim())}</div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML((r.type||'leave').toString().replace(/_/g,' '))} &middot; ${r.days||0} day${(r.days||0)===1?'':'s'} from ${escapeHTML(fmtDate(r.startDate||''))}</div>
+                  </div>
                 </div>`;
             }).join('')}
           </div>
