@@ -1940,6 +1940,45 @@ function renderDashboard() {
       </div>`;
     })()}
 
+    <!-- Team at a glance — newest active employees with role + branch -->
+    ${(() => {
+      const active = state.employees.filter(isActiveEmployee);
+      if (active.length === 0) return '';
+      const top = active.slice().sort((a,b) => (b.hireDate||'').localeCompare(a.hireDate||'')).slice(0, 8);
+      return `
+        <div class="bg-white rounded-2xl shadow-card p-6 mt-5">
+          <div class="flex items-center justify-between mb-5 flex-wrap gap-2">
+            <div>
+              <h3 class="font-display text-lg font-semibold text-slate-900">${icon('users','w-5 h-5 inline text-brand-600')} Team at a glance</h3>
+              <div class="text-xs text-slate-500 mt-0.5">${active.length} active employee${active.length===1?'':'s'} &middot; showing newest hires</div>
+            </div>
+            <a href="#/employees" class="btn btn-ghost btn-sm">View all &rarr;</a>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            ${top.map(e => {
+              const ex = getEmpExtras(e.id);
+              const branch = (ex && ex.branch) || '';
+              const sysRoleLabel = roleLabel(e.systemRole);
+              const isAdminEmp = e.systemRole === 'admin';
+              return `
+                <a href="#/employees" onclick="empFilter={dept:'all',branch:'all',nationality:'all',q:'${escapeHTML((e.firstName||'')+' '+(e.lastName||'')).trim()}'}" class="block bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-xl p-4 hover:shadow-pop hover:-translate-y-0.5 transition-all">
+                  <div class="flex items-start gap-3">
+                    ${avatarHTML(e, 40)}
+                    <div class="flex-1 min-w-0">
+                      <div class="font-semibold text-slate-900 truncate">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</div>
+                      <div class="text-xs text-slate-500 truncate">${escapeHTML(e.role||'—')}</div>
+                      <div class="flex items-center gap-1.5 mt-2 flex-wrap">
+                        <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${isAdminEmp?'bg-purple-50 text-purple-700':'bg-brand-50 text-brand-700'}">${escapeHTML(sysRoleLabel)}</span>
+                        ${branch ? `<span class="text-[10px] text-slate-500 truncate">${escapeHTML(branch)}</span>` : ''}
+                      </div>
+                    </div>
+                  </div>
+                </a>`;
+            }).join('')}
+          </div>
+        </div>`;
+    })()}
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
       <div class="bg-white rounded-2xl shadow-card p-6">
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-4">By Department</h3>
