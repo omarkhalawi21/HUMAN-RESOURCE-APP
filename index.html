@@ -1961,7 +1961,7 @@ function renderDashboard() {
               const sysRoleLabel = roleLabel(e.systemRole);
               const isAdminEmp = e.systemRole === 'admin';
               return `
-                <a href="#/employees" onclick="empFilter={dept:'all',branch:'all',nationality:'all',q:'${escapeHTML((e.firstName||'')+' '+(e.lastName||'')).trim()}'}" class="block bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-xl p-4 hover:shadow-pop hover:-translate-y-0.5 transition-all">
+                <a href="#/employee/${e.id}" class="block bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-xl p-4 hover:shadow-pop hover:-translate-y-0.5 transition-all">
                   <div class="flex items-start gap-3">
                     ${avatarHTML(e, 40)}
                     <div class="flex-1 min-w-0">
