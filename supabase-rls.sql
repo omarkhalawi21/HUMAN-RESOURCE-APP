@@ -822,6 +822,161 @@ CREATE POLICY "receipts_delete_admin_or_accounting"
   USING (public.has_role(ARRAY['admin','accounting']));
 
 -- =============================================================
+-- 15. HR TABLES — broaden mutations to admin OR hr
+--    HR role now manages people: employees, schedules, leave
+--    decisions, payroll, branches, warnings, advances,
+--    certificates, archive uploads. SELECT was already
+--    `authenticated` for these — no change there.
+--    Settings (companies update), backup/restore, reset, and
+--    role assignment stay strictly admin via the frontend.
+-- =============================================================
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN (
+        'employees','employee_extras','leave_requests','payroll',
+        'branches','warnings','advances','certificates',
+        'archive_documents'
+      )
+      AND cmd <> 'SELECT'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+-- EMPLOYEES — insert/update/delete: admin or hr
+CREATE POLICY "employees_insert_hr"
+  ON public.employees FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "employees_update_hr"
+  ON public.employees FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "employees_delete_hr"
+  ON public.employees FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- EMPLOYEE_EXTRAS — same scope
+CREATE POLICY "employee_extras_insert_hr"
+  ON public.employee_extras FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "employee_extras_update_hr"
+  ON public.employee_extras FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "employee_extras_delete_hr"
+  ON public.employee_extras FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- LEAVE_REQUESTS — insert kept as self-or-hr; update/delete: admin or hr
+CREATE POLICY "leave_requests_insert_self_or_hr"
+  ON public.leave_requests FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = leave_requests.employee_id
+        AND e.user_id = auth.uid()
+    )
+  );
+CREATE POLICY "leave_requests_update_hr"
+  ON public.leave_requests FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "leave_requests_delete_hr"
+  ON public.leave_requests FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- PAYROLL — admin or hr
+CREATE POLICY "payroll_insert_hr"
+  ON public.payroll FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "payroll_update_hr"
+  ON public.payroll FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "payroll_delete_hr"
+  ON public.payroll FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- BRANCHES — admin or hr
+CREATE POLICY "branches_insert_hr"
+  ON public.branches FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "branches_update_hr"
+  ON public.branches FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "branches_delete_hr"
+  ON public.branches FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- WARNINGS — admin or hr
+CREATE POLICY "warnings_insert_hr"
+  ON public.warnings FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "warnings_update_hr"
+  ON public.warnings FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "warnings_delete_hr"
+  ON public.warnings FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- ADVANCES — insert kept as self-or-hr; decide(update)/delete: admin or hr
+CREATE POLICY "advances_insert_self_or_hr"
+  ON public.advances FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','hr'])
+    OR (
+      status = 'pending'
+      AND decided_by IS NULL
+      AND decided_at IS NULL
+      AND repaid_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM public.employees e
+        WHERE e.id = advances.employee_id AND e.user_id = auth.uid()
+      )
+    )
+  );
+CREATE POLICY "advances_update_hr"
+  ON public.advances FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "advances_delete_hr"
+  ON public.advances FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- CERTIFICATES — admin or hr
+CREATE POLICY "certificates_insert_hr"
+  ON public.certificates FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "certificates_update_hr"
+  ON public.certificates FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "certificates_delete_hr"
+  ON public.certificates FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- ARCHIVE_DOCUMENTS — admin or hr
+CREATE POLICY "archive_insert_hr"
+  ON public.archive_documents FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "archive_update_hr"
+  ON public.archive_documents FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "archive_delete_hr"
+  ON public.archive_documents FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

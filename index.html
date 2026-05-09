@@ -960,6 +960,13 @@ function currentRole() {
   return e?.systemRole || (e?.isAdmin ? 'admin' : 'employee');
 }
 function hasRole(...roles) { return roles.includes(currentRole()); }
+// canManagePeople — true for anyone who runs day-to-day HR work.
+// Used everywhere an HR-style action should be allowed: managing
+// employees, approving leave, running payroll, issuing warnings/
+// certificates/advances, uploading archive docs, viewing reports.
+// Settings, backup, restore, reset and role assignment stay strictly
+// isAdmin() — owner-level controls.
+function canManagePeople() { return hasRole('admin','hr'); }
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
@@ -1259,11 +1266,11 @@ function resetPasswordPrompt() {
 function renderShell(routeContent) {
   const route = getRoute();
   const emp = currentEmployee();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const lang = state.settings.lang;
   const navItems = [
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
-    { key:'employees',    icon:'users',     label:t('employees'),    show:admin, group:'main' },
+    { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main' },
     { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main' },
     { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main' },
@@ -1275,8 +1282,8 @@ function renderShell(routeContent) {
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
-    { key:'reports',      icon:'report',    label:t('reports'),      show:admin, group:'company' },
-    { key:'settings',     icon:'settings',  label:t('settings'),     show:admin, group:'company' },
+    { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
+    { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
   ];
   const sidebar = `
@@ -1391,7 +1398,7 @@ function globalSearch(q) {
   });
 }
 function toggleNotifications() {
-  if (!isAdmin()) { toast('No new notifications'); return; }
+  if (!canManagePeople()) { toast('No new notifications'); return; }
   const pendings = state.leaveRequests.filter(r=>r.status==='pending');
   if (!pendings.length) return toast('No pending requests');
   toast(`${pendings.length} pending leave request(s)`);
@@ -1402,7 +1409,7 @@ function toggleNotifications() {
 let dashAttFilter = { date: '', branch: 'all' };
 function renderDashboard() {
   if (!dashAttFilter.date) dashAttFilter.date = todayISO();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const today = todayISO();
   const presentToday = state.attendance.filter(a => a.date===today && a.status!=='absent');
   const onLeave = state.leaveRequests.filter(r => r.status==='approved' && r.startDate<=today && r.endDate>=today);
@@ -2028,7 +2035,7 @@ function openTerminationModal(empId) {
   const e = getEmployee(empId);
   if (!e) return;
   const me = currentEmployee();
-  if (!me || !isAdmin()) return;
+  if (!me || !canManagePeople()) return;
   if (e.id === me.id) { toast('You cannot terminate your own account', 'error'); return; }
   const fullName = (e.firstName + ' ' + (e.lastName||'')).trim();
   const form = `
@@ -2075,7 +2082,7 @@ function openTerminationModal(empId) {
 }
 async function reinstateEmployee(empId) {
   const e = getEmployee(empId);
-  if (!e || !isAdmin()) return;
+  if (!e || !canManagePeople()) return;
   if (!confirm(`Reinstate ${e.firstName} ${e.lastName||''}? Their account will be reactivated and they'll be able to log in again.`)) return;
   const updates = { status: 'active', termination_date: null, termination_reason: null, terminated_by: null };
   const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
@@ -2487,10 +2494,17 @@ function openEmployeeModal(id) {
         </div>
         <div><label class="label">Job title</label><input id="m-ro" class="input" placeholder="e.g. Senior Barista" value="${escapeHTML(editing?.role||'')}"></div>
         <div><label class="label">System role</label>
-          <select id="m-sysrole" class="input" ${editing && editing.user_id === state.session?.userId ? 'disabled title="You cannot change your own role"' : ''}>
-            ${Object.entries(ROLES).map(([k,r]) => `<option value="${k}" ${(editing?.systemRole||'employee')===k?'selected':''}>${escapeHTML(r.label)}</option>`).join('')}
-          </select>
-          <div class="text-[10px] text-slate-500 mt-1">Controls dashboard access &amp; permissions. Distinct from job title.</div>
+          ${(() => {
+            const isSelf = editing && editing.user_id === state.session?.userId;
+            const allowed = isAdmin() && !isSelf;
+            const reason = isSelf ? 'You cannot change your own role' : 'Only admins can change roles';
+            return `
+              <select id="m-sysrole" class="input" ${allowed ? '' : `disabled title="${escapeHTML(reason)}"`}>
+                ${Object.entries(ROLES).map(([k,r]) => `<option value="${k}" ${(editing?.systemRole||'employee')===k?'selected':''}>${escapeHTML(r.label)}</option>`).join('')}
+              </select>
+              <div class="text-[10px] text-slate-500 mt-1">${allowed ? 'Controls dashboard access &amp; permissions. Distinct from job title.' : escapeHTML(reason) + '.'}</div>
+            `;
+          })()}
         </div>
         <div><label class="label">Department</label>
           ${(() => {
@@ -2839,7 +2853,7 @@ function renderAttendance() {
   const me = currentEmployee();
   const today = todayISO();
   const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
-  const admin = isAdmin();
+  const admin = canManagePeople();
   if (!admin) attTab = 'me';
 
   const tabs = admin ? `
@@ -3184,7 +3198,7 @@ async function clockOut() {
 let leaveTab = 'mine';
 function renderLeave() {
   const me = currentEmployee();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   if (!admin) leaveTab = 'mine';
   const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
   const myReqs = state.leaveRequests.filter(r => r.employeeId===me.id).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
@@ -3349,7 +3363,7 @@ function setPayrollRange(kind) {
   render();
 }
 function renderPayroll() {
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const me = currentEmployee();
   const baseRecords = admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id);
 
@@ -3768,7 +3782,7 @@ function calcPayroll(ym) {
 }
 
 function runPayroll() {
-  if (!isAdmin()) return;
+  if (!canManagePeople()) return;
   const defaultYm = new Date().toISOString().slice(0,7);
   const form = `
     <div class="space-y-4">
@@ -4409,7 +4423,7 @@ function scrollToGuideSection(id) {
 }
 // Mirrors HR_USER_GUIDE.md in the repo. When updating one, update both.
 function renderHelp() {
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const sections = [
     { id:'sign-in',     title:'Signing in' },
     { id:'first-setup', title:'First-time setup', adminOnly:true },
@@ -4787,7 +4801,7 @@ function exportCSV(kind) {
     });
   } else if (kind==='payroll-filtered') {
     rows = [['Employee','Branch','Department','Role','Period','Base','Bonus','Deductions','Net','Status','Paid on']];
-    const admin = isAdmin();
+    const admin = canManagePeople();
     const me = currentEmployee();
     const baseRecords = admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id);
     const filtered = baseRecords.filter(p => {
@@ -4839,7 +4853,7 @@ function exportCSV(kind) {
 /* -------------------- WARNINGS -------------------- */
 let warningFilter = { emp:'all', severity:'all' };
 function renderWarnings() {
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const me = currentEmployee();
   const list = (state.warnings||[]).slice().sort((a,b)=>b.issuedAt.localeCompare(a.issuedAt));
   const visible = admin
@@ -5404,7 +5418,7 @@ function printWarningLetter(id) {
 let advTab = 'mine';
 function renderAdvances() {
   const me = currentEmployee();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   if (!admin) advTab = 'mine';
   const all = (state.advances||[]).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
   const mine = all.filter(a => a.employeeId === me.id);
@@ -5494,7 +5508,7 @@ function renderAdvances() {
 }
 function openAdvanceModal() {
   const me = currentEmployee();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const form = `
     ${admin ? `
     <div class="mb-4">
@@ -5634,7 +5648,7 @@ function printAdvanceSlip(id) {
 /* -------------------- CERTIFICATES -------------------- */
 function renderCertificates() {
   const me = currentEmployee();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const list = (state.certificates||[]).slice().sort((a,b)=>b.issuedAt.localeCompare(a.issuedAt));
   const visible = admin ? list : list.filter(c => c.employeeId===me.id);
 
@@ -5895,7 +5909,7 @@ function printCertificate(id) {
 let docFilter = 'all'; // all | expiring | expired
 function renderDocuments() {
   const me = currentEmployee();
-  const admin = isAdmin();
+  const admin = canManagePeople();
   // Build per-employee summary (admin) or self-only (employee)
   const sources = admin ? state.employees : state.employees.filter(e => e.id===me.id);
   const rows = sources.map(e => {
@@ -6055,7 +6069,7 @@ function openRenewModal(empId) {
 /* -------------------- ARCHIVE (templates & company docs) -------------------- */
 let archiveFilter = 'all';
 function renderArchive() {
-  const admin = isAdmin();
+  const admin = canManagePeople();
   const docs = (state.archive||[]).slice().sort((a,b)=>b.uploadedAt.localeCompare(a.uploadedAt));
   const filtered = archiveFilter==='all' ? docs : docs.filter(d=>d.category===archiveFilter);
   const cats = {
@@ -7100,7 +7114,7 @@ function renderPendingApprovalGate() {
 // log in. Only admins can call this (RLS enforces it on the server).
 async function approvePendingEmployee(empId) {
   const e = getEmployee(empId);
-  if (!e || !isAdmin()) return;
+  if (!e || !canManagePeople()) return;
   const { data, error } = await sb.from('employees')
     .update({ status: 'active' })
     .eq('id', empId)
@@ -7117,7 +7131,7 @@ async function approvePendingEmployee(empId) {
 async function rejectPendingEmployee(empId) {
   const e = getEmployee(empId);
   const me = currentEmployee();
-  if (!e || !me || !isAdmin()) return;
+  if (!e || !me || !canManagePeople()) return;
   if (!confirm(`Reject ${e.firstName}'s signup? They will be permanently blocked from logging in. To approve later you'd need to reinstate them from the directory.`)) return;
   const updates = {
     status: 'terminated',
@@ -7326,8 +7340,8 @@ function render() {
   let content = '';
   switch (route) {
     case 'dashboard':    content = renderRoleDashboard(); break;
-    case 'employees':    content = isAdmin() ? renderEmployees() : renderDashboard(); break;
-    case 'employee':     content = isAdmin() ? renderEmployeeProfile(getRouteParam()) : renderDashboard(); break;
+    case 'employees':    content = canManagePeople() ? renderEmployees() : renderRoleDashboard(); break;
+    case 'employee':     content = canManagePeople() ? renderEmployeeProfile(getRouteParam()) : renderRoleDashboard(); break;
     case 'attendance':   content = renderAttendance(); break;
     case 'leave':        content = renderLeave(); break;
     case 'payroll':      content = renderPayroll(); break;
@@ -7337,8 +7351,8 @@ function render() {
     case 'documents':    content = renderDocuments(); break;
     case 'archive':      content = renderArchive(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
-    case 'reports':      content = isAdmin() ? renderReports() : renderDashboard(); break;
-    case 'settings':     content = isAdmin() ? renderSettings() : renderDashboard(); break;
+    case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
+    case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
     case 'account':      content = renderAccount(); break;
     default:             content = renderDashboard();
