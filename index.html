@@ -7830,8 +7830,13 @@ function renderInventory() {
   `;
 }
 
-function openInventoryItemModal(id) {
+// Optional `defaults` ({branch, category, unit}) pre-fill new items.
+// Useful for context-aware "Add" buttons — e.g. the Roaster page
+// passes branch=FAISALIYAH and category=beans_raw/beans_roast so the
+// roaster doesn't re-pick those each time. Ignored for edits.
+function openInventoryItemModal(id, defaults = {}) {
   const editing = id ? (state.inventory||[]).find(i => i.id === id) : null;
+  const initial = editing || defaults || {};
   const form = `
     <div class="space-y-4">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -7846,13 +7851,13 @@ function openInventoryItemModal(id) {
         <div>
           <label class="label">Category</label>
           <select id="inv-cat" class="input">
-            ${Object.entries(INVENTORY_CATEGORIES).map(([k,c]) => `<option value="${k}" ${(editing?.category||'other')===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
+            ${Object.entries(INVENTORY_CATEGORIES).map(([k,c]) => `<option value="${k}" ${(initial.category||'other')===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
           </select>
         </div>
         <div>
           <label class="label">Unit</label>
           <select id="inv-unit" class="input">
-            ${INVENTORY_UNITS.map(u => `<option value="${u}" ${(editing?.unit||'units')===u?'selected':''}>${escapeHTML(u)}</option>`).join('')}
+            ${INVENTORY_UNITS.map(u => `<option value="${u}" ${(initial.unit||'units')===u?'selected':''}>${escapeHTML(u)}</option>`).join('')}
           </select>
         </div>
         <div>
@@ -7870,7 +7875,7 @@ function openInventoryItemModal(id) {
         </div>
         <div>
           <label class="label">Branch (optional)</label>
-          <input id="inv-br" class="input" placeholder="leave blank for shared stock" value="${escapeHTML(editing?.branch||'')}">
+          <input id="inv-br" class="input" placeholder="leave blank for shared stock" value="${escapeHTML(initial.branch||'')}">
         </div>
       </div>
       <div>
@@ -8584,7 +8589,7 @@ function renderRoaster() {
           <button onclick="openTransferModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log transfer</button>
           <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
           <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
-          <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
+          <button onclick="openInventoryItemModal(null, {branch:'FAISALIYAH', category: roasterTab==='shelf' ? 'beans_roast' : 'beans_raw', unit:'kg'})" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
         </div>
       </div>
     </div>
@@ -8625,7 +8630,7 @@ function renderRoaster() {
           roasterTab==='weekly' ? 'Bean updates from the past week will show up here.'
           : 'Add a bean item to start tracking. Pick the matching category from the dropdown.'
         }</p>
-        ${roasterTab !== 'weekly' ? `<button onclick="openInventoryItemModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add bean</button>` : ''}
+        ${roasterTab !== 'weekly' ? `<button onclick="openInventoryItemModal(null, {branch:'FAISALIYAH', category: roasterTab==='shelf' ? 'beans_roast' : 'beans_raw', unit:'kg'})" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add bean</button>` : ''}
       </div>
     ` : (() => {
       const rowHTML = (it) => {
