@@ -198,6 +198,7 @@ const ICONS = {
   receipt:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 1 2V2l-1 2-3-2-3 2-3-2-3 2-3-2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>`,
   box:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`,
   minus:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+  wrench:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
 };
 
 const icon = (name, className='w-5 h-5') => `<span class="inline-block ${className}">${ICONS[name]||''}</span>`;
@@ -261,6 +262,7 @@ const I18N = {
     archive: "Archive",
     receipts: "Receipts",
     inventory: "Inventory",
+    maintenance: "Maintenance",
     documents: "Documents",
     iqama: "IQAMA",
     baladiya: "Baladiya",
@@ -335,6 +337,7 @@ const I18N = {
     archive: "الأرشيف",
     receipts: "الإيصالات",
     inventory: "المخزون",
+    maintenance: "الصيانة",
     documents: "المستندات",
     iqama: "الإقامة",
     baladiya: "البلدية",
@@ -386,6 +389,7 @@ function emptyState() {
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
     inventory: [],      // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, branch, notes, createdBy, createdAt, updatedAt }]
+    maintenance: [],    // [{ id, title, description, branch, location, asset, priority, status, reportedBy, assignedTo, resolution, resolvedAt, createdAt, updatedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
   };
@@ -812,6 +816,39 @@ function inventoryItemToDb(i) {
     created_by: i.createdBy || null,
   };
 }
+function mapMaintenanceFromDb(r) {
+  return {
+    id: r.id,
+    title: r.title || '',
+    description: r.description || '',
+    branch: r.branch || '',
+    location: r.location || '',
+    asset: r.asset || '',
+    priority: r.priority || 'normal',
+    status: r.status || 'open',
+    reportedBy: r.reported_by,
+    assignedTo: r.assigned_to,
+    resolution: r.resolution || '',
+    resolvedAt: r.resolved_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+function maintenanceToDb(m) {
+  return {
+    title: m.title,
+    description: m.description || null,
+    branch: m.branch || null,
+    location: m.location || null,
+    asset: m.asset || null,
+    priority: m.priority || 'normal',
+    status: m.status || 'open',
+    reported_by: m.reportedBy || null,
+    assigned_to: m.assignedTo || null,
+    resolution: m.resolution || null,
+    resolved_at: m.resolvedAt || null,
+  };
+}
 function mapExtrasFromDb(r) {
   const x = {
     schedule: r.schedule || defaultSchedule(),
@@ -850,7 +887,7 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, extrasR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
@@ -865,6 +902,9 @@ async function loadAll() {
       // Inventory: SELECT is RLS-restricted to admin/inventory; for other
       // roles the call returns an empty array, which is what we want.
       sb.from('inventory_items').select('*').order('name'),
+      // Maintenance: RLS returns admin/maintenance the full table, others
+      // see only their own reports — the same query works for both.
+      sb.from('maintenance_requests').select('*').order('created_at', { ascending: false }),
       sb.from('employee_extras').select('*'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
@@ -902,6 +942,7 @@ async function loadAll() {
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
     state.inventory    = (inventoryR.data    || []).map(mapInventoryItemFromDb);
+    state.maintenance  = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -923,7 +964,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts','inventory_items'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts','inventory_items','maintenance_requests'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -1041,7 +1082,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'reports', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'maintenance', 'reports', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1323,6 +1364,7 @@ function renderShell(routeContent) {
     { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','inventory'), group:'company' },
+    { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
@@ -6602,9 +6644,9 @@ function renderRoleDashboard() {
   if (role === 'accounting')  return renderAccountingDashboard();
   if (role === 'operations')  return renderOperationsDashboard();
   if (role === 'inventory')   return renderInventoryDashboard();
-  // Personal-view roles share one focused employee dashboard. Each
-  // can get a more specialised view in a follow-up PR.
-  if (role === 'barista' || role === 'head_barista' || role === 'maintenance' || role === 'employee') {
+  if (role === 'maintenance') return renderMaintenanceDashboard();
+  // Personal-view roles share one focused employee dashboard.
+  if (role === 'barista' || role === 'head_barista' || role === 'employee') {
     return renderBaristaDashboard();
   }
   // admin and hr still use the existing HR dashboard.
@@ -6931,6 +6973,476 @@ function renderOperationsDashboard() {
                     <div class="font-medium text-slate-900 truncate">${escapeHTML(((emp.firstName||'')+' '+(emp.lastName||'')).trim())}</div>
                     <div class="text-xs text-slate-500 truncate">${escapeHTML((r.type||'leave').toString().replace(/_/g,' '))} &middot; ${r.days||0} day${(r.days||0)===1?'':'s'} from ${escapeHTML(fmtDate(r.startDate||''))}</div>
                   </div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+/* -------------------- MAINTENANCE (work orders) -------------------- */
+const MAINT_PRIORITIES = {
+  low:    { label: 'Low',    pill: 'bg-slate-50 text-slate-600',  bar: 'bg-slate-400' },
+  normal: { label: 'Normal', pill: 'bg-blue-50 text-blue-700',    bar: 'bg-blue-500' },
+  high:   { label: 'High',   pill: 'bg-amber-50 text-amber-700',  bar: 'bg-amber-500' },
+  urgent: { label: 'Urgent', pill: 'bg-rose-50 text-rose-700',    bar: 'bg-rose-500' },
+};
+const MAINT_STATUSES = {
+  open:         { label: 'Open',         pill: 'bg-amber-50 text-amber-700' },
+  in_progress:  { label: 'In progress',  pill: 'bg-blue-50 text-blue-700' },
+  resolved:     { label: 'Resolved',     pill: 'bg-emerald-50 text-emerald-700' },
+  cancelled:    { label: 'Cancelled',    pill: 'bg-slate-100 text-slate-600' },
+};
+
+let maintenanceFilter = { status:'open', priority:'all', q:'' };
+let _maintFilterTimer = null;
+
+function setMaintenanceFilter(updates) {
+  Object.assign(maintenanceFilter, updates);
+  if ('q' in updates) {
+    clearTimeout(_maintFilterTimer);
+    _maintFilterTimer = setTimeout(() => {
+      render();
+      const inp = document.getElementById('maint-q');
+      if (inp) { inp.focus(); const v = inp.value; inp.setSelectionRange(v.length, v.length); }
+    }, 200);
+    return;
+  }
+  render();
+}
+function clearMaintenanceFilter() {
+  maintenanceFilter = { status:'all', priority:'all', q:'' };
+  render();
+}
+function getMaintenanceFiltered() {
+  const f = maintenanceFilter;
+  const q = (f.q||'').trim().toLowerCase();
+  return (state.maintenance || []).filter(r => {
+    if (f.status   && f.status   !== 'all' && r.status   !== f.status)   return false;
+    if (f.priority && f.priority !== 'all' && r.priority !== f.priority) return false;
+    if (q) {
+      const reporter = getEmployee(r.reportedBy);
+      const reporterName = reporter ? ((reporter.firstName||'')+' '+(reporter.lastName||'')) : '';
+      const hay = `${r.title} ${r.description||''} ${r.location||''} ${r.asset||''} ${r.branch||''} ${reporterName}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderMaintenance() {
+  const me = currentEmployee();
+  const isManager = hasRole('admin','maintenance');
+  const all = (state.maintenance || []).slice().sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+  const f = maintenanceFilter;
+  const hasFilter = (f.status && f.status !== 'all') || (f.priority && f.priority !== 'all') || !!(f.q||'').trim();
+  const filtered = getMaintenanceFiltered();
+
+  // Stat counts (over `all`, not filtered)
+  const open       = all.filter(r => r.status==='open').length;
+  const inProgress = all.filter(r => r.status==='in_progress').length;
+  const urgent     = all.filter(r => r.priority==='urgent' && r.status !== 'resolved' && r.status !== 'cancelled').length;
+  const resolved   = all.filter(r => r.status==='resolved').length;
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('wrench','w-3.5 h-3.5')} Maintenance</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('maintenance'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">${isManager ? 'Track work orders across the company &mdash; assign, prioritise, and resolve.' : 'Report broken equipment or maintenance issues. You can see your own requests below.'}</p>
+        </div>
+        <button onclick="openMaintenanceModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Report an issue</button>
+      </div>
+    </div>
+
+    ${isManager ? `
+      <!-- Stat cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div class="bg-white rounded-2xl shadow-card p-4">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Open</div>
+          <div class="font-display text-2xl font-semibold ${open>0?'text-amber-600':'text-slate-900'} mt-1">${open}</div>
+          <div class="text-xs text-slate-500 mt-1">awaiting triage</div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-card p-4">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">In progress</div>
+          <div class="font-display text-2xl font-semibold text-blue-600 mt-1">${inProgress}</div>
+          <div class="text-xs text-slate-500 mt-1">being worked on</div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-card p-4">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Urgent</div>
+          <div class="font-display text-2xl font-semibold ${urgent>0?'text-rose-600':'text-slate-900'} mt-1">${urgent}</div>
+          <div class="text-xs text-slate-500 mt-1">${urgent>0?'need attention now':'none'}</div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-card p-4">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Resolved</div>
+          <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${resolved}</div>
+          <div class="text-xs text-slate-500 mt-1">all-time</div>
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Filter bar -->
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-5">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div>
+          <label class="label">Search</label>
+          <input id="maint-q" type="text" class="input" placeholder="title, location, asset..." value="${escapeHTML(f.q||'')}" oninput="setMaintenanceFilter({q:this.value})">
+        </div>
+        <div>
+          <label class="label">Status</label>
+          <select class="input" onchange="setMaintenanceFilter({status:this.value})">
+            <option value="all" ${f.status==='all'?'selected':''}>All statuses</option>
+            ${Object.entries(MAINT_STATUSES).map(([k,s]) => `<option value="${k}" ${f.status===k?'selected':''}>${escapeHTML(s.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Priority</label>
+          <select class="input" onchange="setMaintenanceFilter({priority:this.value})">
+            <option value="all" ${f.priority==='all'?'selected':''}>All priorities</option>
+            ${Object.entries(MAINT_PRIORITIES).map(([k,p]) => `<option value="${k}" ${f.priority===k?'selected':''}>${escapeHTML(p.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      ${hasFilter ? `<div class="mt-3 flex justify-end"><button onclick="clearMaintenanceFilter()" class="btn btn-ghost btn-sm">${icon('close','w-3.5 h-3.5')} Clear filters</button></div>` : ''}
+    </div>
+
+    ${filtered.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('wrench','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">${hasFilter ? 'No requests match this filter' : (isManager ? 'No maintenance requests yet' : 'No issues reported by you yet')}</h3>
+        <p class="text-sm text-slate-500 mt-1">${hasFilter ? 'Try clearing or widening the filter.' : 'Use "Report an issue" to file a new request.'}</p>
+        ${hasFilter
+          ? `<button onclick="clearMaintenanceFilter()" class="btn btn-ghost mt-4">Clear filters</button>`
+          : `<button onclick="openMaintenanceModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Report an issue</button>`}
+      </div>
+    ` : `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+          <div class="text-sm text-slate-600">${filtered.length} request${filtered.length===1?'':'s'}${hasFilter?' in filter':''}</div>
+        </div>
+        <div class="divide-y divide-slate-100">
+          ${filtered.map(r => {
+            const pri = MAINT_PRIORITIES[r.priority] || MAINT_PRIORITIES.normal;
+            const st  = MAINT_STATUSES[r.status]     || MAINT_STATUSES.open;
+            const reporter = getEmployee(r.reportedBy);
+            const assignee = getEmployee(r.assignedTo);
+            return `
+              <div class="px-5 py-4 hover:bg-slate-50">
+                <div class="flex items-start gap-3">
+                  <div class="w-1 self-stretch rounded-full ${pri.bar}"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-start gap-2 flex-wrap">
+                      <div class="font-medium text-slate-900">${escapeHTML(r.title||'—')}</div>
+                      <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${pri.pill}">${escapeHTML(pri.label)}</span>
+                      <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${st.pill}">${escapeHTML(st.label)}</span>
+                    </div>
+                    ${r.description ? `<div class="text-sm text-slate-600 mt-1">${escapeHTML(r.description)}</div>` : ''}
+                    <div class="text-xs text-slate-500 mt-2 flex items-center gap-3 flex-wrap">
+                      ${r.asset    ? `<span>${icon('building','w-3 h-3 inline')} ${escapeHTML(r.asset)}</span>` : ''}
+                      ${r.location ? `<span>${icon('pin','w-3 h-3 inline')} ${escapeHTML(r.location)}</span>` : ''}
+                      ${r.branch   ? `<span>${escapeHTML(r.branch)}</span>` : ''}
+                      <span>Reported by ${escapeHTML(reporter ? ((reporter.firstName||'')+' '+(reporter.lastName||'')).trim() : '—')} &middot; ${escapeHTML(fmtDate((r.createdAt||'').slice(0,10)))}</span>
+                      ${assignee ? `<span>Assigned to ${escapeHTML((assignee.firstName||'')+' '+(assignee.lastName||''))}</span>` : ''}
+                      ${r.status==='resolved' && r.resolvedAt ? `<span>Resolved ${escapeHTML(fmtDate(r.resolvedAt.slice(0,10)))}</span>` : ''}
+                    </div>
+                    ${r.resolution ? `<div class="text-xs text-emerald-700 mt-1">Resolution: ${escapeHTML(r.resolution)}</div>` : ''}
+                  </div>
+                  ${isManager ? `
+                    <div class="flex flex-col gap-1 shrink-0">
+                      <div class="flex gap-1">
+                        ${r.status !== 'in_progress' && r.status !== 'resolved' && r.status !== 'cancelled' ? `<button onclick="changeMaintenanceStatus('${r.id}','in_progress')" title="Start" class="text-xs btn btn-ghost btn-sm">Start</button>` : ''}
+                        ${r.status !== 'resolved' && r.status !== 'cancelled' ? `<button onclick="resolveMaintenance('${r.id}')" title="Resolve" class="text-xs btn btn-ghost btn-sm">Resolve</button>` : ''}
+                      </div>
+                      <div class="flex gap-1">
+                        <button onclick="openMaintenanceModal('${r.id}')" title="Edit" aria-label="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                        <button onclick="deleteMaintenance('${r.id}')" title="Delete" aria-label="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `}
+  `;
+}
+
+function openMaintenanceModal(id) {
+  const me = currentEmployee();
+  const isManager = hasRole('admin','maintenance');
+  const editing = id ? (state.maintenance||[]).find(r => r.id === id) : null;
+  // Only managers can edit existing requests; reporters can only create new ones.
+  if (editing && !isManager) { toast('Only maintenance can edit existing requests', 'error'); return; }
+
+  const assignableEmps = state.employees
+    .filter(e => isActiveEmployee(e) && (e.systemRole === 'maintenance' || e.systemRole === 'admin'))
+    .sort((a,b) => (a.firstName||'').localeCompare(b.firstName||''));
+
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Title</label>
+        <input id="maint-title" class="input" placeholder="e.g. Espresso machine #2 not heating" value="${escapeHTML(editing?.title||'')}">
+      </div>
+      <div>
+        <label class="label">Description</label>
+        <textarea id="maint-desc" class="input" rows="3" placeholder="What's wrong, when did it start, anything you've already tried...">${escapeHTML(editing?.description||'')}</textarea>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Asset / Equipment (optional)</label>
+          <input id="maint-asset" class="input" placeholder="e.g. La Marzocco Linea PB" value="${escapeHTML(editing?.asset||'')}">
+        </div>
+        <div>
+          <label class="label">Location (optional)</label>
+          <input id="maint-loc" class="input" placeholder="e.g. front bar, kitchen" value="${escapeHTML(editing?.location||'')}">
+        </div>
+        <div>
+          <label class="label">Branch (optional)</label>
+          <input id="maint-branch" class="input" placeholder="e.g. Khobar" value="${escapeHTML(editing?.branch||'')}">
+        </div>
+        <div>
+          <label class="label">Priority</label>
+          <select id="maint-pri" class="input">
+            ${Object.entries(MAINT_PRIORITIES).map(([k,p]) => `<option value="${k}" ${(editing?.priority||'normal')===k?'selected':''}>${escapeHTML(p.label)}</option>`).join('')}
+          </select>
+        </div>
+        ${isManager ? `
+          <div>
+            <label class="label">Status</label>
+            <select id="maint-status" class="input">
+              ${Object.entries(MAINT_STATUSES).map(([k,s]) => `<option value="${k}" ${(editing?.status||'open')===k?'selected':''}>${escapeHTML(s.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="label">Assign to</label>
+            <select id="maint-asg" class="input">
+              <option value="">— Unassigned —</option>
+              ${assignableEmps.map(e => `<option value="${e.id}" ${editing?.assignedTo===e.id?'selected':''}>${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+      </div>
+      ${isManager ? `
+        <div>
+          <label class="label">Resolution notes (optional)</label>
+          <textarea id="maint-resolution" class="input" rows="2" placeholder="What was done, parts replaced, follow-up needed...">${escapeHTML(editing?.resolution||'')}</textarea>
+        </div>
+      ` : ''}
+    </div>
+  `;
+  openModal(editing ? 'Edit request' : 'Report an issue', form, async () => {
+    const title = $('#maint-title').value.trim();
+    if (!title) { toast('Title is required', 'error'); return false; }
+
+    const data = {
+      title,
+      description: $('#maint-desc').value.trim(),
+      asset:       $('#maint-asset').value.trim(),
+      location:    $('#maint-loc').value.trim(),
+      branch:      $('#maint-branch').value.trim(),
+      priority:    $('#maint-pri').value,
+      status:      isManager ? ($('#maint-status')?.value || 'open') : (editing?.status || 'open'),
+      assignedTo:  isManager ? ($('#maint-asg')?.value || null) : (editing?.assignedTo || null),
+      resolution:  isManager ? ($('#maint-resolution')?.value.trim() || '') : (editing?.resolution || ''),
+      reportedBy:  editing?.reportedBy || me?.id,
+    };
+
+    if (editing) {
+      const { data: row, error } = await sb.from('maintenance_requests').update(maintenanceToDb(data)).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapMaintenanceFromDb(row));
+      toast('Request updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('maintenance_requests').insert(maintenanceToDb(data)).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.maintenance.unshift(mapMaintenanceFromDb(row));
+      toast('Request submitted', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Submit' });
+}
+
+async function changeMaintenanceStatus(id, newStatus) {
+  const r = (state.maintenance||[]).find(x => x.id === id);
+  if (!r) return;
+  const { data, error } = await sb.from('maintenance_requests').update({ status: newStatus }).eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(r, mapMaintenanceFromDb(data));
+  render();
+  toast(`Marked ${MAINT_STATUSES[newStatus]?.label || newStatus}`, 'success');
+}
+
+async function resolveMaintenance(id) {
+  const r = (state.maintenance||[]).find(x => x.id === id);
+  if (!r) return;
+  const note = prompt('Resolution notes (optional):', r.resolution || '');
+  if (note === null) return; // cancelled
+  const { data, error } = await sb.from('maintenance_requests')
+    .update({ status: 'resolved', resolution: note || null })
+    .eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(r, mapMaintenanceFromDb(data));
+  render();
+  toast('Marked resolved', 'success');
+}
+
+async function deleteMaintenance(id) {
+  const r = (state.maintenance||[]).find(x => x.id === id);
+  if (!r) return;
+  if (!confirm(`Delete this request? "${r.title}"`)) return;
+  const { error } = await sb.from('maintenance_requests').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.maintenance = state.maintenance.filter(x => x.id !== id);
+  render();
+  toast('Request deleted', 'success');
+}
+
+function renderMaintenanceDashboard() {
+  const me = currentEmployee();
+  if (!me) return renderDashboard();
+
+  const all = (state.maintenance||[]).slice();
+  const open       = all.filter(r => r.status==='open');
+  const inProgress = all.filter(r => r.status==='in_progress');
+  const urgent     = all.filter(r => r.priority==='urgent' && r.status!=='resolved' && r.status!=='cancelled');
+  const myAssigned = all.filter(r => r.assignedTo === me.id && r.status!=='resolved' && r.status!=='cancelled');
+
+  // Resolved this week
+  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - 6); weekStart.setHours(0,0,0,0);
+  const resolvedThisWeek = all.filter(r => r.status==='resolved' && r.resolvedAt && new Date(r.resolvedAt) >= weekStart).length;
+
+  // Triage queue: open + in_progress, sorted by priority then created date
+  const priOrder = { urgent:0, high:1, normal:2, low:3 };
+  const triage = all
+    .filter(r => r.status==='open' || r.status==='in_progress')
+    .sort((a,b) => (priOrder[a.priority]??9) - (priOrder[b.priority]??9) || (a.createdAt||'').localeCompare(b.createdAt||''))
+    .slice(0, 6);
+
+  return `
+    <!-- Hero -->
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('wrench','w-3.5 h-3.5')} Maintenance</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Today's queue &mdash; what's urgent, what's open, and what you're on.</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="location.hash='#/maintenance'" class="btn btn-ghost">${icon('archive','w-4 h-4')} View all</button>
+          <button onclick="openMaintenanceModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Report an issue</button>
+        </div>
+      </div>
+    </div>
+
+    ${urgent.length > 0 ? `
+      <div class="bg-rose-50 border border-rose-200 rounded-2xl p-5 mb-5 flex items-start gap-4">
+        <div class="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-rose-900">${urgent.length} urgent request${urgent.length===1?'':'s'} need attention</div>
+          <div class="text-sm text-rose-800 mt-1">${escapeHTML(urgent.slice(0,3).map(r => r.title).join(', '))}${urgent.length>3?` and ${urgent.length-3} more`:''}.</div>
+          <button onclick="maintenanceFilter={status:'all',priority:'urgent',q:''}; location.hash='#/maintenance'; render();" class="btn btn-primary btn-sm mt-3">${icon('eye','w-4 h-4')} Review urgent</button>
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- Stat cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Open</div>
+        <div class="font-display text-2xl font-semibold ${open.length>0?'text-amber-600':'text-slate-900'} mt-1">${open.length}</div>
+        <div class="text-xs text-slate-500 mt-1">awaiting triage</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">In progress</div>
+        <div class="font-display text-2xl font-semibold text-blue-600 mt-1">${inProgress.length}</div>
+        <div class="text-xs text-slate-500 mt-1">being worked</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Assigned to me</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${myAssigned.length}</div>
+        <div class="text-xs text-slate-500 mt-1">my queue</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Resolved (7d)</div>
+        <div class="font-display text-2xl font-semibold text-emerald-600 mt-1">${resolvedThisWeek}</div>
+        <div class="text-xs text-slate-500 mt-1">last 7 days</div>
+      </div>
+    </div>
+
+    <!-- Triage queue + my queue -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Triage queue</div>
+            <div class="font-display text-lg font-semibold text-slate-900">By priority</div>
+          </div>
+          <a href="#/maintenance" class="text-sm text-brand-700 hover:underline">View all &rarr;</a>
+        </div>
+        ${triage.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2">${icon('check','w-6 h-6')}</div>
+            <div class="text-sm text-slate-600">Nothing waiting. Nice work.</div>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${triage.map(r => {
+              const pri = MAINT_PRIORITIES[r.priority] || MAINT_PRIORITIES.normal;
+              const reporter = getEmployee(r.reportedBy);
+              return `
+                <div class="px-1 py-3 flex items-start gap-3">
+                  <div class="w-1 self-stretch rounded-full ${pri.bar} mt-1" style="min-height:24px"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="font-medium text-slate-900 truncate">${escapeHTML(r.title)}</span>
+                      <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${pri.pill}">${escapeHTML(pri.label)}</span>
+                    </div>
+                    <div class="text-xs text-slate-500 truncate">${reporter ? escapeHTML((reporter.firstName||'')+' '+(reporter.lastName||'')) : '—'}${r.location?' &middot; '+escapeHTML(r.location):''}${r.asset?' &middot; '+escapeHTML(r.asset):''}</div>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">My queue</div>
+            <div class="font-display text-lg font-semibold text-slate-900">Assigned to me</div>
+          </div>
+        </div>
+        ${myAssigned.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-2">${icon('wrench','w-6 h-6')}</div>
+            <div class="text-sm text-slate-600">Nothing assigned to you right now.</div>
+          </div>
+        ` : `
+          <div class="divide-y divide-slate-100 -mx-1">
+            ${myAssigned.slice(0,6).map(r => {
+              const pri = MAINT_PRIORITIES[r.priority] || MAINT_PRIORITIES.normal;
+              const st  = MAINT_STATUSES[r.status]     || MAINT_STATUSES.open;
+              return `
+                <div class="px-1 py-3 flex items-start gap-3">
+                  <div class="w-1 self-stretch rounded-full ${pri.bar} mt-1" style="min-height:24px"></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="font-medium text-slate-900 truncate">${escapeHTML(r.title)}</span>
+                      <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${st.pill}">${escapeHTML(st.label)}</span>
+                    </div>
+                    <div class="text-xs text-slate-500 truncate">${escapeHTML(pri.label)} priority${r.location?' &middot; '+escapeHTML(r.location):''}</div>
+                  </div>
+                  ${r.status !== 'in_progress' ? `<button onclick="changeMaintenanceStatus('${r.id}','in_progress')" class="text-xs btn btn-ghost btn-sm">Start</button>` : ''}
+                  <button onclick="resolveMaintenance('${r.id}')" class="text-xs btn btn-ghost btn-sm">Resolve</button>
                 </div>`;
             }).join('')}
           </div>
@@ -8179,6 +8691,7 @@ function render() {
     case 'archive':      content = renderArchive(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','inventory') ? renderInventory() : renderRoleDashboard(); break;
+    case 'maintenance':  content = renderMaintenance(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;

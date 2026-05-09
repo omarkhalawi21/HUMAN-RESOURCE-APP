@@ -1044,6 +1044,103 @@ CREATE POLICY "inventory_delete_admin_or_inventory"
   USING (public.has_role(ARRAY['admin','inventory']));
 
 -- =============================================================
+-- 17. MAINTENANCE REQUESTS (work orders)
+--    Anyone can submit a request for their own equipment / area.
+--    Maintenance + admins manage and resolve them. Non-admins can
+--    only SELECT requests they personally reported (so the bell
+--    doesn't ring for the whole company on every broken cup).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.maintenance_requests (
+  id           uuid primary key default gen_random_uuid(),
+  title        text not null,
+  description  text,
+  branch       text,
+  location     text,
+  asset        text,
+  priority     text not null default 'normal'
+    CHECK (priority IN ('low','normal','high','urgent')),
+  status       text not null default 'open'
+    CHECK (status IN ('open','in_progress','resolved','cancelled')),
+  reported_by  uuid references public.employees(id),
+  assigned_to  uuid references public.employees(id),
+  resolution   text,
+  resolved_at  timestamptz,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS maintenance_status_idx     ON public.maintenance_requests(status);
+CREATE INDEX IF NOT EXISTS maintenance_priority_idx   ON public.maintenance_requests(priority);
+CREATE INDEX IF NOT EXISTS maintenance_reporter_idx   ON public.maintenance_requests(reported_by);
+
+-- Auto-touch updated_at; also stamps resolved_at the moment status flips
+-- to 'resolved' (only if not already set).
+CREATE OR REPLACE FUNCTION public.touch_maintenance_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  IF NEW.status = 'resolved' AND OLD.status IS DISTINCT FROM 'resolved'
+     AND NEW.resolved_at IS NULL THEN
+    NEW.resolved_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS maintenance_touch_updated_at ON public.maintenance_requests;
+CREATE TRIGGER maintenance_touch_updated_at
+  BEFORE UPDATE ON public.maintenance_requests
+  FOR EACH ROW EXECUTE FUNCTION public.touch_maintenance_updated_at();
+
+ALTER TABLE public.maintenance_requests ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'maintenance_requests'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+-- SELECT: admin/maintenance see everything; others see only their own.
+CREATE POLICY "maintenance_select_self_or_admin"
+  ON public.maintenance_requests FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','maintenance'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = maintenance_requests.reported_by
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- INSERT: any authenticated user can submit, but only as themselves
+-- (reported_by must point to their own employee row). Admin/maintenance
+-- may also insert on someone else's behalf.
+CREATE POLICY "maintenance_insert_self_or_admin"
+  ON public.maintenance_requests FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','maintenance'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = maintenance_requests.reported_by
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- UPDATE / DELETE: admin or maintenance only.
+CREATE POLICY "maintenance_update_admin"
+  ON public.maintenance_requests FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','maintenance']))
+  WITH CHECK (public.has_role(ARRAY['admin','maintenance']));
+CREATE POLICY "maintenance_delete_admin"
+  ON public.maintenance_requests FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','maintenance']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
