@@ -1579,6 +1579,39 @@ function renderDashboard() {
     </div>`;
     })() : ''}
 
+    <!-- Cross-department overview (admin only — one-stop view across departments) -->
+    ${isAdmin() ? (() => {
+      const ymNow = todayISO().slice(0,7);
+      const receiptsMtd = (state.receipts||[]).filter(r => (r.receiptDate||'').slice(0,7) === ymNow);
+      const receiptsMtdTotal = receiptsMtd.reduce((s,r) => s + (Number(r.amount)||0), 0);
+      const lowStock = (state.inventory||[]).filter(isLowStock).length;
+      const openMaint = (state.maintenance||[]).filter(m => m.status==='open').length;
+      const urgentMaint = (state.maintenance||[]).filter(m => m.priority==='urgent' && m.status!=='resolved' && m.status!=='cancelled').length;
+      return `
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <button onclick="location.hash='#/receipts'" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('receipt','w-3.5 h-3.5')} Accounting MTD</div>
+            <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${fmtMoney(receiptsMtdTotal)}</div>
+            <div class="text-xs text-slate-500 mt-1">${receiptsMtd.length} receipt${receiptsMtd.length===1?'':'s'} this month</div>
+          </button>
+          <button onclick="inventoryFilter={category:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('box','w-3.5 h-3.5')} Low stock</div>
+            <div class="font-display text-2xl font-semibold ${lowStock>0?'text-rose-600':'text-slate-900'} mt-1">${lowStock}</div>
+            <div class="text-xs text-slate-500 mt-1">${lowStock>0?'need restock':'all healthy'}</div>
+          </button>
+          <button onclick="maintenanceFilter={status:'open',priority:'all',q:''}; location.hash='#/maintenance'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wrench','w-3.5 h-3.5')} Open work orders</div>
+            <div class="font-display text-2xl font-semibold ${openMaint>0?'text-amber-600':'text-slate-900'} mt-1">${openMaint}</div>
+            <div class="text-xs text-slate-500 mt-1">awaiting triage</div>
+          </button>
+          <button onclick="maintenanceFilter={status:'all',priority:'urgent',q:''}; location.hash='#/maintenance'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('warning','w-3.5 h-3.5')} Urgent maintenance</div>
+            <div class="font-display text-2xl font-semibold ${urgentMaint>0?'text-rose-600':'text-slate-900'} mt-1">${urgentMaint}</div>
+            <div class="text-xs text-slate-500 mt-1">${urgentMaint>0?'need attention':'none'}</div>
+          </button>
+        </div>`;
+    })() : ''}
+
     <!-- Inventory snapshot (read-only) -->
     ${admin ? inventorySnapshotHTML() : ''}
 
@@ -7496,12 +7529,27 @@ function isLowStock(item) {
   return Number(item.reorderThreshold) > 0 && Number(item.quantity) <= Number(item.reorderThreshold);
 }
 // Read-only inventory snapshot for admin/HR and Operations dashboards.
-// Returns '' when state.inventory is empty (e.g. role has no SELECT
-// access or there are simply no items yet) so the card disappears
-// rather than showing a hollow widget.
+// Empty state still renders (with a CTA for roles that can write) so
+// admins always see inventory live on their one-stop dashboard.
 function inventorySnapshotHTML() {
   const all = (state.inventory || []).slice();
-  if (all.length === 0) return '';
+  if (all.length === 0) {
+    const canAdd = hasRole('admin','head_barista');
+    return `
+      <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
+        <div class="flex items-center justify-between gap-4 flex-wrap">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon('box','w-5 h-5')}</div>
+            <div class="min-w-0">
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Inventory</div>
+              <div class="font-medium text-slate-900">No items tracked yet</div>
+              <div class="text-xs text-slate-500">Once stock is added, low-stock alerts and recent updates show up here.</div>
+            </div>
+          </div>
+          ${canAdd ? `<button onclick="openInventoryItemModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add item</button>` : ''}
+        </div>
+      </div>`;
+  }
   const lowItems = all.filter(isLowStock);
   const recent = all.slice().sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||'')).slice(0, 3);
   return `
