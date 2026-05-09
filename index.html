@@ -596,6 +596,22 @@ function mapCompanyFromDb(r) {
     addressLine3: r.address_line3        || 'Khobar 33425',
   };
 }
+// System roles drive permissions, dashboards, and routing. Distinct from
+// the free-text job_title (e.g. "Senior Barista") which is .role on the JS
+// employee object. Order here is the order shown in the role dropdown.
+const ROLES = {
+  admin:        { label: 'Admin' },
+  hr:           { label: 'HR' },
+  operations:   { label: 'Operations' },
+  accounting:   { label: 'Accounting' },
+  inventory:    { label: 'Inventory' },
+  head_barista: { label: 'Head Barista' },
+  barista:      { label: 'Barista' },
+  maintenance:  { label: 'Maintenance' },
+  employee:     { label: 'Employee' },
+};
+function roleLabel(key) { return ROLES[key]?.label || (key||'Employee'); }
+
 function mapEmployeeFromDb(r) {
   return {
     id: r.id, user_id: r.user_id,
@@ -604,6 +620,7 @@ function mapEmployeeFromDb(r) {
     role: r.job_title, department: r.department,
     hireDate: r.hire_date, salary: Number(r.salary)||0,
     status: r.status, isAdmin: r.is_admin,
+    systemRole: r.system_role || (r.is_admin ? 'admin' : 'employee'),
     avatarColor: r.avatar_color || '#a87035',
     photo: r.photo,
     leave_annual: r.leave_annual, leave_sick: r.leave_sick, leave_personal: r.leave_personal,
@@ -617,12 +634,15 @@ function mapEmployeeFromDb(r) {
   };
 }
 function employeeToDb(e) {
+  const sysRole = e.systemRole && ROLES[e.systemRole] ? e.systemRole : 'employee';
   return {
     first_name: e.firstName, last_name: e.lastName||'',
     email: e.email, phone: e.phone||null,
     job_title: e.role || 'Employee', department: e.department || 'General',
     hire_date: e.hireDate, salary: Number(e.salary)||0,
     status: e.status || 'active',
+    system_role: sysRole,
+    is_admin: sysRole === 'admin',
     avatar_color: e.avatarColor, photo: e.photo,
   };
 }
@@ -931,7 +951,15 @@ function currentEmployee() {
   if (!state.session) return null;
   return state.employees.find(e => e.user_id === state.session.userId) || null;
 }
-function isAdmin() { return currentEmployee()?.isAdmin === true; }
+function isAdmin() {
+  const e = currentEmployee();
+  return e?.systemRole === 'admin' || e?.isAdmin === true;
+}
+function currentRole() {
+  const e = currentEmployee();
+  return e?.systemRole || (e?.isAdmin ? 'admin' : 'employee');
+}
+function hasRole(...roles) { return roles.includes(currentRole()); }
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
@@ -1308,7 +1336,7 @@ function renderShell(routeContent) {
           ${avatarHTML(emp, 36)}
           <div class="flex-1 min-w-0">
             <div class="text-sm font-semibold text-slate-900 truncate">${escapeHTML(emp.firstName+' '+emp.lastName)}</div>
-            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)}${admin?' · Admin':''}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)} &middot; ${escapeHTML(roleLabel(emp.systemRole))}</div>
           </div>
         </div>
         <button onclick="logout()" class="w-full mt-2 flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-slate-900 py-2 rounded-lg hover:bg-slate-50">
@@ -2155,7 +2183,7 @@ function renderEmployeeProfile(empId) {
             <div class="text-sm text-slate-500 mt-1">${escapeHTML(e.role)} · ${escapeHTML(e.department)}</div>
             <div class="flex items-center gap-2 mt-3 flex-wrap">
               ${statusBadge(e.status)}
-              <span class="badge ${e.isAdmin?'badge-purple':'badge-slate'}">${e.isAdmin?'Admin':'Employee'}</span>
+              <span class="badge ${e.systemRole==='admin'?'badge-purple':'badge-slate'}">${escapeHTML(roleLabel(e.systemRole))}</span>
               ${joinDate ? `<span class="text-xs text-slate-500">·  ${yearsAtCompany} yr at company</span>` : ''}
             </div>
           </div>
@@ -2457,7 +2485,13 @@ function openEmployeeModal(id) {
             ${[...new Set([...COMMON_NATIONALITIES, ...Object.values(state.empExtras||{}).map(x=>x.nationality).filter(Boolean)])].map(n=>`<option value="${escapeHTML(n)}">`).join('')}
           </datalist>
         </div>
-        <div><label class="label">Role</label><input id="m-ro" class="input" value="${escapeHTML(editing?.role||'')}"></div>
+        <div><label class="label">Job title</label><input id="m-ro" class="input" placeholder="e.g. Senior Barista" value="${escapeHTML(editing?.role||'')}"></div>
+        <div><label class="label">System role</label>
+          <select id="m-sysrole" class="input" ${editing && editing.user_id === state.session?.userId ? 'disabled title="You cannot change your own role"' : ''}>
+            ${Object.entries(ROLES).map(([k,r]) => `<option value="${k}" ${(editing?.systemRole||'employee')===k?'selected':''}>${escapeHTML(r.label)}</option>`).join('')}
+          </select>
+          <div class="text-[10px] text-slate-500 mt-1">Controls dashboard access &amp; permissions. Distinct from job title.</div>
+        </div>
         <div><label class="label">Department</label>
           ${(() => {
             const deptOptions = [...new Set([...SUGGESTED_DEPARTMENTS, ...state.employees.map(e=>e.department).filter(Boolean)])];
@@ -2533,6 +2567,7 @@ function openEmployeeModal(id) {
     </div>
   `;
   openModal(editing ? 'Edit employee' : t('add_employee'), form, async () => {
+    const sysSel = $('#m-sysrole');
     const data = {
       firstName: $('#m-fn').value.trim(),
       lastName:  $('#m-ln').value.trim(),
@@ -2543,6 +2578,8 @@ function openEmployeeModal(id) {
       hireDate:  $('#m-hd').value,
       salary:    Number($('#m-sa').value)||0,
       status:    $('#m-st').value,
+      // Disabled select on self-edit; preserve the original to avoid clobber.
+      systemRole: (sysSel && !sysSel.disabled) ? sysSel.value : (editing?.systemRole || 'employee'),
     };
     if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
     const dbRow = { ...employeeToDb(data), photo: _pendingPhoto, avatar_color: editing?.avatarColor || pickColor() };
