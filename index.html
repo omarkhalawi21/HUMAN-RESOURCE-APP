@@ -8025,6 +8025,7 @@ function openInventoryHistoryModal(itemId) {
                               : m.type === 'restock' ? 'bg-emerald-50 text-emerald-700'
                               : m.type === 'sale' ? 'bg-rose-50 text-rose-700'
                               : 'bg-slate-100 text-slate-700';
+              const canDelete = hasRole('admin','head_barista','roaster');
               return `
                 <div class="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
                   <div class="text-right shrink-0 min-w-[64px]">
@@ -8039,6 +8040,7 @@ function openInventoryHistoryModal(itemId) {
                   <div class="text-right shrink-0 tabular-nums">
                     <div class="font-semibold ${positive?'text-emerald-700':'text-rose-700'}">${positive?'+':''}${Number(m.qtyDelta).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${unit}</span></div>
                   </div>
+                  ${canDelete ? `<button onclick="deleteInventoryMovement('${m.id}')" title="Delete (restores quantity)" aria-label="Delete movement" class="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 shrink-0">${icon('trash','w-4 h-4')}</button>` : ''}
                 </div>`;
             }).join('')}
           </div>
@@ -8189,6 +8191,279 @@ function recalcRoastYield() {
   }
 }
 
+// Inter-branch transfer. Single movement on the source item:
+// negative qty_delta, type='transfer', branch=source, notes start
+// with "→ {destination}". Keeps the schema simple — the destination
+// branch lives in the note. Phase D can pair this with a matching
+// destination item if/when items are branch-scoped duplicates.
+async function logTransfer(itemId, qty, fromBranch, toBranch, opts = {}) {
+  const trimmedNotes = (opts.notes || '').trim();
+  const composedNote = `→ ${toBranch || '?'}${trimmedNotes ? ' · ' + trimmedNotes : ''}`;
+  return logInventoryMovement(itemId, -Math.abs(Number(qty) || 0), {
+    type: 'transfer',
+    branch: fromBranch || null,
+    occurredAt: opts.occurredAt,
+    notes: composedNote,
+  });
+}
+
+function openTransferModal() {
+  const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
+  const branches = SUGGESTED_BRANCHES;
+  const today = todayISO();
+
+  const form = `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-800">
+        ${icon('refresh','w-4 h-4 inline')} Records the move out of the source branch. The destination branch is captured in the entry's notes; if you also keep a separate item for the destination branch, log a matching restock there.
+      </div>
+      <div>
+        <label class="label">Item</label>
+        <select id="tf-item" class="input" onchange="onTransferItemChange()">
+          ${items.map(i => `<option value="${i.id}" data-branch="${escapeHTML(i.branch||'')}">${escapeHTML(i.name)}${i.branch?' · '+escapeHTML(i.branch):''} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')})</option>`).join('')}
+        </select>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">From branch</label>
+          <select id="tf-from" class="input">
+            <option value="">— Auto from item —</option>
+            ${branches.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">To branch</label>
+          <select id="tf-to" class="input">
+            ${branches.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Quantity</label>
+          <input id="tf-qty" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+        </div>
+        <div>
+          <label class="label">Date</label>
+          <input id="tf-date" type="date" class="input" value="${today}">
+        </div>
+        <div class="md:col-span-2">
+          <label class="label">Notes (optional)</label>
+          <textarea id="tf-notes" class="input" rows="2" placeholder="vehicle, courier, batch, anything you want recorded"></textarea>
+        </div>
+      </div>
+    </div>
+  `;
+  openModal('Log inter-branch transfer', form, async () => {
+    const itemId = $('#tf-item').value;
+    const fromB  = $('#tf-from').value;
+    const toB    = $('#tf-to').value;
+    const qty    = parseFloat($('#tf-qty').value);
+    const date   = $('#tf-date').value;
+    const notes  = $('#tf-notes').value.trim();
+    if (!itemId)               { toast('Pick an item', 'error');             return false; }
+    if (!toB)                  { toast('Pick a destination branch', 'error'); return false; }
+    if (isNaN(qty) || qty <= 0){ toast('Enter a positive quantity', 'error'); return false; }
+    const it = (state.inventory||[]).find(i => i.id === itemId);
+    const sourceBranch = fromB || (it?.branch || '');
+    if (sourceBranch === toB)  { toast('Source and destination must differ', 'error'); return false; }
+    const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, notes });
+    if (!m) return false;
+    render();
+    toast(`Transfer logged — ${qty} → ${toB}`, 'success');
+    return true;
+  }, { saveLabel: 'Log transfer' });
+  // Pre-select the from-branch from the chosen item once the modal mounts.
+  setTimeout(onTransferItemChange, 0);
+}
+
+function onTransferItemChange() {
+  const sel = document.getElementById('tf-item');
+  const from = document.getElementById('tf-from');
+  if (!sel || !from) return;
+  const opt = sel.options[sel.selectedIndex];
+  const b = opt?.dataset?.branch || '';
+  if (b && Array.from(from.options).some(o => o.value === b)) from.value = b;
+}
+
+// Delete a movement and restore the item quantity. Item qty change is
+// the inverse of the movement's qty_delta. Floors at 0 — if the
+// movement was a positive in and qty has since dropped below |delta|
+// (because of subsequent outs), we can only restore to zero.
+async function deleteInventoryMovement(movementId) {
+  const m = (state.inventoryMovements||[]).find(x => x.id === movementId);
+  if (!m) return;
+  const it = (state.inventory||[]).find(x => x.id === m.itemId);
+  if (!it) return;
+  if (!confirm(`Delete this ${(MOVEMENT_TYPES[m.type]||MOVEMENT_TYPES.other).label.toLowerCase()} of ${m.qtyDelta>0?'+':''}${m.qtyDelta} ${it.unit||'units'} on ${fmtDate(m.occurredAt||'')}?\n\nThe item quantity will be restored.`)) return;
+  const restoredQty = Math.max(0, Number(it.quantity) - Number(m.qtyDelta));
+
+  const mDel = await sb.from('inventory_movements').delete().eq('id', movementId);
+  if (mDel.error) { toast(mDel.error.message, 'error'); return; }
+  const qUpd = await sb.from('inventory_items').update({ quantity: restoredQty }).eq('id', it.id).select().single();
+  if (qUpd.error) {
+    toast('Movement deleted, but quantity update failed: ' + qUpd.error.message, 'error');
+  } else {
+    Object.assign(it, mapInventoryItemFromDb(qUpd.data));
+  }
+  state.inventoryMovements = state.inventoryMovements.filter(x => x.id !== movementId);
+  // If the history modal is open, re-render it to reflect the deletion.
+  if (document.getElementById('modal-root')) {
+    closeModal();
+    openInventoryHistoryModal(it.id);
+  }
+  render();
+  toast('Movement deleted, quantity restored', 'success');
+}
+
+// Letterhead-styled weekly inventory report. Mirrors the spreadsheet
+// layout: green beans block, per-branch roasted shelf, packaging,
+// and the week's movements. Opens in a new window with a Print/Save
+// button at the top.
+function printWeeklyInventoryReport() {
+  const all = (state.inventory || []).slice();
+  if (all.length === 0) { toast('Add inventory items first.', 'error'); return; }
+  const today = new Date();
+  const todayISOd = today.toISOString().slice(0,10);
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6); weekAgo.setHours(0,0,0,0);
+  const weekStartISO = weekAgo.toISOString().slice(0,10);
+
+  const greens     = all.filter(i => i.category === 'beans_raw');
+  const roasted    = all.filter(i => i.category === 'beans_roast');
+  const packaging  = all.filter(i => ['packaging','cups_lids'].includes(i.category));
+
+  const sumQty = list => list.reduce((s,i) => s + (Number(i.quantity)||0), 0);
+
+  const moves = (state.inventoryMovements||[]).filter(m => (m.occurredAt||'') >= weekStartISO && (m.occurredAt||'') <= todayISOd);
+  const movesSorted = moves.slice().sort((a,b) =>
+    (b.occurredAt||'').localeCompare(a.occurredAt||'') ||
+    (b.createdAt||'').localeCompare(a.createdAt||'')
+  );
+
+  // Roasted shelf grouped by branch (FAISALIYAH/KHOBAR/RAYYAN order)
+  const branchGroups = {};
+  roasted.forEach(it => {
+    const b = (it.branch||'').trim() || 'Unassigned';
+    (branchGroups[b] = branchGroups[b] || []).push(it);
+  });
+  const orderedBranches = [
+    ...SUGGESTED_BRANCHES.filter(b => branchGroups[b]),
+    ...Object.keys(branchGroups).filter(b => !SUGGESTED_BRANCHES.includes(b) && b !== 'Unassigned').sort(),
+    ...(branchGroups['Unassigned'] ? ['Unassigned'] : []),
+  ];
+
+  // Per-bean roast totals over the week (sum of negative type='roast' deltas on green items, abs)
+  const roastByBean = {};
+  moves.filter(m => m.type === 'roast').forEach(m => {
+    const it = all.find(i => i.id === m.itemId);
+    if (!it || it.category !== 'beans_raw') return;
+    roastByBean[it.name] = (roastByBean[it.name] || 0) + Math.abs(m.qtyDelta);
+  });
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Weekly Roaster Report — ${escapeHTML(state.settings.companyName||'')}</title>
+  <style>
+    ${LETTERHEAD_CSS}
+    .page { max-width: 960px; }
+    h3.section { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#0f172a; margin:22px 0 8px; }
+    table.t { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px; }
+    table.t th { text-align:left; padding:8px 10px; background:#0f172a; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; }
+    table.t td { padding:7px 10px; border-bottom:1px solid #e5e7eb; vertical-align:top; }
+    table.t tr:nth-child(even) td { background:#fafafa; }
+    table.t td.r, table.t th.r { text-align:right; font-variant-numeric: tabular-nums; }
+    .branch-foot { background:#fdf6e8 !important; font-weight:700; }
+    .small { color:#6b7280; font-size:11px; }
+    @media print { .actions { display:none; } }
+  </style></head><body>
+  <div class="actions" style="margin:18px;"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML('WEEKLY ROASTER REPORT.')}
+    <div class="doc-date">Week of ${fmtDate(weekStartISO)} — ${fmtDate(todayISOd)}</div>
+    <p class="doc-intro">Snapshot of green beans on hand, the roasted shelf at each branch, packaging stock, and every movement logged in the last 7 days. Issued by the Roaster department.</p>
+
+    <h3 class="section">Green beans</h3>
+    ${greens.length === 0 ? `<p class="small">No green-bean items tracked.</p>` : `
+      <table class="t">
+        <thead><tr><th>Bean</th><th>SKU</th><th class="r">On hand</th><th class="r">Roasted (last 7d)</th><th class="r">Reorder ≤</th></tr></thead>
+        <tbody>
+          ${greens.map(it => `
+            <tr>
+              <td>${escapeHTML(it.name||'')}</td>
+              <td>${escapeHTML(it.sku||'')}</td>
+              <td class="r">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(it.unit||'units')}</td>
+              <td class="r">${(roastByBean[it.name]||0).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+              <td class="r">${Number(it.reorderThreshold||0) > 0 ? Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2}) : '—'}</td>
+            </tr>`).join('')}
+          <tr class="branch-foot"><td colspan="2">Total green stock</td><td class="r">${sumQty(greens).toLocaleString(undefined,{maximumFractionDigits:2})}</td><td class="r">${Object.values(roastByBean).reduce((s,n)=>s+n,0).toLocaleString(undefined,{maximumFractionDigits:2})}</td><td></td></tr>
+        </tbody>
+      </table>`}
+
+    <h3 class="section">Roasted shelf — by branch</h3>
+    ${roasted.length === 0 ? `<p class="small">No roasted items tracked.</p>` : orderedBranches.map(b => {
+      const list = branchGroups[b];
+      const total = sumQty(list);
+      return `
+        <table class="t">
+          <thead><tr><th>${escapeHTML(b)}</th><th>SKU</th><th class="r">Qty</th><th class="r">Reorder ≤</th></tr></thead>
+          <tbody>
+            ${list.map(it => `
+              <tr>
+                <td>${escapeHTML(it.name||'')}</td>
+                <td>${escapeHTML(it.sku||'')}</td>
+                <td class="r">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(it.unit||'units')}</td>
+                <td class="r">${Number(it.reorderThreshold||0) > 0 ? Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2}) : '—'}</td>
+              </tr>`).join('')}
+            <tr class="branch-foot"><td colspan="2">${escapeHTML(b)} total</td><td class="r">${total.toLocaleString(undefined,{maximumFractionDigits:2})}</td><td></td></tr>
+          </tbody>
+        </table>`;
+    }).join('')}
+
+    ${packaging.length > 0 ? `
+      <h3 class="section">Packaging &amp; cups</h3>
+      <table class="t">
+        <thead><tr><th>Item</th><th>SKU</th><th class="r">On hand</th><th class="r">Reorder ≤</th></tr></thead>
+        <tbody>
+          ${packaging.map(it => `
+            <tr>
+              <td>${escapeHTML(it.name||'')}</td>
+              <td>${escapeHTML(it.sku||'')}</td>
+              <td class="r">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(it.unit||'units')}</td>
+              <td class="r">${Number(it.reorderThreshold||0) > 0 ? Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2}) : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    ` : ''}
+
+    <h3 class="section">Movements this week (${moves.length})</h3>
+    ${moves.length === 0 ? `<p class="small">No movements logged in the last 7 days.</p>` : `
+      <table class="t">
+        <thead><tr><th>Date</th><th>Item</th><th>Type</th><th>Branch</th><th>Notes</th><th class="r">Qty</th></tr></thead>
+        <tbody>
+          ${movesSorted.map(m => {
+            const it = all.find(i => i.id === m.itemId);
+            const recorder = getEmployee(m.recordedBy);
+            const recorderName = recorder ? ((recorder.firstName||'')+' '+(recorder.lastName||'')).trim() : '';
+            const positive = m.qtyDelta > 0;
+            return `
+              <tr>
+                <td>${escapeHTML(fmtDate(m.occurredAt||''))}</td>
+                <td>${escapeHTML(it?.name||'(deleted)')}</td>
+                <td>${escapeHTML((MOVEMENT_TYPES[m.type]||MOVEMENT_TYPES.other).label)}</td>
+                <td>${escapeHTML(m.branch||'')}</td>
+                <td>${escapeHTML(m.notes||'')}${recorderName?` <span class="small">(${escapeHTML(recorderName)})</span>`:''}</td>
+                <td class="r" style="color:${positive?'#047857':'#b91c1c'}">${positive?'+':''}${Number(m.qtyDelta).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`}
+  </div>
+  </body></html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) { toast('Popup blocked — allow popups to print', 'error'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
 function openLogMovementModal(prefilledItemId) {
   const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
   if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
@@ -8305,6 +8580,8 @@ function renderRoaster() {
           <p class="text-slate-500 mt-1 text-sm max-w-md">Track green beans, the daily roasted shelf, and what's moved this week. Bean items are kept in the main inventory under <em>beans_raw</em> and <em>beans_roast</em>.</p>
         </div>
         <div class="flex gap-2 flex-wrap">
+          <button onclick="printWeeklyInventoryReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Weekly report</button>
+          <button onclick="openTransferModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log transfer</button>
           <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
           <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
           <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
