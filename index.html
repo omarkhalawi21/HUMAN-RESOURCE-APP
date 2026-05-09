@@ -6278,12 +6278,14 @@ function renderReceipts() {
     monthlyTotals[m] = (monthlyTotals[m] || 0) + (Number(r.amount) || 0);
   });
 
-  const byDay = {};
+  const byMonthDay = {};
   filtered.forEach(r => {
+    const m = (r.receiptDate||'').slice(0,7) || 'Unknown';
     const d = r.receiptDate || 'Unknown';
-    (byDay[d] = byDay[d] || []).push(r);
+    if (!byMonthDay[m]) byMonthDay[m] = {};
+    (byMonthDay[m][d] = byMonthDay[m][d] || []).push(r);
   });
-  const days = Object.keys(byDay).sort().reverse();
+  const sortedMonths = Object.keys(byMonthDay).sort().reverse();
   const grandTotal = filtered.reduce((s,r) => s + (Number(r.amount) || 0), 0);
 
   return `
@@ -6338,34 +6340,77 @@ function renderReceipts() {
           <div class="text-sm font-semibold text-slate-900">Total: ${fmtMoney(grandTotal)}</div>
         </div>
         <div class="divide-y divide-slate-100">
-          ${days.map(day => {
-            const list = byDay[day];
-            const dayTotal = list.reduce((s,r) => s + (Number(r.amount)||0), 0);
+          ${sortedMonths.map(month => {
+            const dayMap = byMonthDay[month];
+            const monthList = Object.values(dayMap).flat();
+            const monthTotal = monthList.reduce((s,r) => s + (Number(r.amount)||0), 0);
+            const sortedDays = Object.keys(dayMap).sort().reverse();
+            const byPerson = {};
+            monthList.forEach(r => {
+              const pid = r.uploadedBy || '__unknown__';
+              if (!byPerson[pid]) byPerson[pid] = { count: 0, total: 0 };
+              byPerson[pid].count++;
+              byPerson[pid].total += Number(r.amount) || 0;
+            });
+            const persons = Object.entries(byPerson).sort((a,b) => b[1].total - a[1].total);
             return `
               <div>
-                <div class="px-5 py-2 bg-slate-50 flex items-center justify-between">
-                  <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(fmtDate(day))}</div>
-                  <div class="text-xs text-slate-600 font-semibold">${fmtMoney(dayTotal)} &middot; ${list.length} item${list.length===1?'':'s'}</div>
+                <div class="px-5 py-3 bg-brand-50/60 border-y border-slate-100 flex items-center justify-between">
+                  <div class="font-display text-base font-semibold text-slate-900">${escapeHTML(monthLabel(month))}</div>
+                  <div class="text-xs text-slate-600 font-semibold">${monthList.length} item${monthList.length===1?'':'s'}</div>
                 </div>
-                ${list.map(r => {
-                  const cat = RECEIPT_CATEGORIES[r.category] || RECEIPT_CATEGORIES.other;
-                  const uploader = getEmployee(r.uploadedBy);
+                ${sortedDays.map(day => {
+                  const list = dayMap[day];
+                  const dayTotal = list.reduce((s,r) => s + (Number(r.amount)||0), 0);
                   return `
-                    <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
-                      <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
-                      <div class="flex-1 min-w-0">
-                        <div class="font-medium text-slate-900 truncate" title="${escapeHTML(r.vendor)}">${escapeHTML(r.vendor)}</div>
-                        <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${r.notes?' &middot; '+escapeHTML(r.notes):''}${uploader?' &middot; by '+escapeHTML(uploader.firstName||''):''}</div>
+                    <div>
+                      <div class="px-5 py-2 bg-slate-50 flex items-center justify-between">
+                        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(fmtDate(day))}</div>
+                        <div class="text-xs text-slate-600 font-semibold">${fmtMoney(dayTotal)} &middot; ${list.length} item${list.length===1?'':'s'}</div>
                       </div>
-                      <div class="text-right shrink-0">
-                        <div class="font-semibold text-slate-900">${fmtMoney(r.amount)}</div>
-                      </div>
-                      <div class="flex gap-1 shrink-0">
-                        ${r.dataUrl ? `<button onclick="previewReceipt('${r.id}')" title="View" aria-label="View receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>` : ''}
-                        <button onclick="deleteReceipt('${r.id}')" title="Delete" aria-label="Delete receipt" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
-                      </div>
+                      ${list.map(r => {
+                        const cat = RECEIPT_CATEGORIES[r.category] || RECEIPT_CATEGORIES.other;
+                        const uploader = getEmployee(r.uploadedBy);
+                        return `
+                          <div class="px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
+                            <div class="w-10 h-10 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(cat.icon,'w-5 h-5')}</div>
+                            <div class="flex-1 min-w-0">
+                              <div class="font-medium text-slate-900 truncate" title="${escapeHTML(r.vendor)}">${escapeHTML(r.vendor)}</div>
+                              <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${r.notes?' &middot; '+escapeHTML(r.notes):''}${uploader?' &middot; by '+escapeHTML(uploader.firstName||''):''}</div>
+                            </div>
+                            <div class="text-right shrink-0">
+                              <div class="font-semibold text-slate-900">${fmtMoney(r.amount)}</div>
+                            </div>
+                            <div class="flex gap-1 shrink-0">
+                              ${r.dataUrl ? `<button onclick="previewReceipt('${r.id}')" title="View" aria-label="View receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>` : ''}
+                              <button onclick="deleteReceipt('${r.id}')" title="Delete" aria-label="Delete receipt" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                            </div>
+                          </div>`;
+                      }).join('')}
                     </div>`;
                 }).join('')}
+                <div class="px-5 py-3 bg-slate-50/60 border-t border-slate-100">
+                  <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Posted by</div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    ${persons.map(([pid, info]) => {
+                      const emp = pid === '__unknown__' ? null : getEmployee(pid);
+                      const name = emp ? ((emp.firstName||'') + ' ' + (emp.lastName||'')).trim() : 'Unknown';
+                      const initial = (emp?.firstName || '?').charAt(0).toUpperCase();
+                      return `
+                        <div class="flex items-center gap-2 text-sm">
+                          <div class="w-7 h-7 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-semibold shrink-0">${escapeHTML(initial)}</div>
+                          <div class="flex-1 min-w-0">
+                            <div class="font-medium text-slate-900 truncate">${escapeHTML(name)}</div>
+                            <div class="text-xs text-slate-500">${info.count} receipt${info.count===1?'':'s'} &middot; ${fmtMoney(info.total)}</div>
+                          </div>
+                        </div>`;
+                    }).join('')}
+                  </div>
+                </div>
+                <div class="px-5 py-3 bg-brand-50 border-t border-slate-200 flex items-center justify-between">
+                  <div class="text-sm font-semibold text-slate-900">${escapeHTML(monthLabel(month))} total</div>
+                  <div class="font-display text-lg font-bold text-brand-700">${fmtMoney(monthTotal)}</div>
+                </div>
               </div>`;
           }).join('')}
         </div>
