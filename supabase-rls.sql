@@ -688,6 +688,107 @@ CREATE POLICY "receipts_delete_admin"
   ON public.receipts FOR DELETE TO authenticated USING (public.is_admin());
 
 -- =============================================================
+-- 13. SYSTEM ROLE ENUM (multi-department permission model)
+--    Adds `system_role` to employees as the new permission key.
+--    The legacy `is_admin` boolean is kept and stays in sync via
+--    the frontend (employeeToDb sets both); this is intentional
+--    so partial deployments don't lock anyone out. A future PR
+--    can drop `is_admin` once all RLS reads from `system_role`.
+-- =============================================================
+
+ALTER TABLE public.employees
+  ADD COLUMN IF NOT EXISTS system_role text DEFAULT 'employee';
+
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista',
+    'inventory','accounting','maintenance','employee'
+  ));
+
+-- Backfill: anyone currently is_admin becomes 'admin', otherwise 'employee'.
+UPDATE public.employees
+   SET system_role = CASE WHEN is_admin THEN 'admin' ELSE 'employee' END
+ WHERE system_role IS NULL;
+
+-- BEFORE INSERT trigger: if system_role wasn't supplied, derive it from
+-- is_admin so the existing handle_new_user trigger keeps working unchanged.
+CREATE OR REPLACE FUNCTION public.sync_employee_system_role()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.system_role IS NULL THEN
+    NEW.system_role := CASE WHEN NEW.is_admin THEN 'admin' ELSE 'employee' END;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS sync_employee_system_role_trigger ON public.employees;
+CREATE TRIGGER sync_employee_system_role_trigger
+  BEFORE INSERT ON public.employees
+  FOR EACH ROW EXECUTE FUNCTION public.sync_employee_system_role();
+
+-- is_admin() now reads from system_role. Falls back to the legacy boolean
+-- for any row where the backfill hasn't run (defence in depth).
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.employees
+    WHERE user_id = auth.uid()
+      AND (system_role = 'admin' OR is_admin = true)
+  );
+$$;
+
+-- New helper for future per-role policies (e.g. accounting can SELECT receipts).
+CREATE OR REPLACE FUNCTION public.has_role(roles text[])
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.employees
+    WHERE user_id = auth.uid()
+      AND COALESCE(system_role, CASE WHEN is_admin THEN 'admin' ELSE 'employee' END) = ANY(roles)
+  );
+$$;
+REVOKE ALL ON FUNCTION public.has_role(text[]) FROM public;
+GRANT EXECUTE ON FUNCTION public.has_role(text[]) TO authenticated;
+
+-- Block self-change of system_role (parallel to the existing is_admin block).
+-- Demotion or role change must be done by a different admin.
+CREATE OR REPLACE FUNCTION public.enforce_employee_update_rules()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.user_id = auth.uid()
+     AND NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
+    RAISE EXCEPTION 'You cannot change your own admin status';
+  END IF;
+  IF NEW.user_id = auth.uid()
+     AND NEW.system_role IS DISTINCT FROM OLD.system_role THEN
+    RAISE EXCEPTION 'You cannot change your own role';
+  END IF;
+  IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+    RAISE EXCEPTION 'user_id is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
