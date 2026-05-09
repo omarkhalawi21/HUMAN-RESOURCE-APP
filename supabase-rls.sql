@@ -1308,6 +1308,18 @@ CREATE POLICY "inventory_movements_delete_roles"
   USING (public.has_role(ARRAY['admin','head_barista','roaster']));
 
 -- =============================================================
+-- 21. INVENTORY MOVEMENTS — add 'pickup' type
+--    Faisaliyah cafe pulls roasted beans straight off the roaster
+--    shelf without a transfer event. Distinct from 'sale'
+--    (storefront retail) and 'transfer' (out to Khobar/Rayyan).
+-- =============================================================
+ALTER TABLE public.inventory_movements
+  DROP CONSTRAINT IF EXISTS inventory_movements_type_check;
+ALTER TABLE public.inventory_movements
+  ADD CONSTRAINT inventory_movements_type_check
+  CHECK (type IN ('adjust','roast','transfer','restock','sale','pickup','other'));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

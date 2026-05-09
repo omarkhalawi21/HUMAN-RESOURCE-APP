@@ -7973,6 +7973,7 @@ const MOVEMENT_TYPES = {
   adjust:    { label: 'Adjustment' },
   roast:     { label: 'Roasted' },
   transfer:  { label: 'Transfer' },
+  pickup:    { label: 'Cafe pickup' },
   restock:   { label: 'Restock / In' },
   sale:      { label: 'Sold / Used' },
   other:     { label: 'Other' },
@@ -8027,6 +8028,7 @@ function openInventoryHistoryModal(itemId) {
               const positive = m.qtyDelta > 0;
               const pillClass = m.type === 'roast' ? 'bg-amber-50 text-amber-700'
                               : m.type === 'transfer' ? 'bg-blue-50 text-blue-700'
+                              : m.type === 'pickup' ? 'bg-purple-50 text-purple-700'
                               : m.type === 'restock' ? 'bg-emerald-50 text-emerald-700'
                               : m.type === 'sale' ? 'bg-rose-50 text-rose-700'
                               : 'bg-slate-100 text-slate-700';
@@ -8469,6 +8471,68 @@ function printWeeklyInventoryReport() {
   w.document.close();
 }
 
+// Faisaliyah cafe pickup. Slim modal for the most common roaster
+// action: barista takes roasted beans straight off the shelf for
+// the cafe. Logs a single movement type='pickup', branch=
+// 'FAISALIYAH', negative qty. No transfer event because there's
+// no destination branch — the beans never leave Faisaliyah.
+function openPickupModal() {
+  const items = (state.inventory||[])
+    .filter(i => i.category === 'beans_roast')
+    .slice()
+    .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (items.length === 0) {
+    toast('Add a roasted-shelf item first.', 'error');
+    return;
+  }
+  const today = todayISO();
+  const form = `
+    <div class="space-y-4">
+      <div class="bg-purple-50 border border-purple-100 rounded-xl p-3 text-xs text-purple-800">
+        ${icon('cash','w-4 h-4 inline')} Use this when the Faisaliyah cafe takes beans directly off the roaster shelf. For sending beans to Khobar or Rayyan, use Log transfer instead.
+      </div>
+      <div>
+        <label class="label">Roasted bean</label>
+        <select id="pk-item" class="input">
+          ${items.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')} on shelf)</option>`).join('')}
+        </select>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Quantity picked</label>
+          <input id="pk-qty" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+        </div>
+        <div>
+          <label class="label">Date</label>
+          <input id="pk-date" type="date" class="input" value="${today}">
+        </div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="pk-notes" class="input" rows="2" placeholder="grinder refill, drip box prep, who picked, etc."></textarea>
+      </div>
+    </div>
+  `;
+  openModal('Log Faisaliyah pickup', form, async () => {
+    const itemId = $('#pk-item').value;
+    const qty    = parseFloat($('#pk-qty').value);
+    const date   = $('#pk-date').value;
+    const notes  = $('#pk-notes').value.trim();
+    if (!itemId)                { toast('Pick an item', 'error');             return false; }
+    if (isNaN(qty) || qty <= 0) { toast('Enter a positive quantity', 'error'); return false; }
+    const m = await logInventoryMovement(itemId, -qty, {
+      type: 'pickup',
+      branch: 'FAISALIYAH',
+      occurredAt: date,
+      notes,
+    });
+    if (!m) return false;
+    render();
+    toast('Pickup logged', 'success');
+    return true;
+  }, { saveLabel: 'Log pickup' });
+}
+
 function openLogMovementModal(prefilledItemId) {
   const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
   if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
@@ -8586,6 +8650,7 @@ function renderRoaster() {
         </div>
         <div class="flex gap-2 flex-wrap">
           <button onclick="printWeeklyInventoryReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Weekly report</button>
+          <button onclick="openPickupModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log pickup</button>
           <button onclick="openTransferModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log transfer</button>
           <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
           <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
