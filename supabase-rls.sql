@@ -1141,6 +1141,62 @@ CREATE POLICY "maintenance_delete_admin"
   USING (public.has_role(ARRAY['admin','maintenance']));
 
 -- =============================================================
+-- 18. DROP STANDALONE INVENTORY ROLE
+--    Inventory is now a Head Barista responsibility (small shop)
+--    or admin oversight. The standalone 'inventory' role is removed
+--    from the system_role enum and any existing rows are migrated
+--    to 'head_barista' (the natural successor). The inventory_items
+--    table's RLS policies are swapped from 'inventory' to
+--    'head_barista' so the same code paths keep working.
+-- =============================================================
+
+-- 1. Migrate any existing 'inventory' role rows to 'head_barista'.
+UPDATE public.employees
+   SET system_role = 'head_barista'
+ WHERE system_role = 'inventory';
+
+-- 2. Replace the CHECK constraint without 'inventory'.
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista',
+    'accounting','maintenance','employee'
+  ));
+
+-- 3. Re-issue the inventory_items policies with the new role list.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'inventory_items'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+-- SELECT is broader than write: admin/hr/operations get read-only
+-- analytics on their dashboards, head_barista gets the full management
+-- view, and writes are still locked down to head_barista or admin.
+CREATE POLICY "inventory_select_admin_hr_ops_headbarista"
+  ON public.inventory_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','hr','operations','head_barista']));
+CREATE POLICY "inventory_insert_admin_or_headbarista"
+  ON public.inventory_items FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "inventory_update_admin_or_headbarista"
+  ON public.inventory_items FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "inventory_delete_admin_or_headbarista"
+  ON public.inventory_items FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
