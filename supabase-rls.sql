@@ -708,10 +708,16 @@ ALTER TABLE public.employees
     'inventory','accounting','maintenance','employee'
   ));
 
--- Backfill: anyone currently is_admin becomes 'admin', otherwise 'employee'.
+-- Backfill: anyone currently is_admin becomes 'admin'. Cannot use
+-- `WHERE system_role IS NULL` here because the ADD COLUMN above
+-- carries DEFAULT 'employee', so existing rows immediately have a
+-- non-null value and the IS NULL filter would silently skip them
+-- (this masked admins as 'employee' on first migrate). The condition
+-- below is also idempotent for re-runs.
 UPDATE public.employees
-   SET system_role = CASE WHEN is_admin THEN 'admin' ELSE 'employee' END
- WHERE system_role IS NULL;
+   SET system_role = 'admin'
+ WHERE is_admin = true
+   AND system_role IS DISTINCT FROM 'admin';
 
 -- BEFORE INSERT trigger: if system_role wasn't supplied, derive it from
 -- is_admin so the existing handle_new_user trigger keeps working unchanged.
@@ -1195,6 +1201,53 @@ CREATE POLICY "inventory_update_admin_or_headbarista"
 CREATE POLICY "inventory_delete_admin_or_headbarista"
   ON public.inventory_items FOR DELETE TO authenticated
   USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
+-- 19. ROASTER ROLE
+--    Adds the 'roaster' system role for staff who manage green
+--    beans + the daily roasted-bean shelf. They get write access
+--    to inventory_items so they can update bean counts.
+-- =============================================================
+
+-- Extend the system_role CHECK constraint with 'roaster'.
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista','roaster',
+    'accounting','maintenance','employee'
+  ));
+
+-- Re-issue inventory_items policies with the new role list. SELECT
+-- now also includes roaster (already had admin/hr/operations/
+-- head_barista). Writes are admin / head_barista / roaster.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'inventory_items'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "inventory_select_roles"
+  ON public.inventory_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','hr','operations','head_barista','roaster']));
+CREATE POLICY "inventory_insert_roles"
+  ON public.inventory_items FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+CREATE POLICY "inventory_update_roles"
+  ON public.inventory_items FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','roaster']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+CREATE POLICY "inventory_delete_roles"
+  ON public.inventory_items FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','roaster']));
 
 -- =============================================================
 -- DONE.
