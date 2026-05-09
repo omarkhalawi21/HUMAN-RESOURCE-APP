@@ -7818,6 +7818,7 @@ function renderInventory() {
                   <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
                 </div>
                 <div class="flex gap-1 shrink-0">
+                  <button onclick="openInventoryHistoryModal('${it.id}')" title="History" aria-label="View movement history" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('clock','w-4 h-4')}</button>
                   <button onclick="openInventoryItemModal('${it.id}')" title="Edit" aria-label="Edit item" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
                   <button onclick="deleteInventoryItem('${it.id}')" title="Delete" aria-label="Delete item" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                 </div>
@@ -7972,6 +7973,222 @@ const MOVEMENT_TYPES = {
   other:     { label: 'Other' },
 };
 
+// Per-item movements history. Read-only listing — sourced from
+// state.inventoryMovements which the loader fetches with the most
+// recent 2000 entries (any role with inventory SELECT can see them).
+function openInventoryHistoryModal(itemId) {
+  const it = (state.inventory||[]).find(i => i.id === itemId);
+  if (!it) return;
+  const moves = (state.inventoryMovements||[])
+    .filter(m => m.itemId === itemId)
+    .slice()
+    .sort((a,b) =>
+      (b.occurredAt||'').localeCompare(a.occurredAt||'') ||
+      (b.createdAt ||'').localeCompare(a.createdAt ||'')
+    );
+  const sumIn  = moves.filter(m => m.qtyDelta > 0).reduce((s,m) => s + m.qtyDelta, 0);
+  const sumOut = moves.filter(m => m.qtyDelta < 0).reduce((s,m) => s + Math.abs(m.qtyDelta), 0);
+  const unit = escapeHTML(it.unit || 'units');
+
+  const body = `
+    <div class="space-y-4">
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-slate-50 rounded-xl p-3">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Current</div>
+          <div class="font-display text-xl font-semibold text-slate-900 mt-1">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${unit}</span></div>
+        </div>
+        <div class="bg-emerald-50 rounded-xl p-3">
+          <div class="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">Total in</div>
+          <div class="font-display text-xl font-semibold text-emerald-700 mt-1">+${Number(sumIn).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+        </div>
+        <div class="bg-rose-50 rounded-xl p-3">
+          <div class="text-[10px] uppercase tracking-wider text-rose-700 font-semibold">Total out</div>
+          <div class="font-display text-xl font-semibold text-rose-700 mt-1">-${Number(sumOut).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+        </div>
+      </div>
+
+      ${moves.length === 0 ? `
+        <div class="text-center py-8">
+          <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-2">${icon('clock','w-6 h-6')}</div>
+          <div class="text-sm text-slate-600">No movements logged yet for this item.</div>
+        </div>
+      ` : `
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+          <div class="divide-y divide-slate-100 max-h-[55vh] overflow-y-auto">
+            ${moves.map(m => {
+              const recorder = getEmployee(m.recordedBy);
+              const recorderName = recorder ? ((recorder.firstName||'')+' '+(recorder.lastName||'')).trim() : '';
+              const typeLabel = (MOVEMENT_TYPES[m.type] || MOVEMENT_TYPES.other).label;
+              const positive = m.qtyDelta > 0;
+              const pillClass = m.type === 'roast' ? 'bg-amber-50 text-amber-700'
+                              : m.type === 'transfer' ? 'bg-blue-50 text-blue-700'
+                              : m.type === 'restock' ? 'bg-emerald-50 text-emerald-700'
+                              : m.type === 'sale' ? 'bg-rose-50 text-rose-700'
+                              : 'bg-slate-100 text-slate-700';
+              return `
+                <div class="px-4 py-3 flex items-start gap-3 hover:bg-slate-50">
+                  <div class="text-right shrink-0 min-w-[64px]">
+                    <div class="text-xs text-slate-500">${escapeHTML(fmtDate(m.occurredAt||''))}</div>
+                  </div>
+                  <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full shrink-0 ${pillClass}">${escapeHTML(typeLabel)}</span>
+                  <div class="flex-1 min-w-0 text-sm">
+                    ${m.branch ? `<span class="text-xs text-slate-500">${escapeHTML(m.branch)}</span>` : ''}
+                    ${m.notes ? `<div class="text-slate-600">${escapeHTML(m.notes)}</div>` : ''}
+                    ${recorderName ? `<div class="text-[11px] text-slate-400">by ${escapeHTML(recorderName)}</div>` : ''}
+                  </div>
+                  <div class="text-right shrink-0 tabular-nums">
+                    <div class="font-semibold ${positive?'text-emerald-700':'text-rose-700'}">${positive?'+':''}${Number(m.qtyDelta).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${unit}</span></div>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+  // History is read-only — render via openModal but treat the save
+  // button as a no-op closer by returning true from onSave.
+  openModal(`History — ${it.name||'Item'}`, body, async () => true, { saveLabel: 'Close' });
+}
+
+// Paired roast batch logger. One form, two movements: green-bean
+// out (negative qty_delta) and roasted-bean in (positive qty_delta).
+// If either insert fails after the first lands, attempt a
+// compensating insert on the green item to restore stock.
+async function logRoastBatch(greenItemId, roastedItemId, greenOutKg, roastedInKg, opts = {}) {
+  const greenOut = await logInventoryMovement(greenItemId, -Math.abs(Number(greenOutKg)||0), {
+    type: 'roast',
+    occurredAt: opts.occurredAt,
+    branch: opts.branch,
+    notes: opts.notes ? `Roast: ${opts.notes}` : 'Roasted out',
+  });
+  if (!greenOut) return null;
+
+  const roastedIn = await logInventoryMovement(roastedItemId, Math.abs(Number(roastedInKg)||0), {
+    type: 'roast',
+    occurredAt: opts.occurredAt,
+    branch: opts.branch,
+    notes: opts.notes ? `Roast: ${opts.notes}` : 'Roasted in',
+  });
+  if (!roastedIn) {
+    // Best-effort compensating entry so green stock returns to its
+    // pre-call level. Records as type='adjust' with a note pointing
+    // at the failed batch so the audit trail is honest about it.
+    await logInventoryMovement(greenItemId, Math.abs(Number(greenOutKg)||0), {
+      type: 'adjust',
+      occurredAt: opts.occurredAt,
+      branch: opts.branch,
+      notes: 'Reverted: paired roast destination insert failed',
+    });
+    return null;
+  }
+  return { greenOut, roastedIn };
+}
+
+function openRoastBatchModal() {
+  const all = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const greens   = all.filter(i => i.category === 'beans_raw');
+  const roasteds = all.filter(i => i.category === 'beans_roast');
+  if (greens.length === 0)   { toast('Add a green-bean item (category Coffee — Green Beans) first.', 'error'); return; }
+  if (roasteds.length === 0) { toast('Add a roasted item (category Coffee — Roasted) first.', 'error'); return; }
+  const today = todayISO();
+  const branches = SUGGESTED_BRANCHES;
+
+  const form = `
+    <div class="space-y-4">
+      <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800">
+        ${icon('cash','w-4 h-4 inline')} A roast logs two movements at once: green beans out and roasted beans in. Yield % auto-calculates as you type — you can override the roasted output if it differs.
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Green bean (in)</label>
+          <select id="rb-green" class="input">
+            ${greens.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')} on hand)</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Roasted bean (out)</label>
+          <select id="rb-roasted" class="input">
+            ${roasteds.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')} on shelf)</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Green in (kg)</label>
+          <input id="rb-in" type="number" min="0" step="0.01" class="input" placeholder="0.00" oninput="recalcRoastYield()">
+        </div>
+        <div>
+          <label class="label">Roasted out (kg)</label>
+          <input id="rb-out" type="number" min="0" step="0.01" class="input" placeholder="0.00" oninput="recalcRoastYield()">
+          <div class="text-[10px] text-slate-500 mt-1">Defaults to <span id="rb-suggest-pct">85%</span> of green; edit if different.</div>
+        </div>
+        <div>
+          <label class="label">Date</label>
+          <input id="rb-date" type="date" class="input" value="${today}">
+        </div>
+        <div>
+          <label class="label">Branch (optional)</label>
+          <select id="rb-branch" class="input">
+            <option value="">— Any —</option>
+            ${branches.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="md:col-span-2">
+          <label class="label">Notes (optional)</label>
+          <textarea id="rb-notes" class="input" rows="2" placeholder="batch ID, roast profile, observations..."></textarea>
+        </div>
+      </div>
+      <div id="rb-yield" class="bg-slate-50 rounded-xl p-3 text-sm text-slate-700">Yield: <span class="font-semibold">—</span></div>
+    </div>
+  `;
+  openModal('Log roast batch', form, async () => {
+    const greenId   = $('#rb-green').value;
+    const roastedId = $('#rb-roasted').value;
+    const greenIn   = parseFloat($('#rb-in').value);
+    const roastedOut= parseFloat($('#rb-out').value);
+    const date      = $('#rb-date').value;
+    const branch    = $('#rb-branch').value;
+    const notes     = $('#rb-notes').value.trim();
+    if (!greenId || !roastedId)              { toast('Pick both items', 'error');      return false; }
+    if (greenId === roastedId)               { toast('Green and roasted must be different items', 'error'); return false; }
+    if (isNaN(greenIn) || greenIn <= 0)      { toast('Enter green-in kg', 'error');    return false; }
+    if (isNaN(roastedOut) || roastedOut < 0) { toast('Enter roasted-out kg', 'error'); return false; }
+    const result = await logRoastBatch(greenId, roastedId, greenIn, roastedOut, {
+      occurredAt: date, branch: branch || null, notes,
+    });
+    if (!result) return false;
+    render();
+    const yieldPct = greenIn > 0 ? Math.round(roastedOut / greenIn * 100) : 0;
+    toast(`Roast logged — ${yieldPct}% yield`, 'success');
+    return true;
+  }, { saveLabel: 'Log roast' });
+
+  // Auto-suggest roasted-out as 85% of green-in when user types into rb-in.
+  setTimeout(() => recalcRoastYield(), 0);
+}
+
+function recalcRoastYield() {
+  const inEl  = document.getElementById('rb-in');
+  const outEl = document.getElementById('rb-out');
+  const yEl   = document.getElementById('rb-yield');
+  if (!inEl || !outEl || !yEl) return;
+  const green = parseFloat(inEl.value) || 0;
+  // Suggest 85% of green if user hasn't filled roasted yet.
+  if (green > 0 && (!outEl.value || outEl.dataset.userTouched !== '1')) {
+    if (document.activeElement !== outEl) {
+      outEl.value = (green * 0.85).toFixed(2);
+    }
+  }
+  outEl.addEventListener('input', () => { outEl.dataset.userTouched = '1'; }, { once: true });
+  const roasted = parseFloat(outEl.value) || 0;
+  if (green > 0 && roasted > 0) {
+    const pct = (roasted / green) * 100;
+    const tone = pct < 78 ? 'text-rose-700' : pct > 92 ? 'text-amber-700' : 'text-emerald-700';
+    yEl.innerHTML = `Yield: <span class="font-semibold ${tone}">${pct.toFixed(1)}%</span> &middot; loss ${(green - roasted).toFixed(2)} kg`;
+  } else {
+    yEl.innerHTML = 'Yield: <span class="font-semibold">—</span>';
+  }
+}
+
 function openLogMovementModal(prefilledItemId) {
   const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
   if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
@@ -8088,6 +8305,7 @@ function renderRoaster() {
           <p class="text-slate-500 mt-1 text-sm max-w-md">Track green beans, the daily roasted shelf, and what's moved this week. Bean items are kept in the main inventory under <em>beans_raw</em> and <em>beans_roast</em>.</p>
         </div>
         <div class="flex gap-2 flex-wrap">
+          <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
           <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
           <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
         </div>
@@ -8156,6 +8374,7 @@ function renderRoaster() {
               <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
             </div>
             <div class="flex gap-1 shrink-0">
+              <button onclick="openInventoryHistoryModal('${it.id}')" title="History" aria-label="View movement history" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('clock','w-4 h-4')}</button>
               <button onclick="openInventoryItemModal('${it.id}')" title="Edit" aria-label="Edit item" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
               <button onclick="deleteInventoryItem('${it.id}')" title="Delete" aria-label="Delete item" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
             </div>
