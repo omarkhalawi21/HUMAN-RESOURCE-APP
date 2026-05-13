@@ -1320,6 +1320,71 @@ ALTER TABLE public.inventory_movements
   CHECK (type IN ('adjust','roast','transfer','restock','sale','pickup','other'));
 
 -- =============================================================
+-- 22. OPERATIONS — approve/reject leave requests
+--    SELECT on attendance/leave_requests was already authenticated
+--    so team-wide visibility needs no policy change — the JS UI
+--    gate was what hid the "All" tabs from non-HR roles. That
+--    gate now also lets Operations in.
+--
+--    For approvals: direct UPDATE on leave_requests + employees
+--    stays admin/hr only. Operations approves via this RPC, which
+--    runs SECURITY DEFINER and atomically updates both rows
+--    (employee balance decrement would otherwise be blocked by
+--    the strict employees UPDATE policy).
+-- =============================================================
+CREATE OR REPLACE FUNCTION public.decide_leave_request(
+  p_id uuid,
+  p_decision text
+)
+RETURNS public.leave_requests
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_req public.leave_requests;
+  v_bal_field text;
+  v_caller_id uuid;
+BEGIN
+  IF NOT public.has_role(ARRAY['admin','hr','operations']) THEN
+    RAISE EXCEPTION 'Not authorized to decide leave requests';
+  END IF;
+
+  IF p_decision NOT IN ('approved','rejected') THEN
+    RAISE EXCEPTION 'Decision must be approved or rejected';
+  END IF;
+
+  SELECT id INTO v_caller_id
+  FROM public.employees
+  WHERE user_id = auth.uid()
+  LIMIT 1;
+
+  UPDATE public.leave_requests
+     SET status = p_decision,
+         decided_by = v_caller_id,
+         decided_at = now()
+   WHERE id = p_id
+  RETURNING * INTO v_req;
+
+  IF v_req.id IS NULL THEN
+    RAISE EXCEPTION 'Leave request % not found', p_id;
+  END IF;
+
+  IF p_decision = 'approved' THEN
+    v_bal_field := 'leave_' || v_req.leave_type;
+    EXECUTE format(
+      'UPDATE public.employees SET %I = GREATEST(0, COALESCE(%I,0) - $1) WHERE id = $2',
+      v_bal_field, v_bal_field
+    ) USING v_req.days, v_req.employee_id;
+  END IF;
+
+  RETURN v_req;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.decide_leave_request(uuid, text) TO authenticated;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
