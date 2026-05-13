@@ -1407,12 +1407,12 @@ function renderShell(routeContent) {
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
     /* Company resources */
-    { key:'archive',      icon:'archive',   label:t('archive'),      show:true,  group:'company' },
+    { key:'archive',      icon:'archive',   label:t('archive'),      show:!hasRole('barista','maintenance','accounting'),  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
-    { key:'resources',    icon:'shield',    label:t('resources'),    show:true, group:'company' },
+    { key:'resources',    icon:'shield',    label:t('resources'),    show:!hasRole('maintenance'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
@@ -9824,21 +9824,19 @@ function renderConsentGate() {
           </div>
         </label>
 
-        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold pt-3 pb-1">Optional &mdash; you can change these later</div>
-
         <label class="flex items-start gap-3 p-4 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition">
-          <input id="cg-gps" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0">
+          <input id="cg-gps" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0" oninput="updateConsentSubmit()">
           <div class="text-sm">
-            <div class="font-semibold text-slate-900">Capture my GPS location at clock-in</div>
-            <div class="text-slate-500 text-xs mt-0.5">Used only to confirm you are physically at your assigned branch. Decline and your attendance will be recorded without location.</div>
+            <div class="font-semibold text-slate-900">Capture my GPS location at clock-in <span class="text-rose-600">*</span></div>
+            <div class="text-slate-500 text-xs mt-0.5">Required. Used to confirm you are physically at your assigned branch when you clock in.</div>
           </div>
         </label>
 
         <label class="flex items-start gap-3 p-4 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50 transition">
-          <input id="cg-photo" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0">
+          <input id="cg-photo" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0" oninput="updateConsentSubmit()">
           <div class="text-sm">
-            <div class="font-semibold text-slate-900">Store my photograph in the staff directory</div>
-            <div class="text-slate-500 text-xs mt-0.5">Used for visual identification. Decline and your initials will be shown instead.</div>
+            <div class="font-semibold text-slate-900">Store my photograph in the staff directory <span class="text-rose-600">*</span></div>
+            <div class="text-slate-500 text-xs mt-0.5">Required. Used for visual identification across the HR system.</div>
           </div>
         </label>
 
@@ -9851,25 +9849,27 @@ function renderConsentGate() {
         <button onclick="logout()" class="btn btn-ghost">I disagree, log out</button>
       </div>
 
-      <p class="text-[11px] text-slate-400 mt-4 leading-relaxed">By clicking "I agree, continue" you confirm consent to the optional items you have ticked above. Your acceptance is recorded in the database with a timestamp and version (${escapeHTML(CURRENT_CONSENT_VERSION)}). You may withdraw any optional consent at any time by writing to HR.</p>
+      <p class="text-[11px] text-slate-400 mt-4 leading-relaxed">By clicking "I agree, continue" you confirm consent to all four items above. Your acceptance is recorded in the database with a timestamp and version (${escapeHTML(CURRENT_CONSENT_VERSION)}). To withdraw consent, write to HR.</p>
     </div>
   </div>`;
 }
 
-// Enable Continue only when both required boxes are ticked.
+// Enable Continue only when all four required boxes are ticked.
 function updateConsentSubmit() {
-  const ack = document.getElementById('cg-ack')?.checked;
-  const xb  = document.getElementById('cg-xb')?.checked;
+  const ack   = document.getElementById('cg-ack')?.checked;
+  const xb    = document.getElementById('cg-xb')?.checked;
+  const gps   = document.getElementById('cg-gps')?.checked;
+  const photo = document.getElementById('cg-photo')?.checked;
   const btn = document.getElementById('cg-submit');
-  if (btn) btn.disabled = !(ack && xb);
+  if (btn) btn.disabled = !(ack && xb && gps && photo);
 }
 
 async function submitConsent() {
-  const ack = document.getElementById('cg-ack')?.checked;
-  const xb  = document.getElementById('cg-xb')?.checked;
-  if (!ack || !xb) { toast('Please tick both required boxes', 'error'); return; }
-  const gps   = !!document.getElementById('cg-gps')?.checked;
-  const photo = !!document.getElementById('cg-photo')?.checked;
+  const ack   = document.getElementById('cg-ack')?.checked;
+  const xb    = document.getElementById('cg-xb')?.checked;
+  const gps   = document.getElementById('cg-gps')?.checked;
+  const photo = document.getElementById('cg-photo')?.checked;
+  if (!ack || !xb || !gps || !photo) { toast('Please tick all four required boxes', 'error'); return; }
   const btn = document.getElementById('cg-submit');
   if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
   const { error } = await sb.rpc('record_consent', { p_gps: gps, p_photo: photo, p_version: CURRENT_CONSENT_VERSION });
