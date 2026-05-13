@@ -1153,7 +1153,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'roaster', 'maintenance', 'reports', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'roaster', 'maintenance', 'reports', 'analytics', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1439,6 +1439,7 @@ function renderShell(routeContent) {
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
     { key:'resources',    icon:'shield',    label:t('resources'),    show:!hasRole('maintenance'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
+    { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
   ];
@@ -4123,6 +4124,195 @@ function renderRunPayrollPreview() {
 /* -------------------- REPORTS -------------------- */
 let reportType = 'attendance';
 let reportRange = { from: '', to: '' };
+/* -------------------- ANALYTICS (admin only) --------------------
+   Cross-department overview with period selector and period-over-
+   period deltas. Existing per-department dashboards still own
+   their own day-to-day data; this view is for the owner's
+   "how's the business doing" question. */
+let analyticsPeriod = 'thisMonth'; // thisMonth | lastMonth | ytd
+
+function analyticsPeriodRange(period) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const pad = n => String(n).padStart(2,'0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const monthName = d => d.toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  if (period === 'lastMonth') {
+    const start = new Date(y, m-1, 1), end = new Date(y, m, 0);
+    const pStart = new Date(y, m-2, 1), pEnd = new Date(y, m-1, 0);
+    return { fromDate: iso(start), toDate: iso(end), prevFromDate: iso(pStart), prevToDate: iso(pEnd), label: monthName(start), prevLabel: monthName(pStart) };
+  }
+  if (period === 'ytd') {
+    const start = new Date(y, 0, 1), end = now;
+    const pStart = new Date(y-1, 0, 1);
+    const pEnd = new Date(y-1, m, now.getDate());
+    return { fromDate: iso(start), toDate: iso(end), prevFromDate: iso(pStart), prevToDate: iso(pEnd), label: y+' YTD', prevLabel: (y-1)+' (same period)' };
+  }
+  // default thisMonth
+  const start = new Date(y, m, 1), end = new Date(y, m+1, 0);
+  const pStart = new Date(y, m-1, 1), pEnd = new Date(y, m, 0);
+  return { fromDate: iso(start), toDate: iso(end), prevFromDate: iso(pStart), prevToDate: iso(pEnd), label: monthName(start), prevLabel: monthName(pStart) };
+}
+
+function renderAnalytics() {
+  const period = analyticsPeriodRange(analyticsPeriod);
+  const inCur  = d => d && d >= period.fromDate     && d <= period.toDate;
+  const inPrev = d => d && d >= period.prevFromDate && d <= period.prevToDate;
+
+  // Receipts (cost) — sum amount in period
+  const receipts = state.receipts || [];
+  const recCur  = receipts.filter(r => inCur(r.receiptDate||''));
+  const recPrev = receipts.filter(r => inPrev(r.receiptDate||''));
+  const recCurTotal  = recCur.reduce((s,r) => s + (Number(r.amount)||0), 0);
+  const recPrevTotal = recPrev.reduce((s,r) => s + (Number(r.amount)||0), 0);
+
+  // Payroll — period is a YYYY-MM string on the payroll record
+  const payroll = state.payroll || [];
+  let payCur, payPrev;
+  if (analyticsPeriod === 'ytd') {
+    const curY  = period.fromDate.slice(0,4);
+    const prevY = period.prevFromDate.slice(0,4);
+    payCur  = payroll.filter(p => (p.period||'').startsWith(curY));
+    payPrev = payroll.filter(p => (p.period||'').startsWith(prevY));
+  } else {
+    const curYm  = period.fromDate.slice(0,7);
+    const prevYm = period.prevFromDate.slice(0,7);
+    payCur  = payroll.filter(p => p.period === curYm);
+    payPrev = payroll.filter(p => p.period === prevYm);
+  }
+  const payCurTotal  = payCur.reduce((s,p) => s + (Number(p.net)||0), 0);
+  const payPrevTotal = payPrev.reduce((s,p) => s + (Number(p.net)||0), 0);
+
+  // Maintenance resolved in period
+  const maintenance = state.maintenance || [];
+  const maintCur  = maintenance.filter(m => m.status==='resolved' && inCur((m.resolvedAt||'').slice(0,10)));
+  const maintPrev = maintenance.filter(m => m.status==='resolved' && inPrev((m.resolvedAt||'').slice(0,10)));
+
+  // Approved leave days starting in period
+  const leaves = state.leaveRequests || [];
+  const leaveCurDays  = leaves.filter(r => r.status==='approved' && inCur(r.startDate||'')).reduce((s,r) => s + (r.days||0), 0);
+  const leavePrevDays = leaves.filter(r => r.status==='approved' && inPrev(r.startDate||'')).reduce((s,r) => s + (r.days||0), 0);
+
+  // Per-branch snapshot (today, not period — operational not historical)
+  const activeEmps = state.employees.filter(e => e.status === 'active');
+  const empBranch = e => (getEmpExtras(e.id).branch || '').trim() || 'Unassigned';
+  const today = todayISO();
+  const branchKeys = [...new Set(activeEmps.map(empBranch))].sort();
+  const branchRows = branchKeys.map(b => {
+    const emps = activeEmps.filter(e => empBranch(e) === b);
+    const empIds = new Set(emps.map(e => e.id));
+    const present = state.attendance.filter(a => a.date===today && a.status!=='absent' && empIds.has(a.employeeId)).length;
+    const openMaint = maintenance.filter(m => m.status!=='resolved' && m.status!=='cancelled' && (m.branch||'')===b).length;
+    const lowItems = (state.inventory||[]).filter(i => isLowStock(i) && (i.branch||'')===b).length;
+    return { branch: b, emps: emps.length, present, openMaint, lowItems };
+  }).sort((a,b) => b.emps - a.emps);
+
+  // Top categories for the period
+  const byCat = {};
+  recCur.forEach(r => { const c = r.category || 'other'; byCat[c] = (byCat[c]||0) + (Number(r.amount)||0); });
+  const topCats = Object.entries(byCat).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const catMax = topCats[0]?.[1] || 1;
+
+  // Delta helpers
+  const pctDelta = (cur, prev) => {
+    if (prev === 0) return cur === 0 ? '0%' : '—';
+    const p = ((cur - prev) / prev) * 100;
+    return (p>=0?'+':'') + p.toFixed(0) + '%';
+  };
+  const absDelta = (cur, prev) => (cur - prev >= 0 ? '+' : '') + (cur - prev);
+  // For cost metrics, lower is better — flip the color logic
+  const deltaColor = (cur, prev, lowerBetter=false) => {
+    if (cur === prev) return 'text-slate-500';
+    const better = lowerBetter ? cur < prev : cur > prev;
+    return better ? 'text-emerald-600' : 'text-rose-600';
+  };
+
+  const periods = [['thisMonth','This month'],['lastMonth','Last month'],['ytd','YTD']];
+  return `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Analytics</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(period.label)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Comparing against ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="flex gap-1 bg-white border border-slate-200 rounded-full p-1">
+        ${periods.map(([k,l]) => `
+          <button onclick="analyticsPeriod='${k}'; render();" class="px-3 py-1.5 text-xs font-medium rounded-full transition ${analyticsPeriod===k?'bg-brand-500 text-white':'text-slate-600 hover:bg-slate-50'}">${l}</button>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('receipt','w-3.5 h-3.5')} Receipts (cost)</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${fmtMoney(recCurTotal)}</div>
+        <div class="text-xs ${deltaColor(recCurTotal, recPrevTotal, true)} mt-1">${pctDelta(recCurTotal, recPrevTotal)} vs ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wallet','w-3.5 h-3.5')} Payroll</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${fmtMoney(payCurTotal)}</div>
+        <div class="text-xs ${deltaColor(payCurTotal, payPrevTotal, true)} mt-1">${pctDelta(payCurTotal, payPrevTotal)} vs ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wrench','w-3.5 h-3.5')} Maintenance resolved</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${maintCur.length}</div>
+        <div class="text-xs ${deltaColor(maintCur.length, maintPrev.length)} mt-1">${absDelta(maintCur.length, maintPrev.length)} vs ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('calendar','w-3.5 h-3.5')} Approved leave days</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${leaveCurDays}</div>
+        <div class="text-xs ${deltaColor(leaveCurDays, leavePrevDays)} mt-1">${absDelta(leaveCurDays, leavePrevDays)} vs ${escapeHTML(period.prevLabel)}</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="p-5 border-b border-slate-100">
+          <h3 class="font-display text-lg font-semibold text-slate-900">By branch</h3>
+          <div class="text-xs text-slate-500 mt-0.5">Today's operational snapshot</div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Branch</th><th class="!text-end">Employees</th><th class="!text-end">Present today</th><th class="!text-end">Open maintenance</th><th class="!text-end">Low-stock items</th></tr></thead>
+            <tbody>
+              ${branchRows.length===0 ? `<tr><td colspan="5" class="text-center text-slate-400 !py-10">No branch data yet</td></tr>` :
+                branchRows.map(b => `
+                  <tr class="hover-row">
+                    <td><span class="font-medium">${escapeHTML(b.branch)}</span></td>
+                    <td class="!text-end">${b.emps}</td>
+                    <td class="!text-end">${b.present}/${b.emps}</td>
+                    <td class="!text-end ${b.openMaint>0?'text-amber-600 font-medium':''}">${b.openMaint}</td>
+                    <td class="!text-end ${b.lowItems>0?'text-rose-600 font-medium':''}">${b.lowItems}</td>
+                  </tr>
+                `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="p-5 border-b border-slate-100">
+          <h3 class="font-display text-lg font-semibold text-slate-900">Top spend</h3>
+          <div class="text-xs text-slate-500 mt-0.5">${escapeHTML(period.label)} by category</div>
+        </div>
+        <div class="p-5">
+          ${topCats.length===0 ? `<div class="text-center text-slate-400 py-6 text-sm">No receipts in this period</div>` :
+            topCats.map(([cat, total]) => `
+              <div class="mb-3 last:mb-0">
+                <div class="flex justify-between items-baseline text-sm">
+                  <span class="font-medium text-slate-700">${escapeHTML(cat)}</span>
+                  <span class="text-slate-900 font-semibold tabular-nums">${fmtMoney(total)}</span>
+                </div>
+                <div class="progress-bar mt-1.5"><div class="progress-fill" style="width:${(total/catMax)*100}%; background:#a87035"></div></div>
+              </div>
+            `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderReports() {
   if (!reportRange.from) {
     const d = new Date(); d.setDate(d.getDate()-30);
@@ -9965,6 +10155,7 @@ function render() {
     case 'maintenance':  content = renderMaintenance(); break;
     case 'resources':    content = renderResources(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
+    case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
     case 'account':      content = renderAccount(); break;
