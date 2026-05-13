@@ -1089,6 +1089,11 @@ function hasRole(...roles) { return roles.includes(currentRole()); }
 // Settings, backup, restore, reset and role assignment stay strictly
 // isAdmin() — owner-level controls.
 function canManagePeople() { return hasRole('admin','hr'); }
+// canManageAttendanceAndLeave — broader than canManagePeople. Operations
+// also gets team-wide visibility and approve/reject on leave (they run
+// branch ops day-to-day). All HR-side mutations beyond leave approval
+// (employees, payroll, balances, certificates, etc.) stay on canManagePeople.
+function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations'); }
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
@@ -3054,7 +3059,7 @@ function renderAttendance() {
   const me = currentEmployee();
   const today = todayISO();
   const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
-  const admin = canManagePeople();
+  const admin = canManageAttendanceAndLeave();
   if (!admin) attTab = 'me';
 
   const tabs = admin ? `
@@ -3399,7 +3404,7 @@ async function clockOut() {
 let leaveTab = 'mine';
 function renderLeave() {
   const me = currentEmployee();
-  const admin = canManagePeople();
+  const admin = canManageAttendanceAndLeave();
   if (!admin) leaveTab = 'mine';
   const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
   const myReqs = state.leaveRequests.filter(r => r.employeeId===me.id).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
@@ -3523,20 +3528,18 @@ function calcLeaveDays() {
 async function decideLeave(id, decision) {
   const r = state.leaveRequests.find(x=>x.id===id);
   if (!r) return;
-  const me = currentEmployee();
-  const updates = { status: decision, decided_by: me?.id || null, decided_at: new Date().toISOString() };
-  const { data, error } = await sb.from('leave_requests').update(updates).eq('id', id).select().single();
+  // Routed through SECURITY DEFINER RPC so Operations can approve without
+  // needing direct UPDATE on the employees table (balance decrement happens
+  // server-side inside the function).
+  const { data, error } = await sb.rpc('decide_leave_request', { p_id: id, p_decision: decision });
   if (error) { toast(error.message, 'error'); return; }
-  Object.assign(r, mapLeaveFromDb(data));
+  if (data) Object.assign(r, mapLeaveFromDb(data));
   if (decision==='approved') {
-    // Decrement employee's leave balance
-    const emp = getEmployee(r.employeeId);
-    if (emp) {
-      const balField = 'leave_'+r.type;
-      const newBal = Math.max(0, (emp[balField]||0) - r.days);
-      const dbField = balField; // same name in DB
-      const { data: empRow, error: balErr } = await sb.from('employees').update({ [dbField]: newBal }).eq('id', r.employeeId).select().single();
-      if (!balErr && empRow) {
+    // Refresh the employee row so in-memory balance matches the DB
+    const { data: empRow, error: empErr } = await sb.from('employees').select('*').eq('id', r.employeeId).single();
+    if (!empErr && empRow) {
+      const emp = getEmployee(r.employeeId);
+      if (emp) {
         Object.assign(emp, mapEmployeeFromDb(empRow));
         state.leaveBalances[r.employeeId] = { annual: emp.leave_annual, sick: emp.leave_sick, personal: emp.leave_personal };
       }
