@@ -1094,6 +1094,31 @@ function canManagePeople() { return hasRole('admin','hr'); }
 // branch ops day-to-day). All HR-side mutations beyond leave approval
 // (employees, payroll, balances, certificates, etc.) stay on canManagePeople.
 function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations'); }
+// Find employees whose system_role is still the default 'employee' but
+// whose department or job_title looks like a real role name. Used to
+// surface migration debt — after the big role migration, every non-admin
+// defaulted to 'employee' and many were never reassigned.
+function findRoleMismatches() {
+  const hints = {
+    'accounting':   'accounting',
+    'operations':   'operations',
+    'hr':           'hr',
+    'head barista': 'head_barista',
+    'head_barista': 'head_barista',
+    'roaster':      'roaster',
+    'maintenance':  'maintenance',
+  };
+  const out = [];
+  for (const e of (state.employees || [])) {
+    if (e.systemRole !== 'employee') continue;
+    if (e.status === 'pending' || e.status === 'terminated') continue;
+    const dept = (e.department||'').trim().toLowerCase();
+    const job  = (e.role||'').trim().toLowerCase();
+    const suggested = hints[dept] || hints[job];
+    if (suggested) out.push({ employee: e, suggestedRole: suggested });
+  }
+  return out;
+}
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
@@ -1572,6 +1597,9 @@ function renderDashboard() {
   // Pending signups awaiting admin approval — surfaced as a prominent
   // amber alert at the top of the dashboard so admins can't miss them.
   const pendingApprovals = admin ? state.employees.filter(e => e.status === 'pending') : [];
+  // Migration-debt safety net: employees whose department/job_title
+  // matches a real role name but whose system_role is still the default.
+  const roleMismatches = admin ? findRoleMismatches() : [];
 
   return `
     ${admin && pendingApprovals.length > 0 ? `
@@ -1583,6 +1611,19 @@ function renderDashboard() {
         <div class="font-semibold text-amber-900">${pendingApprovals.length} ${pendingApprovals.length===1?'employee is':'employees are'} awaiting your approval</div>
         <div class="text-sm text-amber-800 mt-1">${escapeHTML(pendingApprovals.slice(0,3).map(e=>(e.firstName+' '+(e.lastName||'')).trim()).join(', '))}${pendingApprovals.length>3?` and ${pendingApprovals.length-3} more`:''}. They cannot use the system until you approve them.</div>
         <a href="#/employees" class="btn btn-primary btn-sm mt-3">${icon('check','w-4 h-4')} Review now</a>
+      </div>
+    </div>
+    ` : ''}
+
+    ${admin && roleMismatches.length > 0 ? `
+    <div class="bg-blue-50 border border-blue-200 rounded-2xl p-5 mb-5 flex items-start gap-4">
+      <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+        ${icon('warning','w-5 h-5')}
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-blue-900">${roleMismatches.length} ${roleMismatches.length===1?'employee may have':'employees may have'} the wrong system role</div>
+        <div class="text-sm text-blue-800 mt-1">${escapeHTML(roleMismatches.slice(0,3).map(m=>`${(m.employee.firstName+' '+(m.employee.lastName||'')).trim()} → ${roleLabel(m.suggestedRole)}`).join(', '))}${roleMismatches.length>3?` and ${roleMismatches.length-3} more`:''}. Their department or job title suggests a real role, but they're still on the default <em>Employee</em>. Review and update from the Employees page.</div>
+        <a href="#/employees" class="btn btn-primary btn-sm mt-3">${icon('users','w-4 h-4')} Open Employees</a>
       </div>
     </div>
     ` : ''}
