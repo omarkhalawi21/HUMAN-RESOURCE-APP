@@ -1118,12 +1118,15 @@ function canManagePeople() { return hasRole('admin','hr'); }
 // branch ops day-to-day). All HR-side mutations beyond leave approval
 // (employees, payroll, balances, certificates, etc.) stay on canManagePeople.
 function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations'); }
-// canViewAttendanceAndLeave — broader than canManage. Adds head_barista
-// (view-only, scoped to their own branch via viewerBranchScope). They see
-// the team-wide tabs but no approve/reject buttons — those stay on
-// canManageAttendanceAndLeave.
+// canViewAttendanceAndLeave — broader than canManage. Adds two view-only roles:
+//   • head_barista — scoped to their own branch via viewerBranchScope() for
+//     shift planning at their location.
+//   • accounting   — unscoped (sees all branches) so they can prep payroll
+//     against attendance + approved leave across the company.
+// Both see the team-wide tabs but no approve/reject buttons — those stay
+// on canManageAttendanceAndLeave.
 function canViewAttendanceAndLeave() {
-  return canManageAttendanceAndLeave() || hasRole('head_barista');
+  return canManageAttendanceAndLeave() || hasRole('head_barista', 'accounting');
 }
 // If the current user is a view-only role (head_barista), returns their
 // branch string — used to scope the "All" tabs to their own employees.
