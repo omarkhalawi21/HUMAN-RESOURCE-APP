@@ -10685,22 +10685,24 @@ async function runReceiptOCR() {
         ? `<span class="text-emerald-700">Filled ${filled.join(', ')} — review and edit as needed.</span>`
         : `<span class="text-amber-700">Couldn't auto-fill — see extracted text below.</span>`;
     }
-    // Swap the receipt photo / "Loaded …" badge for a structured summary of
-    // what OCR found. The raw text stays available via the <details> panel
-    // below; the form fields below got pre-filled.
+    // Swap the receipt photo / "Loaded …" badge for the raw OCR text the
+    // engine actually read, with a one-line parsed-summary chip above it.
+    // The form fields below got pre-filled where the parser matched.
     const previewEl = document.getElementById('rc-preview');
     if (previewEl) {
       const cur = state.settings.currency || 'SAR';
-      const fmt = v => v ? escapeHTML(String(v)) : '<span class="text-slate-400">—</span>';
+      const parts = [];
+      if (parsed.vendor) parts.push(escapeHTML(parsed.vendor));
+      if (parsed.date)   parts.push(escapeHTML(parsed.date));
+      if (parsed.amount != null) parts.push(`${escapeHTML(cur)} ${escapeHTML(String(parsed.amount))}`);
+      const summary = parts.length
+        ? `<span class="text-emerald-700 font-medium">Parsed:</span> <span class="text-slate-700">${parts.join(' · ')}</span>`
+        : `<span class="text-amber-700">Couldn't auto-fill — review the text below and type the fields manually.</span>`;
       previewEl.innerHTML = `
-        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-          <div class="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold mb-2 flex items-center gap-1.5">${icon('check','w-3.5 h-3.5')} Extracted from receipt</div>
-          <dl class="text-sm space-y-1">
-            <div class="flex justify-between gap-3"><span class="text-slate-500">Vendor</span><span class="font-medium text-slate-900 truncate max-w-[60%] text-end">${fmt(parsed.vendor)}</span></div>
-            <div class="flex justify-between gap-3"><span class="text-slate-500">Date</span><span class="font-medium text-slate-900">${fmt(parsed.date)}</span></div>
-            <div class="flex justify-between gap-3"><span class="text-slate-500">Amount</span><span class="font-medium text-slate-900">${parsed.amount != null ? `${escapeHTML(cur)} ${escapeHTML(String(parsed.amount))}` : '<span class="text-slate-400">—</span>'}</span></div>
-          </dl>
-          <div class="text-[10px] text-emerald-700 mt-3">Review and edit the fields below before saving.</div>
+        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+          <div class="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold mb-1.5 flex items-center gap-1.5">${icon('check','w-3.5 h-3.5')} Extracted text</div>
+          <div class="text-xs mb-2">${summary}</div>
+          <pre class="bg-white border border-emerald-100 rounded p-2 text-[11px] leading-snug whitespace-pre-wrap max-h-64 overflow-auto text-slate-700">${escapeHTML(text)}</pre>
         </div>
       `;
     }
