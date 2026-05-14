@@ -1014,6 +1014,16 @@ async function resetState() {
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function todayISO() { return new Date().toISOString().slice(0,10); }
+// Returns the last n YYYY-MM strings, oldest first, including the current month.
+function lastNMonths(n) {
+  const out = [];
+  const today = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }
+  return out;
+}
 function nowHHMM() {
   const d = new Date();
   return d.toTimeString().slice(0,5);
@@ -4333,6 +4343,46 @@ function renderAnalytics() {
     return better ? 'text-emerald-600' : 'text-rose-600';
   };
 
+  // Sparklines — last 6 months of monthly totals for each KPI, independent
+  // of the period selector (so the trend backdrop stays stable while the
+  // big number reflects the selected period).
+  const sparkMonths = lastNMonths(6);
+  const receiptsSpark = sparkMonths.map(ym =>
+    receipts.filter(r => (r.receiptDate||'').startsWith(ym))
+            .reduce((s,r) => s + (Number(r.amount)||0), 0)
+  );
+  const payrollSpark = sparkMonths.map(ym =>
+    payroll.filter(p => p.period === ym)
+           .reduce((s,p) => s + (Number(p.net)||0), 0)
+  );
+  const maintSpark = sparkMonths.map(ym =>
+    maintenance.filter(m => m.status==='resolved' && (m.resolvedAt||'').startsWith(ym)).length
+  );
+  const leaveSpark = sparkMonths.map(ym =>
+    leaves.filter(r => r.status==='approved' && (r.startDate||'').startsWith(ym))
+          .reduce((s,r) => s + (r.days||0), 0)
+  );
+  const sparkline = (values, color) => {
+    const w = 140, h = 28, padY = 3;
+    const max = Math.max(...values, 0);
+    const min = Math.min(...values, 0);
+    const range = (max - min) || 1;
+    const usableH = h - 2*padY;
+    const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+    const pts = values.map((v, i) => {
+      const x = i * stepX;
+      const y = padY + usableH - ((v - min) / range) * usableH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const lastIdx = values.length - 1;
+    const lastX = (lastIdx * stepX).toFixed(1);
+    const lastY = (padY + usableH - ((values[lastIdx] - min) / range) * usableH).toFixed(1);
+    return `<svg viewBox="0 0 ${w} ${h}" class="block w-full mt-2" preserveAspectRatio="none" aria-label="Last 6 months trend">
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"/>
+      <circle cx="${lastX}" cy="${lastY}" r="2.5" fill="${color}"/>
+    </svg>`;
+  };
+
   const periods = [['thisMonth','This month'],['lastMonth','Last month'],['ytd','YTD']];
   return `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -4353,21 +4403,25 @@ function renderAnalytics() {
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('receipt','w-3.5 h-3.5')} Receipts (cost)</div>
         <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${fmtMoney(recCurTotal)}</div>
         <div class="text-xs ${deltaColor(recCurTotal, recPrevTotal, true)} mt-1">${pctDelta(recCurTotal, recPrevTotal)} vs ${escapeHTML(period.prevLabel)}</div>
+        ${sparkline(receiptsSpark, '#a87035')}
       </div>
       <div class="bg-white rounded-2xl shadow-card p-5">
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wallet','w-3.5 h-3.5')} Payroll</div>
         <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${fmtMoney(payCurTotal)}</div>
         <div class="text-xs ${deltaColor(payCurTotal, payPrevTotal, true)} mt-1">${pctDelta(payCurTotal, payPrevTotal)} vs ${escapeHTML(period.prevLabel)}</div>
+        ${sparkline(payrollSpark, '#475569')}
       </div>
       <div class="bg-white rounded-2xl shadow-card p-5">
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wrench','w-3.5 h-3.5')} Maintenance resolved</div>
         <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${maintCur.length}</div>
         <div class="text-xs ${deltaColor(maintCur.length, maintPrev.length)} mt-1">${absDelta(maintCur.length, maintPrev.length)} vs ${escapeHTML(period.prevLabel)}</div>
+        ${sparkline(maintSpark, '#10b981')}
       </div>
       <div class="bg-white rounded-2xl shadow-card p-5">
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('calendar','w-3.5 h-3.5')} Approved leave days</div>
         <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${leaveCurDays}</div>
         <div class="text-xs ${deltaColor(leaveCurDays, leavePrevDays)} mt-1">${absDelta(leaveCurDays, leavePrevDays)} vs ${escapeHTML(period.prevLabel)}</div>
+        ${sparkline(leaveSpark, '#6366f1')}
       </div>
     </div>
 
