@@ -260,6 +260,7 @@ const I18N = {
     advances: "Salary Advances",
     certificates: "Certificates",
     archive: "Archive",
+    suppliers: "Suppliers",
     receipts: "Receipts",
     inventory: "Inventory",
     roaster: "Roaster",
@@ -336,6 +337,7 @@ const I18N = {
     advances: "سُلف الرواتب",
     certificates: "الشهادات",
     archive: "الأرشيف",
+    suppliers: "الموردون",
     receipts: "الإيصالات",
     inventory: "المخزون",
     roaster: "محمصة",
@@ -390,7 +392,8 @@ function emptyState() {
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
-    inventory: [],          // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, branch, notes, createdBy, createdAt, updatedAt }]
+    inventory: [],          // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, supplierId, branch, notes, createdBy, createdAt, updatedAt }]
+    suppliers: [],          // [{ id, name, contactName, phone, email, notes, createdBy, createdAt, updatedAt }]
     inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
     maintenance: [],        // [{ id, title, description, branch, location, asset, priority, status, reportedBy, assignedTo, resolution, resolvedAt, createdAt, updatedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
@@ -805,6 +808,7 @@ function mapInventoryItemFromDb(r) {
     quantity: Number(r.quantity) || 0,
     reorderThreshold: Number(r.reorder_threshold) || 0,
     supplier: r.supplier || '',
+    supplierId: r.supplier_id || null,
     branch: r.branch || '',
     notes: r.notes || '',
     createdBy: r.created_by,
@@ -820,10 +824,36 @@ function inventoryItemToDb(i) {
     unit: i.unit || 'units',
     quantity: Number(i.quantity) || 0,
     reorder_threshold: Number(i.reorderThreshold) || 0,
-    supplier: i.supplier || null,
+    // Prefer the supplier_id FK when picked; clear the legacy text in that
+    // case so we don't carry duplicate sources of truth on the same row.
+    supplier: i.supplierId ? null : (i.supplier || null),
+    supplier_id: i.supplierId || null,
     branch: i.branch || null,
     notes: i.notes || null,
     created_by: i.createdBy || null,
+  };
+}
+function mapSupplierFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    contactName: r.contact_name || '',
+    phone: r.phone || '',
+    email: r.email || '',
+    notes: r.notes || '',
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+function supplierToDb(s) {
+  return {
+    name: s.name,
+    contact_name: s.contactName || null,
+    phone: s.phone || null,
+    email: s.email || null,
+    notes: s.notes || null,
+    created_by: s.createdBy || null,
   };
 }
 function mapMovementFromDb(r) {
@@ -921,7 +951,7 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
@@ -945,6 +975,8 @@ async function loadAll() {
       // head_barista/roaster); empty for other roles. Capped at the
       // most recent 2000 — older history can be exported if needed.
       sb.from('inventory_movements').select('*').order('occurred_at', { ascending: false }).limit(2000),
+      // Suppliers: same SELECT scope as inventory_items.
+      sb.from('suppliers').select('*').order('name'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -982,6 +1014,7 @@ async function loadAll() {
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
     state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
     state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
+    state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
@@ -1211,7 +1244,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'roaster', 'maintenance', 'reports', 'analytics', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'roaster', 'maintenance', 'reports', 'analytics', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1493,6 +1526,7 @@ function renderShell(routeContent) {
     { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
+    { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
@@ -8096,11 +8130,165 @@ function getInventoryFiltered() {
     if (f.category && f.category !== 'all' && it.category !== f.category) return false;
     if (f.lowStock && !isLowStock(it)) return false;
     if (q) {
-      const hay = `${it.name} ${it.sku||''} ${it.supplier||''} ${it.notes||''}`.toLowerCase();
+      const hay = `${it.name} ${it.sku||''} ${supplierLabelForItem(it)} ${it.notes||''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
+}
+
+// Convenience: look up a supplier by id with a safe fallback to the
+// item's legacy free-text supplier string when no supplier_id is set.
+function supplierLabelForItem(it) {
+  if (!it) return '';
+  if (it.supplierId) {
+    const s = (state.suppliers || []).find(x => x.id === it.supplierId);
+    return s ? s.name : '(removed supplier)';
+  }
+  return it.supplier || '';
+}
+
+function renderSuppliers() {
+  const all = (state.suppliers || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const canEdit = hasRole('admin','head_barista','roaster');
+  // Count linked inventory items per supplier for the table.
+  const itemsBySupplier = {};
+  (state.inventory || []).forEach(i => {
+    if (!i.supplierId) return;
+    itemsBySupplier[i.supplierId] = (itemsBySupplier[i.supplierId] || 0) + 1;
+  });
+
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('building','w-3.5 h-3.5')} Inventory</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('suppliers'))}</h2>
+        <div class="text-xs text-slate-500 mt-1">Central directory of vendors. Inventory items can link to a supplier so contact info isn't retyped per item.</div>
+      </div>
+      ${canEdit ? `<button onclick="openSupplierModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add supplier</button>` : ''}
+    </div>`;
+
+  if (all.length === 0) {
+    return header + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('building','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">No suppliers yet</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Add a supplier here, then pick it from the Supplier dropdown when adding or editing inventory items.</div>
+        ${canEdit ? `<button onclick="openSupplierModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add your first supplier</button>` : ''}
+      </div>`;
+  }
+
+  return header + `
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>
+            <th>Supplier</th>
+            <th>Contact</th>
+            <th>Phone</th>
+            <th>Email</th>
+            <th class="!text-end">Linked items</th>
+            ${canEdit ? '<th class="!text-end">Actions</th>' : ''}
+          </tr></thead>
+          <tbody>
+            ${all.map(s => `
+              <tr class="hover-row">
+                <td>
+                  <div class="font-medium text-slate-900">${escapeHTML(s.name)}</div>
+                  ${s.notes ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-xs">${escapeHTML(s.notes)}</div>` : ''}
+                </td>
+                <td class="text-slate-700 text-sm">${escapeHTML(s.contactName||'—')}</td>
+                <td class="text-slate-700 text-sm">${s.phone ? `<a href="tel:${escapeHTML(s.phone)}" class="hover:text-brand-700">${escapeHTML(s.phone)}</a>` : '<span class="text-slate-400">—</span>'}</td>
+                <td class="text-slate-700 text-sm">${s.email ? `<a href="mailto:${escapeHTML(s.email)}" class="hover:text-brand-700 truncate">${escapeHTML(s.email)}</a>` : '<span class="text-slate-400">—</span>'}</td>
+                <td class="!text-end tabular-nums">${itemsBySupplier[s.id] || 0}</td>
+                ${canEdit ? `
+                  <td class="!text-end">
+                    <div class="inline-flex gap-1">
+                      <button onclick="openSupplierModal('${s.id}')" aria-label="Edit ${escapeHTML(s.name)}" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                      <button onclick="deleteSupplier('${s.id}')" aria-label="Delete ${escapeHTML(s.name)}" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                    </div>
+                  </td>` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function openSupplierModal(id) {
+  const editing = id ? (state.suppliers||[]).find(s => s.id === id) : null;
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Supplier name *</label>
+        <input id="sup-name" class="input" placeholder="e.g. Tamimi Markets" value="${escapeHTML(editing?.name||'')}">
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Contact person (optional)</label>
+          <input id="sup-contact" class="input" placeholder="e.g. Ahmed Al-Rashid" value="${escapeHTML(editing?.contactName||'')}">
+        </div>
+        <div>
+          <label class="label">Phone (optional)</label>
+          <input id="sup-phone" class="input" placeholder="+966 ..." value="${escapeHTML(editing?.phone||'')}">
+        </div>
+        <div class="md:col-span-2">
+          <label class="label">Email (optional)</label>
+          <input id="sup-email" type="email" class="input" placeholder="orders@example.com" value="${escapeHTML(editing?.email||'')}">
+        </div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="sup-notes" class="input" rows="3" placeholder="payment terms, delivery cadence, etc.">${escapeHTML(editing?.notes||'')}</textarea>
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit supplier' : 'Add supplier', form, async () => {
+    const me = currentEmployee();
+    const name = $('#sup-name').value.trim();
+    if (!name) { toast('Supplier name is required', 'error'); return false; }
+    const data = {
+      name,
+      contactName: $('#sup-contact').value.trim(),
+      phone:       $('#sup-phone').value.trim(),
+      email:       $('#sup-email').value.trim(),
+      notes:       $('#sup-notes').value.trim(),
+      createdBy:   editing?.createdBy || me?.id,
+    };
+    const dbRow = supplierToDb(data);
+    if (editing) {
+      const { data: row, error } = await sb.from('suppliers').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapSupplierFromDb(row));
+      toast('Supplier updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('suppliers').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.suppliers.push(mapSupplierFromDb(row));
+      toast('Supplier added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add supplier' });
+}
+
+async function deleteSupplier(id) {
+  const s = (state.suppliers||[]).find(x => x.id === id);
+  if (!s) return;
+  const linked = (state.inventory||[]).filter(i => i.supplierId === id).length;
+  const msg = linked
+    ? `Delete supplier "${s.name}"? ${linked} inventory item(s) link to this supplier — those items will be unlinked (their supplier field will go blank, no item data is lost).`
+    : `Delete supplier "${s.name}"?`;
+  if (!confirm(msg)) return;
+  const { error } = await sb.from('suppliers').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.suppliers = state.suppliers.filter(x => x.id !== id);
+  // The FK is ON DELETE SET NULL on the server; mirror that locally so
+  // the UI doesn't keep pointing at a now-gone supplier.
+  state.inventory.forEach(i => { if (i.supplierId === id) i.supplierId = null; });
+  toast('Supplier deleted', 'success');
+  render();
 }
 
 function renderInventory() {
@@ -8200,7 +8388,7 @@ function renderInventory() {
                     ${it.sku ? `<span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(it.sku)}</span>` : ''}
                     ${low ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Low</span>` : ''}
                   </div>
-                  <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.supplier?' &middot; '+escapeHTML(it.supplier):''}${it.branch?' &middot; '+escapeHTML(it.branch):''}</div>
+                  ${(() => { const sup = supplierLabelForItem(it); return `<div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${sup?' &middot; '+escapeHTML(sup):''}${it.branch?' &middot; '+escapeHTML(it.branch):''}</div>`; })()}
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                   <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
@@ -8264,7 +8452,23 @@ function openInventoryItemModal(id, defaults = {}) {
         </div>
         <div>
           <label class="label">Supplier (optional)</label>
-          <input id="inv-sup" class="input" placeholder="e.g. Hassad Roastery" value="${escapeHTML(editing?.supplier||'')}">
+          ${(state.suppliers||[]).length === 0 ? `
+            <div class="text-xs text-slate-500 px-3 py-2 rounded-lg bg-slate-50 border border-dashed border-slate-200">
+              No suppliers yet.
+              <button type="button" onclick="closeModal(); location.hash='#/suppliers';" class="text-brand-700 hover:underline font-medium">Add one</button>
+              first, then come back to link it here.
+            </div>
+          ` : `
+            <select id="inv-sup-id" class="input">
+              <option value="">— None —</option>
+              ${(state.suppliers||[]).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(s =>
+                `<option value="${s.id}" ${editing?.supplierId===s.id?'selected':''}>${escapeHTML(s.name)}</option>`
+              ).join('')}
+            </select>
+            ${editing && !editing.supplierId && editing.supplier ? `
+              <div class="text-[10px] text-slate-500 mt-1">Legacy text: <span class="font-medium">${escapeHTML(editing.supplier)}</span>. Pick a supplier above to replace it.</div>
+            ` : ''}
+          `}
         </div>
         <div>
           <label class="label">Branch (optional)</label>
@@ -8281,6 +8485,10 @@ function openInventoryItemModal(id, defaults = {}) {
     const me = currentEmployee();
     const name = $('#inv-name').value.trim();
     if (!name) { toast('Item name is required', 'error'); return false; }
+    // The dropdown only renders when at least one supplier exists; fall back
+    // to keeping the existing values otherwise so the legacy text isn't wiped.
+    const supEl  = $('#inv-sup-id');
+    const supId  = supEl ? (supEl.value || null) : (editing?.supplierId || null);
     const data = {
       name,
       sku:              $('#inv-sku').value.trim(),
@@ -8288,7 +8496,8 @@ function openInventoryItemModal(id, defaults = {}) {
       unit:             $('#inv-unit').value,
       quantity:         parseFloat($('#inv-qty').value) || 0,
       reorderThreshold: parseFloat($('#inv-thr').value) || 0,
-      supplier:         $('#inv-sup').value.trim(),
+      supplier:         supEl ? '' : (editing?.supplier || ''),
+      supplierId:       supId,
       branch:           $('#inv-br').value.trim(),
       notes:            $('#inv-notes').value.trim(),
       createdBy:        editing?.createdBy || me?.id,
@@ -9103,7 +9312,7 @@ function renderRoaster() {
                 ${it.sku ? `<span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(it.sku)}</span>` : ''}
                 ${low ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">Low</span>` : ''}
               </div>
-              <div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${it.supplier?' &middot; '+escapeHTML(it.supplier):''}${it.updatedAt?' &middot; updated '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>
+              ${(() => { const sup = supplierLabelForItem(it); return `<div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${sup?' &middot; '+escapeHTML(sup):''}${it.updatedAt?' &middot; updated '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>`; })()}
             </div>
             <div class="flex items-center gap-1 shrink-0">
               <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
@@ -9405,7 +9614,7 @@ function renderHeadBaristaDashboard() {
       </div>
       <div class="bg-white rounded-2xl shadow-card p-4">
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Suppliers</div>
-        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${new Set(all.map(i => (i.supplier||'').trim().toLowerCase()).filter(Boolean)).size}</div>
+        <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${new Set(all.map(i => supplierLabelForItem(i).trim().toLowerCase()).filter(Boolean)).size}</div>
         <div class="text-xs text-slate-500 mt-1">distinct</div>
       </div>
     </div>
@@ -10443,6 +10652,7 @@ function render() {
     case 'archive':      content = hasRole('admin','operations') ? renderArchive() : renderRoleDashboard(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
+    case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','head_barista','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;

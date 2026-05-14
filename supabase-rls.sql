@@ -1385,6 +1385,76 @@ $$;
 GRANT EXECUTE ON FUNCTION public.decide_leave_request(uuid, text) TO authenticated;
 
 -- =============================================================
+-- 23. SUPPLIERS (admin / head_barista / roaster manage)
+--     Promotes the legacy `inventory_items.supplier` text column to
+--     a first-class entity so contact info can be stored centrally
+--     and items can reference suppliers by id. The legacy `supplier`
+--     text column is kept for backwards compatibility; new items
+--     pick from the suppliers list via supplier_id.
+--     SELECT mirrors inventory_items SELECT (admin/hr/operations/
+--     head_barista/roaster). Writes are admin/head_barista/roaster.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.suppliers (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  contact_name  text,
+  phone         text,
+  email         text,
+  notes         text,
+  created_by    uuid references public.employees(id),
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS suppliers_name_idx ON public.suppliers(LOWER(name));
+
+CREATE OR REPLACE FUNCTION public.touch_suppliers_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS suppliers_touch_updated_at ON public.suppliers;
+CREATE TRIGGER suppliers_touch_updated_at
+  BEFORE UPDATE ON public.suppliers
+  FOR EACH ROW EXECUTE FUNCTION public.touch_suppliers_updated_at();
+
+ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'suppliers'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "suppliers_select_roles"
+  ON public.suppliers FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','hr','operations','head_barista','roaster']));
+CREATE POLICY "suppliers_insert_roles"
+  ON public.suppliers FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+CREATE POLICY "suppliers_update_roles"
+  ON public.suppliers FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','roaster']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+CREATE POLICY "suppliers_delete_roles"
+  ON public.suppliers FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','roaster']));
+
+-- Add the FK column on inventory_items. Nullable; legacy `supplier`
+-- text column stays put as a fallback so old rows still render.
+ALTER TABLE public.inventory_items
+  ADD COLUMN IF NOT EXISTS supplier_id uuid REFERENCES public.suppliers(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS inventory_items_supplier_id_idx ON public.inventory_items(supplier_id);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
