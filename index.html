@@ -9664,6 +9664,16 @@ function openReceiptModal() {
         <input id="rc-file" type="file" class="input" accept="image/*,application/pdf" capture="environment" onchange="handleReceiptFile(event)">
         <div class="text-xs text-slate-500 mt-1">Max 5MB. Image (PNG/JPG/WebP) or PDF. On phones, the camera will open.</div>
         <div id="rc-preview" class="mt-2"></div>
+        <div class="mt-3 flex items-center gap-3 flex-wrap">
+          <button type="button" id="rc-ocr-btn" onclick="runReceiptOCR()" class="btn btn-ghost btn-sm" disabled title="Upload an image first">
+            ${icon('eye','w-4 h-4')} Extract details from image
+          </button>
+          <span id="rc-ocr-status" class="text-xs text-slate-500"></span>
+        </div>
+        <details id="rc-ocr-details" class="mt-2 hidden">
+          <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-700">Show extracted text</summary>
+          <pre id="rc-ocr-text" class="mt-1 text-[11px] leading-snug bg-slate-50 p-2 rounded-lg whitespace-pre-wrap max-h-40 overflow-auto text-slate-700"></pre>
+        </details>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
@@ -9731,14 +9741,150 @@ function handleReceiptFile(ev) {
   reader.onload = e => {
     _receiptFile = { name: file.name, mime: file.type, size: file.size, dataUrl: e.target.result };
     const p = document.getElementById('rc-preview');
-    if (!p) return;
-    if (file.type.startsWith('image/')) {
-      p.innerHTML = `<img src="${e.target.result}" alt="Receipt preview" class="max-h-48 rounded-lg border border-slate-200" />`;
-    } else {
-      p.innerHTML = `<div class="text-sm text-slate-700">${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)</div>`;
+    const isImage = file.type.startsWith('image/');
+    if (p) {
+      if (isImage) {
+        p.innerHTML = `<img src="${e.target.result}" alt="Receipt preview" class="max-h-48 rounded-lg border border-slate-200" />`;
+      } else {
+        p.innerHTML = `<div class="text-sm text-slate-700">${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)</div>`;
+      }
+    }
+    // OCR button is only meaningful for images. PDFs would need a renderer first.
+    const ocrBtn = document.getElementById('rc-ocr-btn');
+    if (ocrBtn) {
+      ocrBtn.disabled = !isImage;
+      ocrBtn.title = isImage ? 'Run OCR on the image and pre-fill the form' : 'OCR only works on images, not PDFs';
     }
   };
   reader.readAsDataURL(file);
+}
+
+// Lazy-load tesseract.js from CDN on first OCR attempt. ~2MB plus
+// per-language data (cached by the browser after the first run).
+let _tesseractLoadingPromise = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (_tesseractLoadingPromise) return _tesseractLoadingPromise;
+  _tesseractLoadingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('OCR engine missing after load'));
+    s.onerror = () => { _tesseractLoadingPromise = null; reject(new Error('Failed to load OCR engine (offline?)')); };
+    document.head.appendChild(s);
+  });
+  return _tesseractLoadingPromise;
+}
+
+async function runReceiptOCR() {
+  if (!_receiptFile || !_receiptFile.mime?.startsWith('image/')) {
+    toast('Upload a receipt image first (PDFs not supported by OCR).', 'error');
+    return;
+  }
+  const btn = document.getElementById('rc-ocr-btn');
+  const status = document.getElementById('rc-ocr-status');
+  const details = document.getElementById('rc-ocr-details');
+  const dump = document.getElementById('rc-ocr-text');
+  if (btn) btn.disabled = true;
+  if (status) status.innerHTML = '<span class="text-slate-500">Loading OCR engine…</span>';
+  try {
+    const Tesseract = await loadTesseract();
+    if (status) status.innerHTML = '<span class="text-slate-500">Reading receipt… 0%</span>';
+    const { data } = await Tesseract.recognize(_receiptFile.dataUrl, 'eng+ara', {
+      logger: m => {
+        if (m.status === 'recognizing text' && status) {
+          status.innerHTML = `<span class="text-slate-500">Reading receipt… ${Math.round((m.progress||0)*100)}%</span>`;
+        }
+      }
+    });
+    const text = (data?.text || '').trim();
+    if (dump) dump.textContent = text || '(no text detected)';
+    if (details) details.classList.remove('hidden');
+    if (!text) {
+      if (status) status.innerHTML = '<span class="text-amber-700">No text detected — try a clearer photo.</span>';
+      return;
+    }
+    const parsed = parseReceiptText(text);
+    const filled = [];
+    const amountEl = $('#rc-amount');
+    const dateEl   = $('#rc-date');
+    const vendorEl = $('#rc-vendor');
+    if (parsed.amount != null && amountEl && !amountEl.value) { amountEl.value = parsed.amount; filled.push('amount'); }
+    if (parsed.date && dateEl) { dateEl.value = parsed.date; filled.push('date'); }
+    if (parsed.vendor && vendorEl && !vendorEl.value.trim()) { vendorEl.value = parsed.vendor; filled.push('vendor'); }
+    if (status) {
+      status.innerHTML = filled.length
+        ? `<span class="text-emerald-700">Filled ${filled.join(', ')} — review and edit as needed.</span>`
+        : `<span class="text-amber-700">Couldn't auto-fill — see extracted text below.</span>`;
+    }
+  } catch (e) {
+    toast('OCR failed: ' + (e?.message || 'unknown error'), 'error');
+    if (status) status.innerHTML = '';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Best-effort parse of OCR output for vendor, date, and amount. Bilingual
+// (English + Saudi-Arabic) — looks for currency keywords, common date
+// formats, and falls back to the largest plausible number for amount.
+function parseReceiptText(text) {
+  const out = { amount: null, date: null, vendor: null };
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Amount — collect every number that looks like money. Prefer ones on
+  // lines mentioning "total" / "إجمالي" / "المجموع" / "grand total" / "net".
+  const numRe = /(?:SAR|ر\.?س|ريال|\$|USD|AED|EUR)?\s*(\d{1,7}(?:[.,]\d{1,2})?)\s*(?:SAR|ر\.?س|ريال|\$|USD|AED|EUR)?/gi;
+  const totalKw = /(total|grand\s*total|amount|net|إجمالي|المجموع|الإجمالي)/i;
+  const candidates = [];
+  for (const line of lines) {
+    let m; numRe.lastIndex = 0;
+    while ((m = numRe.exec(line)) !== null) {
+      const n = parseFloat(m[1].replace(',', '.'));
+      if (!isNaN(n) && n > 0 && n < 1_000_000) {
+        candidates.push({ val: n, hasKeyword: totalKw.test(line) });
+      }
+    }
+  }
+  if (candidates.length) {
+    const kw = candidates.filter(c => c.hasKeyword);
+    const pool = kw.length ? kw : candidates;
+    const best = pool.reduce((b, c) => c.val > b.val ? c : b, pool[0]);
+    out.amount = best.val.toFixed(2);
+  }
+
+  // Date — try common Saudi-receipt formats. First plausible hit wins.
+  const dateRes = [
+    /(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})/,         // 2026-05-14
+    /(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})/,         // 14-05-2026
+    /(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?!\d)/,     // 14-05-26 → 2026
+  ];
+  outer: for (const line of lines) {
+    for (const re of dateRes) {
+      const m = re.exec(line);
+      if (!m) continue;
+      let y, mo, d;
+      if (m[1].length === 4) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+      else if (m[3].length === 4) { y = +m[3]; mo = +m[2]; d = +m[1]; }
+      else { y = 2000 + +m[3]; mo = +m[2]; d = +m[1]; }
+      if (y >= 2000 && mo>=1 && mo<=12 && d>=1 && d<=31) {
+        out.date = `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        break outer;
+      }
+    }
+  }
+
+  // Vendor — first short, mostly-letter line that isn't a date/number blob.
+  for (const line of lines) {
+    if (line.length < 2 || line.length > 50) continue;
+    if (/\d{4}/.test(line)) continue;
+    const letters = (line.match(/[A-Za-z؀-ۿ]/g) || []).length;
+    if (letters >= 3 && letters / line.length > 0.5) {
+      out.vendor = line.replace(/\s+/g, ' ').trim();
+      break;
+    }
+  }
+
+  return out;
 }
 
 function previewReceipt(id) {
