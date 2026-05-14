@@ -1853,6 +1853,31 @@ function renderDashboard() {
         </div>`;
     })() : ''}
 
+    <!-- Headcount by role (admin only — click a chip to filter the Employees page) -->
+    ${admin ? (() => {
+      const headcount = state.employees
+        .filter(isActiveEmployee)
+        .reduce((acc, e) => {
+          const r = e.systemRole || 'employee';
+          acc[r] = (acc[r] || 0) + 1;
+          return acc;
+        }, {});
+      return `
+        <div class="bg-white rounded-2xl shadow-card p-4 mb-6">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-3 flex items-center gap-1.5">${icon('users','w-3.5 h-3.5')} Headcount by role</div>
+          <div class="flex flex-wrap gap-2">
+            ${Object.entries(ROLES).map(([k,v]) => {
+              const n = headcount[k] || 0;
+              const empty = n === 0;
+              return `<button ${empty?'disabled':''} onclick="empFilter={dept:'all',branch:'all',nationality:'all',role:'${k}',q:'',showTerminated:false}; location.hash='#/employees';" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border transition ${empty?'bg-slate-50 text-slate-400 border-slate-100 cursor-not-allowed':'bg-slate-50 hover:bg-brand-50 text-slate-700 hover:text-brand-700 border-slate-200 hover:border-brand-300'}">
+                <span class="font-medium">${escapeHTML(v.label)}</span>
+                <span class="${empty?'tabular-nums':'text-brand-700 font-semibold tabular-nums'}">${n}</span>
+              </button>`;
+            }).join('')}
+          </div>
+        </div>`;
+    })() : ''}
+
     <!-- Inventory snapshot (read-only) -->
     ${admin ? inventorySnapshotHTML() : ''}
 
@@ -2306,13 +2331,14 @@ function statCard(label, value, caption, dir, ico) {
 }
 
 /* -------------------- EMPLOYEES -------------------- */
-let empFilter = { dept: 'all', branch: 'all', nationality: 'all', q: '', showTerminated: false };
+let empFilter = { dept: 'all', branch: 'all', nationality: 'all', role: 'all', q: '', showTerminated: false };
 function renderEmployees() {
   const terminatedCount = state.employees.filter(e => e.status === 'terminated').length;
   const emps = state.employees.filter(e => {
     // Hide terminated employees unless the toggle is on.
     if (!empFilter.showTerminated && e.status === 'terminated') return false;
     if (empFilter.dept !== 'all' && e.department !== empFilter.dept) return false;
+    if (empFilter.role !== 'all' && (e.systemRole||'employee') !== empFilter.role) return false;
     const ex = getEmpExtras(e.id);
     if (empFilter.branch === 'none') {
       if ((ex.branch||'').trim() !== '') return false;
@@ -2327,7 +2353,7 @@ function renderEmployees() {
   });
   // Branch filter: only the 3 official branches
   const branches = SUGGESTED_BRANCHES.slice();
-  const activeFilters = (empFilter.branch!=='all'?1:0) + (empFilter.q?1:0);
+  const activeFilters = (empFilter.branch!=='all'?1:0) + (empFilter.role!=='all'?1:0) + (empFilter.q?1:0);
   const totalShown = empFilter.showTerminated ? state.employees.length : (state.employees.length - terminatedCount);
 
   return `
@@ -2335,7 +2361,7 @@ function renderEmployees() {
       <div class="flex items-center justify-between gap-3 p-5 border-b border-slate-100 flex-wrap">
         <div>
           <h2 class="font-semibold text-slate-900">${escapeHTML(t('employees'))}</h2>
-          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${totalShown} employees${terminatedCount && !empFilter.showTerminated ? ` · <span class="text-slate-400">${terminatedCount} terminated hidden</span>` : ''}${activeFilters?` · <button onclick="empFilter={dept:'all',branch:'all',nationality:'all',q:'',showTerminated:empFilter.showTerminated}; render();" class="text-brand-600 hover:underline">clear filters</button>`:''}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${emps.length} of ${totalShown} employees${terminatedCount && !empFilter.showTerminated ? ` · <span class="text-slate-400">${terminatedCount} terminated hidden</span>` : ''}${activeFilters?` · <button onclick="empFilter={dept:'all',branch:'all',nationality:'all',role:'all',q:'',showTerminated:empFilter.showTerminated}; render();" class="text-brand-600 hover:underline">clear filters</button>`:''}</div>
         </div>
         <div class="flex gap-2 flex-wrap items-center">
           ${terminatedCount > 0 ? `
@@ -2358,6 +2384,10 @@ function renderEmployees() {
           <option value="all">${empFilter.branch==='all'?'Branches':empFilter.branch==='none'?'Branch: None':'Branch: '+empFilter.branch}</option>
           <option value="none" ${empFilter.branch==='none'?'selected':''}>None (unassigned)</option>
           ${branches.map(b=>`<option value="${escapeHTML(b)}" ${empFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+        </select>
+        <select class="pill ${empFilter.role!=='all'?'active':''}" onchange="empFilter.role=this.value; render();" title="System role">
+          <option value="all">${empFilter.role==='all'?'Roles':'Role: '+roleLabel(empFilter.role)}</option>
+          ${Object.entries(ROLES).map(([k,v])=>`<option value="${k}" ${empFilter.role===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}
         </select>
       </div>
       <div class="overflow-x-auto">
