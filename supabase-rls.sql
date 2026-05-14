@@ -1599,6 +1599,61 @@ ALTER TABLE public.maintenance_requests
 CREATE INDEX IF NOT EXISTS maintenance_requests_asset_id_idx ON public.maintenance_requests(asset_id);
 
 -- =============================================================
+-- 27. ASSETS — Phase 2: backfill legacy text & drop column
+--     Phase 1 (block 26) added the assets table and a nullable
+--     asset_id FK on maintenance_requests, but kept the old free-
+--     text `asset` column as a fallback display. Phase 2 walks
+--     that legacy column, creates / matches an assets row per
+--     distinct non-empty name (case-insensitive), points each
+--     request's asset_id at the right row, and then drops the
+--     legacy column.
+--
+--     Wrapped in a DO block guarded on the column's existence so
+--     re-runs after the drop are no-ops (fully idempotent).
+-- =============================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'maintenance_requests'
+      AND column_name = 'asset'
+  ) THEN
+    -- 1. Create asset rows for any legacy text without a match.
+    --    DISTINCT ON picks one canonical case per LOWER(trim(name))
+    --    key so case-variants don't insert as duplicates.
+    INSERT INTO public.assets (name)
+    SELECT legacy.canon_name
+    FROM (
+      SELECT DISTINCT ON (LOWER(trim(asset)))
+        trim(asset) AS canon_name
+      FROM public.maintenance_requests
+      WHERE asset IS NOT NULL
+        AND trim(asset) <> ''
+      ORDER BY LOWER(trim(asset)), trim(asset)
+    ) AS legacy
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.assets a
+      WHERE LOWER(a.name) = LOWER(legacy.canon_name)
+    );
+
+    -- 2. Link requests to assets by case-insensitive name match.
+    --    Skip requests that already have an asset_id set (from
+    --    post-Phase-1 picks via the dropdown).
+    UPDATE public.maintenance_requests mr
+    SET asset_id = a.id
+    FROM public.assets a
+    WHERE mr.asset_id IS NULL
+      AND mr.asset IS NOT NULL
+      AND trim(mr.asset) <> ''
+      AND LOWER(a.name) = LOWER(trim(mr.asset));
+
+    -- 3. Drop the legacy column. asset_id is the single source of
+    --    truth from here on.
+    ALTER TABLE public.maintenance_requests DROP COLUMN asset;
+  END IF;
+END $$;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
