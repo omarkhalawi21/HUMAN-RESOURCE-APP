@@ -8141,25 +8141,26 @@ function maintenancePhotoPreviewHTML(src, alt) {
     <button type="button" onclick="clearMaintenancePhoto()" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm text-slate-600 hover:text-rose-600 flex items-center justify-center" title="Remove photo">${icon('close','w-3.5 h-3.5')}</button>
   </div>`;
 }
-// Generate a small JPEG thumbnail from an arbitrary image data URL. Used
-// at upload time so the list can render thumbnails cheaply without
-// streaming the full multi-MB photo on every page load.
-function generateImageThumbnail(srcDataUrl, maxPx = MAINT_PHOTO_THUMB_MAX_PX) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width  * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
-    };
-    img.onerror = () => reject(new Error('Image decode failed'));
-    img.src = srcDataUrl;
-  });
+// Generate a small JPEG thumbnail from an image blob. Used at upload time
+// so the list can render thumbnails cheaply without streaming the full
+// multi-MB photo on every page load. createImageBitmap with
+// imageOrientation: 'from-image' honors EXIF orientation tags — without
+// it, phone photos taken in portrait render sideways on the canvas
+// (HTMLImageElement display respects EXIF but canvas drawImage does not).
+async function generateImageThumbnail(blob, maxPx = MAINT_PHOTO_THUMB_MAX_PX) {
+  const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  try {
+    const scale = Math.min(1, maxPx / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width  * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } finally {
+    bitmap.close?.();
+  }
 }
 async function handleMaintenancePhoto(ev) {
   const file = ev.target.files?.[0];
@@ -8177,7 +8178,7 @@ async function handleMaintenancePhoto(ev) {
   });
   let thumbDataUrl;
   try {
-    thumbDataUrl = await generateImageThumbnail(dataUrl);
+    thumbDataUrl = await generateImageThumbnail(file);
   } catch {
     toast('Could not generate thumbnail — using full image.', 'error');
     thumbDataUrl = dataUrl;
