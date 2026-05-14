@@ -1455,6 +1455,62 @@ ALTER TABLE public.inventory_items
 CREATE INDEX IF NOT EXISTS inventory_items_supplier_id_idx ON public.inventory_items(supplier_id);
 
 -- =============================================================
+-- 24. SUPPLIERS — Phase 2: backfill legacy text & drop column
+--     Phase 1 (block 23) added the suppliers table and a nullable
+--     supplier_id FK on inventory_items, but kept the old free-text
+--     `supplier` column as a fallback display. Phase 2 walks that
+--     legacy column, creates / matches a suppliers row per distinct
+--     non-empty name (case-insensitive), points each item's new
+--     supplier_id at the right row, and then drops the legacy
+--     column.
+--
+--     Wrapped in a DO block guarded on the column's existence so
+--     re-runs after the drop are no-ops (fully idempotent).
+-- =============================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'inventory_items'
+      AND column_name = 'supplier'
+  ) THEN
+    -- 1. Create supplier rows for any legacy text without a match.
+    --    DISTINCT ON picks one canonical case per LOWER(trim(name))
+    --    key so case-variants don't insert as duplicates.
+    INSERT INTO public.suppliers (name)
+    SELECT legacy.canon_name
+    FROM (
+      SELECT DISTINCT ON (LOWER(trim(supplier)))
+        trim(supplier) AS canon_name
+      FROM public.inventory_items
+      WHERE supplier IS NOT NULL
+        AND trim(supplier) <> ''
+      ORDER BY LOWER(trim(supplier)), trim(supplier)
+    ) AS legacy
+    WHERE NOT EXISTS (
+      SELECT 1 FROM public.suppliers s
+      WHERE LOWER(s.name) = LOWER(legacy.canon_name)
+    );
+
+    -- 2. Link items to suppliers by case-insensitive name match.
+    --    Skip items that already have a supplier_id set (from
+    --    post-Phase-1 picks via the dropdown).
+    UPDATE public.inventory_items ii
+    SET supplier_id = s.id
+    FROM public.suppliers s
+    WHERE ii.supplier_id IS NULL
+      AND ii.supplier IS NOT NULL
+      AND trim(ii.supplier) <> ''
+      AND LOWER(s.name) = LOWER(trim(ii.supplier));
+
+    -- 3. Drop the legacy column. After this point the inventory
+    --    items only carry supplier_id, the FK is the single source
+    --    of truth.
+    ALTER TABLE public.inventory_items DROP COLUMN supplier;
+  END IF;
+END $$;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

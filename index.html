@@ -824,9 +824,6 @@ function inventoryItemToDb(i) {
     unit: i.unit || 'units',
     quantity: Number(i.quantity) || 0,
     reorder_threshold: Number(i.reorderThreshold) || 0,
-    // Prefer the supplier_id FK when picked; clear the legacy text in that
-    // case so we don't carry duplicate sources of truth on the same row.
-    supplier: i.supplierId ? null : (i.supplier || null),
     supplier_id: i.supplierId || null,
     branch: i.branch || null,
     notes: i.notes || null,
