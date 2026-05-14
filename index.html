@@ -638,14 +638,19 @@ const ROLES = {
 function roleLabel(key) { return ROLES[key]?.label || (key||'Employee'); }
 
 function mapEmployeeFromDb(r) {
+  const sysRole = r.system_role || 'employee';
   return {
     id: r.id, user_id: r.user_id,
     firstName: r.first_name, lastName: r.last_name||'',
     email: r.email, phone: r.phone||'',
     role: r.job_title, department: r.department,
     hireDate: r.hire_date, salary: Number(r.salary)||0,
-    status: r.status, isAdmin: r.is_admin,
-    systemRole: r.system_role || (r.is_admin ? 'admin' : 'employee'),
+    status: r.status,
+    // isAdmin is a derived convenience flag, not a column. system_role is the
+    // source of truth, read-side only — writes go through system_role via
+    // employeeToDb. Setting emp.isAdmin and saving is a silent no-op.
+    isAdmin: sysRole === 'admin',
+    systemRole: sysRole,
     avatarColor: r.avatar_color || '#a87035',
     photo: r.photo,
     leave_annual: r.leave_annual, leave_sick: r.leave_sick, leave_personal: r.leave_personal,
@@ -667,7 +672,6 @@ function employeeToDb(e) {
     hire_date: e.hireDate, salary: Number(e.salary)||0,
     status: e.status || 'active',
     system_role: sysRole,
-    is_admin: sysRole === 'admin',
     avatar_color: e.avatarColor, photo: e.photo,
   };
 }
@@ -1159,7 +1163,7 @@ function currentEmployee() {
 function realRole() {
   const e = currentEmployee();
   if (!e) return null;
-  return e.systemRole || (e.isAdmin ? 'admin' : 'employee');
+  return e.systemRole || 'employee';
 }
 function isRealAdmin() { return realRole() === 'admin'; }
 function isPreviewing() {
@@ -1184,7 +1188,7 @@ function isAdmin() {
 function currentRole() {
   if (isRealAdmin() && state?.viewAsRole && ROLES[state.viewAsRole]) return state.viewAsRole;
   const e = currentEmployee();
-  return e?.systemRole || (e?.isAdmin ? 'admin' : 'employee');
+  return e?.systemRole || 'employee';
 }
 function hasRole(...roles) { return roles.includes(currentRole()); }
 // canManagePeople — true for anyone who runs day-to-day HR work.
@@ -4831,7 +4835,7 @@ function renderSettings() {
               </div>
               <span class="badge ${u.role==='admin'?'badge-purple':'badge-slate'}">${escapeHTML(u.role)}</span>
               <div class="flex items-center gap-2 text-xs">
-                ${isMe?'':`<button onclick="toggleUserRole('${u.id}')" class="text-slate-600 hover:text-brand-700 hover:underline whitespace-nowrap">${u.role==='admin'?'demote':'make admin'}</button><span class="text-slate-300">·</span>`}
+                ${isMe?'':`<button onclick="toggleAdmin('${u.id}')" class="text-slate-600 hover:text-brand-700 hover:underline whitespace-nowrap">${u.role==='admin'?'demote':'make admin'}</button><span class="text-slate-300">·</span>`}
                 <button onclick="resetUserPassword('${u.id}')" class="text-brand-600 hover:underline whitespace-nowrap">reset pw</button>
               </div>
             </div>`;
@@ -5288,7 +5292,7 @@ function renderHelp() {
       <p><strong>Clock-in fails with "outside branch radius":</strong> branch coordinates are wrong, or radius is too small. ${admin ? 'Settings &rarr; Branches &rarr; Edit &rarr; "Use my current location" while at the branch.' : 'Ask HR to check the branch coordinates.'}</p>
       <p><strong>Print preview blank:</strong> pop-ups blocked. Allow pop-ups for the site (Safari: top menu &rarr; Safari &rarr; Settings for this site &rarr; Pop-up Windows &rarr; Allow).</p>
       <p><strong>Modal won't close after save:</strong> the save errored. Look for a red toast at the top right.</p>
-      <p><strong>Lost admin access:</strong> ask another admin to demote and re-promote you, or use Forgot password. If no other admin exists, an engineer needs to flip <code>is_admin</code> in the Supabase Table Editor.</p>
+      <p><strong>Lost admin access:</strong> ask another admin to demote and re-promote you, or use Forgot password. If no other admin exists, an engineer needs to set <code>system_role = 'admin'</code> on the employee row in the Supabase Table Editor.</p>
     </article>
   `;
 
@@ -5340,7 +5344,7 @@ async function resetUserPassword(uid_) {
   if (error) { toast(error.message, 'error'); return; }
   toast(`Reset link sent to ${emp.email}`, 'success');
 }
-async function toggleUserRole(uid_) {
+async function toggleAdmin(uid_) {
   const emp = state.employees.find(e => 'u-'+e.id === uid_);
   if (!emp) return;
   if (emp.user_id === state.session?.userId) {
@@ -5354,12 +5358,12 @@ async function toggleUserRole(uid_) {
   } else {
     if (!confirm(`Promote ${emp.firstName} to admin? They will get full access to all data and settings.`)) return;
   }
-  const newAdmin = !emp.isAdmin;
-  const { data, error } = await sb.from('employees').update({ is_admin: newAdmin }).eq('id', emp.id).select().single();
+  const newRole = emp.isAdmin ? 'employee' : 'admin';
+  const { data, error } = await sb.from('employees').update({ system_role: newRole }).eq('id', emp.id).select().single();
   if (error) { toast(error.message, 'error'); return; }
   Object.assign(emp, mapEmployeeFromDb(data));
   render();
-  toast(`${emp.firstName} is now ${newAdmin?'an admin':'an employee'}`, 'success');
+  toast(`${emp.firstName} is now ${newRole==='admin'?'an admin':'an employee'}`, 'success');
 }
 function downloadBackup() {
   if (!isAdmin()) { toast('Admins only', 'error'); return; }
@@ -7228,10 +7232,6 @@ function renderReceipts() {
 }
 
 function renderRoleDashboard() {
-  // Belt-and-braces: legacy is_admin=true always wins, even if
-  // system_role drifted to something else (early migrations could
-  // leave admins on system_role='employee'). Without this fallback
-  // such an admin would be served the barista personal dashboard.
   if (isAdmin()) return renderDashboard();
   const role = currentRole();
   if (role === 'accounting')   return renderAccountingDashboard();
