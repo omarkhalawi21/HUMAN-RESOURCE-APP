@@ -992,15 +992,23 @@ function extrasToDb(empId, x) {
   };
 }
 
+// Bulk-load attendance window. 18 months covers the analytics period
+// selector (This month / Last month / YTD) plus a buffer for last-year
+// comparisons. Older records are still in the DB and can be queried
+// explicitly from Reports if we add that later; the bulk load just
+// doesn't drag every clock-in since day one through every page render.
+const ATTENDANCE_BULK_LOAD_DAYS = 540;
+
 /* -------------------- LOAD ALL FROM SUPABASE -------------------- */
 async function loadAll() {
   isLoadingData = true;
   try {
+    const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
            warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
-      sb.from('attendance').select('*').order('date', { ascending: false }),
+      sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
       sb.from('leave_requests').select('*').order('created_at', { ascending: false }),
       sb.from('payroll').select('*').order('period', { ascending: false }),
       sb.from('branches').select('*').order('name'),
