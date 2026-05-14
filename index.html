@@ -10331,8 +10331,8 @@ function openReceiptModal() {
         <div class="text-xs text-slate-500 mt-1">Max 5MB. Image (PNG/JPG/WebP) or PDF. On phones, the camera will open.</div>
         <div id="rc-preview" class="mt-2"></div>
         <div class="mt-3 flex items-center gap-3 flex-wrap">
-          <button type="button" id="rc-ocr-btn" onclick="runReceiptOCR()" class="btn btn-ghost btn-sm" disabled title="Upload an image first">
-            ${icon('eye','w-4 h-4')} Extract details from image
+          <button type="button" id="rc-ocr-btn" onclick="runReceiptOCR()" class="btn btn-ghost btn-sm" disabled title="Upload a receipt first">
+            ${icon('eye','w-4 h-4')} Extract details
           </button>
           <span id="rc-ocr-status" class="text-xs text-slate-500"></span>
         </div>
@@ -10415,11 +10415,14 @@ function handleReceiptFile(ev) {
         p.innerHTML = `<div class="text-sm text-slate-700">${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)</div>`;
       }
     }
-    // OCR button is only meaningful for images. PDFs would need a renderer first.
+    // OCR works on images directly and on PDFs via pdf.js (renders page 1 to
+    // a canvas, then hands the canvas to Tesseract).
     const ocrBtn = document.getElementById('rc-ocr-btn');
     if (ocrBtn) {
-      ocrBtn.disabled = !isImage;
-      ocrBtn.title = isImage ? 'Run OCR on the image and pre-fill the form' : 'OCR only works on images, not PDFs';
+      ocrBtn.disabled = false;
+      ocrBtn.title = isImage
+        ? 'Run OCR on the image and pre-fill the form'
+        : 'Render the first PDF page and OCR it';
     }
   };
   reader.readAsDataURL(file);
@@ -10441,9 +10444,54 @@ function loadTesseract() {
   return _tesseractLoadingPromise;
 }
 
+// Lazy-load pdf.js (pdfjs-dist v3 — last UMD release before the ESM switch,
+// works fine via plain <script src=>). Used to render the first page of a
+// PDF receipt to a JPEG so Tesseract can OCR it. ~400KB + a separate worker.
+let _pdfjsLoadingPromise = null;
+const PDFJS_VERSION = '3.11.174';
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_pdfjsLoadingPromise) return _pdfjsLoadingPromise;
+  _pdfjsLoadingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.min.js`;
+    s.onload = () => {
+      if (!window.pdfjsLib) { reject(new Error('pdfjsLib missing after load')); return; }
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.js`;
+      resolve(window.pdfjsLib);
+    };
+    s.onerror = () => { _pdfjsLoadingPromise = null; reject(new Error('Failed to load PDF engine (offline?)')); };
+    document.head.appendChild(s);
+  });
+  return _pdfjsLoadingPromise;
+}
+
+// Renders the first page of a PDF (passed as a data URL) to a JPEG data URL
+// suitable for handing to Tesseract. scale=2 puts the raster at ~144dpi which
+// is the sweet spot for OCR accuracy without ballooning canvas memory.
+async function pdfFirstPageToImageDataUrl(pdfDataUrl) {
+  const pdfjs = await loadPdfJs();
+  const base64 = String(pdfDataUrl).split(',')[1] || '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement('canvas');
+  canvas.width  = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
 async function runReceiptOCR() {
-  if (!_receiptFile || !_receiptFile.mime?.startsWith('image/')) {
-    toast('Upload a receipt image first (PDFs not supported by OCR).', 'error');
+  if (!_receiptFile) { toast('Upload a receipt first.', 'error'); return; }
+  const mime = (_receiptFile.mime||'').toLowerCase();
+  const isPdf = mime === 'application/pdf';
+  if (!isPdf && !mime.startsWith('image/')) {
+    toast('OCR only works on images or PDFs.', 'error');
     return;
   }
   const btn = document.getElementById('rc-ocr-btn');
@@ -10453,9 +10501,17 @@ async function runReceiptOCR() {
   if (btn) btn.disabled = true;
   if (status) status.innerHTML = '<span class="text-slate-500">Loading OCR engine…</span>';
   try {
-    const Tesseract = await loadTesseract();
+    // Kick off Tesseract loading in parallel — on the PDF path the page
+    // render runs concurrently, saving a round trip on first use.
+    const tesseractPromise = loadTesseract();
+    let imageDataUrl = _receiptFile.dataUrl;
+    if (isPdf) {
+      if (status) status.innerHTML = '<span class="text-slate-500">Rendering PDF page…</span>';
+      imageDataUrl = await pdfFirstPageToImageDataUrl(_receiptFile.dataUrl);
+    }
+    const Tesseract = await tesseractPromise;
     if (status) status.innerHTML = '<span class="text-slate-500">Reading receipt… 0%</span>';
-    const { data } = await Tesseract.recognize(_receiptFile.dataUrl, 'eng+ara', {
+    const { data } = await Tesseract.recognize(imageDataUrl, 'eng+ara', {
       logger: m => {
         if (m.status === 'recognizing text' && status) {
           status.innerHTML = `<span class="text-slate-500">Reading receipt… ${Math.round((m.progress||0)*100)}%</span>`;
