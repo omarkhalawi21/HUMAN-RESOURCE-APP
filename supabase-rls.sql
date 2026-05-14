@@ -1833,6 +1833,22 @@ CREATE INDEX IF NOT EXISTS employees_user_id_idx ON public.employees(user_id);
 ALTER TABLE public.employees DROP COLUMN IF EXISTS is_admin;
 
 -- =============================================================
+-- 29. MAINTENANCE — thumbnail column for photo attachments
+--     PR #51 added inline data-URL photos on maintenance_requests.
+--     At a few dozen requests each ~1 MB, the bulk load pulls tens
+--     of MB on every page visit. This adds a small JPEG thumbnail
+--     (generated client-side at upload time, ~5-15 KB) so the list
+--     can render thumbnails cheaply. The bulk load query is updated
+--     to skip the full photo_data_url; the full image is fetched
+--     on demand when the user clicks a thumbnail.
+--
+--     Pre-migration rows have photo_data_url but a NULL thumb. The
+--     UI shows a placeholder + still fetches the full on click.
+-- =============================================================
+ALTER TABLE public.maintenance_requests
+  ADD COLUMN IF NOT EXISTS photo_thumb_data_url text;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

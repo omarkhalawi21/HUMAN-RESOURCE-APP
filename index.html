@@ -901,7 +901,14 @@ function mapMaintenanceFromDb(r) {
     resolvedAt: r.resolved_at,
     photoMime: r.photo_mime || null,
     photoSize: r.photo_size || 0,
+    // Full photo bytes — intentionally NOT in the bulk load query so the
+    // list doesn't drag MB-per-row. Populated lazily by
+    // previewMaintenancePhoto via an on-demand fetch and cached here.
     photoDataUrl: r.photo_data_url || null,
+    photoThumbDataUrl: r.photo_thumb_data_url || null,
+    // hasPhoto: derived from cheap fields (mime + size) so we know there's
+    // a photo even when its bytes weren't fetched eagerly.
+    hasPhoto: !!(r.photo_thumb_data_url || (r.photo_mime && r.photo_size > 0)),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -919,9 +926,10 @@ function maintenanceToDb(m) {
     assigned_to: m.assignedTo || null,
     resolution: m.resolution || null,
     resolved_at: m.resolvedAt || null,
-    photo_mime:     m.photoMime || null,
-    photo_size:     Number(m.photoSize) || 0,
-    photo_data_url: m.photoDataUrl || null,
+    photo_mime:           m.photoMime || null,
+    photo_size:           Number(m.photoSize) || 0,
+    photo_data_url:       m.photoDataUrl || null,
+    photo_thumb_data_url: m.photoThumbDataUrl || null,
   };
 }
 function mapAssetFromDb(r) {
@@ -1006,7 +1014,11 @@ async function loadAll() {
       sb.from('inventory_items').select('*').order('name'),
       // Maintenance: RLS returns admin/maintenance the full table, others
       // see only their own reports — the same query works for both.
-      sb.from('maintenance_requests').select('*').order('created_at', { ascending: false }),
+      // Explicit column list: photo_data_url is excluded (heavy, multi-MB
+      // per row) and fetched on demand by previewMaintenancePhoto. The
+      // thumb is shipped eagerly so the list can render thumbnails.
+      // If you add a column to maintenance_requests, add it here too.
+      sb.from('maintenance_requests').select('id, title, description, branch, location, asset_id, priority, status, reported_by, assigned_to, resolution, resolved_at, photo_mime, photo_size, photo_thumb_data_url, created_at, updated_at').order('created_at', { ascending: false }),
       sb.from('employee_extras').select('*'),
       // Inventory movements: ledger of every adjust/roast/transfer/etc.
       // Same SELECT scope as inventory_items SELECT (admin/hr/ops/
@@ -8032,13 +8044,21 @@ function renderMaintenance() {
             const st  = MAINT_STATUSES[r.status]     || MAINT_STATUSES.open;
             const reporter = getEmployee(r.reportedBy);
             const assignee = getEmployee(r.assignedTo);
-            const photoUrl = safeMaintenancePhotoUrl(r);
+            const thumbUrl = maintenanceThumbUrl(r);
             const assetLbl = assetLabelForRequest(r);
+            // Three states: thumbnail loaded → render <img>. hasPhoto but no
+            // thumb (pre-migration row) → placeholder button that still
+            // fetches the full on click. Neither → nothing.
+            const photoBtn = thumbUrl
+              ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-slate-200 hover:border-brand-400 transition" title="View photo"><img src="${thumbUrl}" alt="" class="w-full h-full object-cover"/></button>`
+              : r.hasPhoto
+                ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg border border-slate-200 hover:border-brand-400 transition bg-slate-50 text-slate-400 hover:text-brand-600 flex items-center justify-center" title="View photo (not preloaded)">${icon('eye','w-5 h-5')}</button>`
+                : '';
             return `
               <div class="px-5 py-4 hover:bg-slate-50">
                 <div class="flex items-start gap-3">
                   <div class="w-1 self-stretch rounded-full ${pri.bar}"></div>
-                  ${photoUrl ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-slate-200 hover:border-brand-400 transition" title="View photo"><img src="${photoUrl}" alt="" class="w-full h-full object-cover"/></button>` : ''}
+                  ${photoBtn}
                   <div class="flex-1 min-w-0">
                     <div class="flex items-start gap-2 flex-wrap">
                       <div class="font-medium text-slate-900">${escapeHTML(r.title||'—')}</div>
@@ -8077,26 +8097,35 @@ function renderMaintenance() {
   `;
 }
 
-// Photo attachments on maintenance requests — images only, inline data URL,
-// matches the receipt/archive storage pattern. Two module-level transients:
-// `_maintenancePhoto` carries a new upload (or null = no upload); the
-// `_maintenancePhotoCleared` flag means the user hit the X. Both are reset
-// on every modal open and again in closeModal.
+// Photo attachments on maintenance requests — images only. The full data URL
+// is fetched on demand (heavy); a small JPEG thumbnail is generated client-
+// side at upload time and shipped with the bulk load for cheap list-render.
+// `_maintenancePhoto` carries a new upload {mime, size, dataUrl, thumbDataUrl}
+// or null. `_maintenancePhotoCleared` is the "user hit the X" flag.
 const MAINT_PHOTO_ALLOWED_MIMES = new Set(['image/png','image/jpeg','image/gif','image/webp']);
+const MAINT_PHOTO_THUMB_MAX_PX = 200;
 let _maintenancePhoto = null;
 let _maintenancePhotoCleared = false;
-function safeMaintenancePhotoUrl(r) {
+
+// XSS guard: the URL must declare the same base64 image/* MIME the row
+// claims AND its body must look like base64. The shape regex matches the
+// one safeReceiptDataUrl / safeArchiveDataUrl use so all three validators
+// reject malformed payloads identically. Don't loosen without revisiting
+// the previewMaintenancePhoto document.write call site.
+function isSafeMaintenancePhotoUrl(url, mime) {
+  if (typeof url !== 'string') return false;
+  const m = (mime||'').toLowerCase();
+  if (!MAINT_PHOTO_ALLOWED_MIMES.has(m)) return false;
+  if (!url.startsWith('data:' + m + ';base64,')) return false;
+  return /^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i.test(url);
+}
+// Returns the thumb URL for display in the list / modal preview. Thumbs
+// always have `image/jpeg` MIME regardless of the source — they're
+// canvas-encoded JPEGs.
+function maintenanceThumbUrl(r) {
   if (!r) return '';
-  const mime = (r.photoMime||'').toLowerCase();
-  if (!MAINT_PHOTO_ALLOWED_MIMES.has(mime)) return '';
-  const url = r.photoDataUrl;
-  if (typeof url !== 'string') return '';
-  // Bind URL scheme + MIME to the column value: the URL must declare the
-  // same base64 image/* MIME the row claims. This prefix check is the XSS
-  // guard for the `src=` injection in previewMaintenancePhoto — don't
-  // loosen it without revisiting that call site.
-  if (!url.startsWith('data:' + mime + ';base64,')) return '';
-  return url;
+  const u = r.photoThumbDataUrl;
+  return (typeof u === 'string' && u.startsWith('data:image/jpeg;base64,')) ? u : '';
 }
 function maintenancePhotoPreviewHTML(src, alt) {
   return `<div class="relative inline-block">
@@ -8104,7 +8133,27 @@ function maintenancePhotoPreviewHTML(src, alt) {
     <button type="button" onclick="clearMaintenancePhoto()" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm text-slate-600 hover:text-rose-600 flex items-center justify-center" title="Remove photo">${icon('close','w-3.5 h-3.5')}</button>
   </div>`;
 }
-function handleMaintenancePhoto(ev) {
+// Generate a small JPEG thumbnail from an arbitrary image data URL. Used
+// at upload time so the list can render thumbnails cheaply without
+// streaming the full multi-MB photo on every page load.
+function generateImageThumbnail(srcDataUrl, maxPx = MAINT_PHOTO_THUMB_MAX_PX) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width  * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => reject(new Error('Image decode failed'));
+    img.src = srcDataUrl;
+  });
+}
+async function handleMaintenancePhoto(ev) {
   const file = ev.target.files?.[0];
   if (!file) return;
   if (file.size > 5*1024*1024) { toast('Photo too large (max 5MB)', 'error'); ev.target.value=''; return; }
@@ -8112,14 +8161,23 @@ function handleMaintenancePhoto(ev) {
     toast('Unsupported file type. Use a PNG / JPG / GIF / WebP image.', 'error');
     ev.target.value=''; return;
   }
-  const reader = new FileReader();
-  reader.onload = e => {
-    _maintenancePhoto = { mime: file.type, size: file.size, dataUrl: e.target.result };
-    _maintenancePhotoCleared = false;
-    const p = document.getElementById('maint-photo-preview');
-    if (p) p.innerHTML = maintenancePhotoPreviewHTML(e.target.result, 'Photo preview');
-  };
-  reader.readAsDataURL(file);
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.onerror = () => rej(new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+  let thumbDataUrl;
+  try {
+    thumbDataUrl = await generateImageThumbnail(dataUrl);
+  } catch {
+    toast('Could not generate thumbnail — using full image.', 'error');
+    thumbDataUrl = dataUrl;
+  }
+  _maintenancePhoto = { mime: file.type, size: file.size, dataUrl, thumbDataUrl };
+  _maintenancePhotoCleared = false;
+  const p = document.getElementById('maint-photo-preview');
+  if (p) p.innerHTML = maintenancePhotoPreviewHTML(thumbDataUrl, 'Photo preview');
 }
 function clearMaintenancePhoto() {
   _maintenancePhoto = null;
@@ -8129,12 +8187,36 @@ function clearMaintenancePhoto() {
   if (p) p.innerHTML = '<div class="text-xs text-slate-500">Photo will be removed on save.</div>';
   if (f) f.value = '';
 }
-function previewMaintenancePhoto(id) {
+// Fetch the full photo bytes for a request on demand (the bulk load skips
+// this heavy column). Caches the result back into state.maintenance so a
+// second view doesn't re-fetch.
+async function ensureMaintenancePhotoFull(id) {
   const r = (state.maintenance||[]).find(x => x.id === id);
-  const url = safeMaintenancePhotoUrl(r);
-  if (!url) return;
+  if (!r || !r.hasPhoto) return null;
+  if (r.photoDataUrl && isSafeMaintenancePhotoUrl(r.photoDataUrl, r.photoMime)) return r;
+  const { data, error } = await sb.from('maintenance_requests')
+    .select('photo_data_url, photo_mime')
+    .eq('id', id).single();
+  if (error || !data) return null;
+  r.photoDataUrl = data.photo_data_url || null;
+  if (data.photo_mime) r.photoMime = data.photo_mime;
+  return r;
+}
+async function previewMaintenancePhoto(id) {
   const w = window.open('', '_blank');
-  if (!w) return;
+  if (!w) { toast('Allow pop-ups to view the photo.', 'error'); return; }
+  w.document.write('<!doctype html><html><head><title>Loading…</title><style>body{margin:0;background:#0f172a;color:#94a3b8;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh}</style></head><body>Loading photo…</body></html>');
+  w.document.close();
+  const r = await ensureMaintenancePhotoFull(id);
+  if (!r) { try { w.close(); } catch(_) {} return; }
+  const url = isSafeMaintenancePhotoUrl(r.photoDataUrl, r.photoMime) ? r.photoDataUrl : '';
+  if (!url) {
+    w.document.open();
+    w.document.write('<!doctype html><html><body style="background:#0f172a;color:#94a3b8;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">Photo unavailable</body></html>');
+    w.document.close();
+    return;
+  }
+  w.document.open();
   w.document.write(`<!doctype html><html><head><title>${escapeHTML(r.title||'Maintenance photo')}</title><style>body{margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh}img{max-width:100%;max-height:100vh;display:block}</style></head><body><img src="${url}" alt=""></body></html>`);
   w.document.close();
 }
@@ -8223,7 +8305,7 @@ function openMaintenanceModal(id) {
         <input id="maint-photo" type="file" class="input" accept="image/png,image/jpeg,image/gif,image/webp" capture="environment" onchange="handleMaintenancePhoto(event)">
         <div class="text-xs text-slate-500 mt-1">Max 5MB. PNG / JPG / GIF / WebP. On phones, the camera will open.</div>
         <div id="maint-photo-preview" class="mt-2">${(() => {
-          const existing = editing && safeMaintenancePhotoUrl(editing);
+          const existing = editing && maintenanceThumbUrl(editing);
           return existing ? maintenancePhotoPreviewHTML(existing, 'Existing photo') : '';
         })()}</div>
       </div>
@@ -8233,9 +8315,16 @@ function openMaintenanceModal(id) {
     const title = $('#maint-title').value.trim();
     if (!title) { toast('Title is required', 'error'); return false; }
 
-    const photoMime    = _maintenancePhoto ? _maintenancePhoto.mime    : (_maintenancePhotoCleared ? null : (editing?.photoMime    || null));
-    const photoSize    = _maintenancePhoto ? _maintenancePhoto.size    : (_maintenancePhotoCleared ? 0    : (editing?.photoSize    || 0));
-    const photoDataUrl = _maintenancePhoto ? _maintenancePhoto.dataUrl : (_maintenancePhotoCleared ? null : (editing?.photoDataUrl || null));
+    // Photo is only written when changed. On edit without a new upload or
+    // clear we omit the columns entirely (see the dbRow guard below) so
+    // unloaded photoDataUrl doesn't accidentally wipe the row's photo.
+    const photoChanged = !!_maintenancePhoto || _maintenancePhotoCleared;
+    const photoFields  = photoChanged ? {
+      photoMime:         _maintenancePhoto ? _maintenancePhoto.mime         : null,
+      photoSize:         _maintenancePhoto ? _maintenancePhoto.size         : 0,
+      photoDataUrl:      _maintenancePhoto ? _maintenancePhoto.dataUrl      : null,
+      photoThumbDataUrl: _maintenancePhoto ? _maintenancePhoto.thumbDataUrl : null,
+    } : {};
     const astEl  = $('#maint-asset-id');
     const astId  = astEl ? (astEl.value || null) : (editing?.assetId || null);
     const data = {
@@ -8249,11 +8338,16 @@ function openMaintenanceModal(id) {
       assignedTo:  isManager ? ($('#maint-asg')?.value || null) : (editing?.assignedTo || null),
       resolution:  isManager ? ($('#maint-resolution')?.value.trim() || '') : (editing?.resolution || ''),
       reportedBy:  editing?.reportedBy || me?.id,
-      photoMime, photoSize, photoDataUrl,
+      ...photoFields,
     };
 
     if (editing) {
-      const { data: row, error } = await sb.from('maintenance_requests').update(maintenanceToDb(data)).eq('id', editing.id).select().single();
+      const dbRow = maintenanceToDb(data);
+      if (!photoChanged) {
+        delete dbRow.photo_mime; delete dbRow.photo_size;
+        delete dbRow.photo_data_url; delete dbRow.photo_thumb_data_url;
+      }
+      const { data: row, error } = await sb.from('maintenance_requests').update(dbRow).eq('id', editing.id).select().single();
       if (error) { toast(error.message, 'error'); return false; }
       Object.assign(editing, mapMaintenanceFromDb(row));
       toast('Request updated', 'success');
