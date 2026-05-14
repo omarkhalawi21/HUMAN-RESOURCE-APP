@@ -7095,16 +7095,25 @@ function previewArchiveDoc(id) {
   if (!d) return;
   const safeUrl = safeArchiveDataUrl(d);
   if (!safeUrl) { toast('This document type cannot be previewed.', 'error'); return; }
+  const mime    = (d.mime||'').toLowerCase();
+  const isImage = mime.startsWith('image/');
+  const isPdf   = mime.includes('pdf');
+  // Browsers can't render Office docs (Word / Excel / PowerPoint) inline.
+  // Rather than open a popup with a useless "preview not available" page,
+  // route the click to the download path so the user gets the actual file.
+  if (!isImage && !isPdf) {
+    downloadArchiveDoc(id);
+    toast("Browser can't preview this file type — downloading instead.", 'info');
+    return;
+  }
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
-  const isImage = (d.mime||'').startsWith('image/');
-  const isPdf   = (d.mime||'').includes('pdf');
   // safeUrl is a base64 data URL — base64 charset is HTML/attribute-safe,
   // but we still pass it through escapeHTML for defense in depth.
-  if (isImage) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safeUrl)}" style="max-width:100%;max-height:100vh"></body>`);
-  else if (isPdf) win.document.write(`<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${escapeHTML(safeUrl)}" type="application/pdf" style="width:100vw;height:100vh"></body>`);
-  else win.document.write(`<title>${escapeHTML(d.name)}</title><body style="font-family:system-ui;padding:40px;text-align:center;color:#475569">Preview not available for this file type. Use download instead.</body>`);
+  win.document.write(isImage
+    ? `<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safeUrl)}" style="max-width:100%;max-height:100vh"></body>`
+    : `<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${escapeHTML(safeUrl)}" type="application/pdf" style="width:100vw;height:100vh"></body>`);
   win.document.close();
 }
 async function deleteArchiveDoc(id) {
