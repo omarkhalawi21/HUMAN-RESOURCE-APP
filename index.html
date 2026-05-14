@@ -1157,6 +1157,44 @@ function csvCell(v) {
   if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
 }
+
+// Base64 data URL shape check. Used by every safeXxxDataUrl validator —
+// the value gets injected into <img src=>, <a href=>, or popup HTML, so
+// the shape regex is the XSS guard. Don't loosen without revisiting all
+// call sites (safeArchiveDataUrl, safeReceiptDataUrl,
+// isSafeMaintenancePhotoUrl).
+const DATA_URL_BASE64_RE = /^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i;
+function isSafeBase64DataUrl(url) {
+  return typeof url === 'string' && DATA_URL_BASE64_RE.test(url);
+}
+
+// Common file-input handler: pulls the file off the event, enforces a
+// size cap, checks MIME against an allowlist, reads as a data URL, and
+// returns {file, name, mime, size, dataUrl} on success or null on
+// validation failure (toast already shown, input value cleared).
+// Used by every "upload a thing" flow in the app — receipts, archive,
+// maintenance photos.
+async function readUploadedFile(ev, { allowed, maxBytes = 5*1024*1024, errorMsg = 'Unsupported file type.' }) {
+  const file = ev.target.files?.[0];
+  if (!file) return null;
+  if (file.size > maxBytes) {
+    toast(`File too large (max ${Math.round(maxBytes/1024/1024)}MB)`, 'error');
+    ev.target.value = '';
+    return null;
+  }
+  if (!allowed.has((file.type||'').toLowerCase())) {
+    toast(errorMsg, 'error');
+    ev.target.value = '';
+    return null;
+  }
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = e => res(e.target.result);
+    r.onerror = () => rej(new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+  return { file, name: file.name, mime: file.type, size: file.size, dataUrl };
+}
 function toast(msg, type='info') {
   const t = document.createElement('div');
   t.className = 'toast';
@@ -7022,7 +7060,7 @@ function isAllowedArchiveMime(m) { return ARCHIVE_ALLOWED_MIMES.has((m||'').toLo
 // and downloaded as application/octet-stream rather than rendered.
 function safeArchiveDataUrl(d) {
   const url = String(d.dataUrl || '');
-  if (!/^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i.test(url)) return '';
+  if (!isSafeBase64DataUrl(url))    return '';
   if (!isAllowedArchiveMime(d.mime)) return '';
   return url;
 }
@@ -7031,21 +7069,15 @@ function safeArchiveDataUrl(d) {
 function safeFileName(n) {
   return String(n||'document').replace(/[\\/\x00-\x1f]+/g,'_').slice(0, 200) || 'document';
 }
-function handleArchiveFile(ev) {
-  const file = ev.target.files?.[0];
-  if (!file) return;
-  if (file.size > 5*1024*1024) { toast('File too large (max 5MB)', 'error'); ev.target.value=''; return; }
-  if (!isAllowedArchiveMime(file.type)) {
-    toast('Unsupported file type. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.', 'error');
-    ev.target.value = ''; return;
-  }
-  const reader = new FileReader();
-  reader.onload = e => {
-    _archiveFile = { name: file.name, mime: file.type, size: file.size, dataUrl: e.target.result };
-    const p = document.getElementById('ar-preview');
-    if (p) p.innerHTML = `${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)`;
-  };
-  reader.readAsDataURL(file);
+async function handleArchiveFile(ev) {
+  const f = await readUploadedFile(ev, {
+    allowed: ARCHIVE_ALLOWED_MIMES,
+    errorMsg: 'Unsupported file type. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.',
+  });
+  if (!f) return;
+  _archiveFile = { name: f.name, mime: f.mime, size: f.size, dataUrl: f.dataUrl };
+  const p = document.getElementById('ar-preview');
+  if (p) p.innerHTML = `${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(f.name)}</strong> (${(f.size/1024).toFixed(1)} KB)`;
 }
 function downloadArchiveDoc(id) {
   const d = (state.archive||[]).find(x => x.id===id);
@@ -7166,7 +7198,7 @@ const RECEIPT_ALLOWED_MIMES = new Set([
 function isAllowedReceiptMime(m) { return RECEIPT_ALLOWED_MIMES.has((m||'').toLowerCase()); }
 function safeReceiptDataUrl(r) {
   const url = String(r.dataUrl || '');
-  if (!/^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i.test(url)) return '';
+  if (!isSafeBase64DataUrl(url))    return '';
   if (!isAllowedReceiptMime(r.mime)) return '';
   return url;
 }
@@ -8116,16 +8148,13 @@ let _maintenancePhoto = null;
 let _maintenancePhotoCleared = false;
 
 // XSS guard: the URL must declare the same base64 image/* MIME the row
-// claims AND its body must look like base64. The shape regex matches the
-// one safeReceiptDataUrl / safeArchiveDataUrl use so all three validators
-// reject malformed payloads identically. Don't loosen without revisiting
-// the previewMaintenancePhoto document.write call site.
+// claims AND match the shared base64 data URL shape. Don't loosen
+// without revisiting the previewMaintenancePhoto document.write site.
 function isSafeMaintenancePhotoUrl(url, mime) {
-  if (typeof url !== 'string') return false;
+  if (!isSafeBase64DataUrl(url)) return false;
   const m = (mime||'').toLowerCase();
   if (!MAINT_PHOTO_ALLOWED_MIMES.has(m)) return false;
-  if (!url.startsWith('data:' + m + ';base64,')) return false;
-  return /^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Za-z0-9+/=]*$/i.test(url);
+  return url.startsWith('data:' + m + ';base64,');
 }
 // Returns the thumb URL for display in the list / modal preview. Thumbs
 // always have `image/jpeg` MIME regardless of the source — they're
@@ -8163,27 +8192,19 @@ async function generateImageThumbnail(blob, maxPx = MAINT_PHOTO_THUMB_MAX_PX) {
   }
 }
 async function handleMaintenancePhoto(ev) {
-  const file = ev.target.files?.[0];
-  if (!file) return;
-  if (file.size > 5*1024*1024) { toast('Photo too large (max 5MB)', 'error'); ev.target.value=''; return; }
-  if (!MAINT_PHOTO_ALLOWED_MIMES.has((file.type||'').toLowerCase())) {
-    toast('Unsupported file type. Use a PNG / JPG / GIF / WebP image.', 'error');
-    ev.target.value=''; return;
-  }
-  const dataUrl = await new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = e => res(e.target.result);
-    r.onerror = () => rej(new Error('Read failed'));
-    r.readAsDataURL(file);
+  const f = await readUploadedFile(ev, {
+    allowed: MAINT_PHOTO_ALLOWED_MIMES,
+    errorMsg: 'Unsupported file type. Use a PNG / JPG / GIF / WebP image.',
   });
+  if (!f) return;
   let thumbDataUrl;
   try {
-    thumbDataUrl = await generateImageThumbnail(file);
+    thumbDataUrl = await generateImageThumbnail(f.file);
   } catch {
     toast('Could not generate thumbnail — using full image.', 'error');
-    thumbDataUrl = dataUrl;
+    thumbDataUrl = f.dataUrl;
   }
-  _maintenancePhoto = { mime: file.type, size: file.size, dataUrl, thumbDataUrl };
+  _maintenancePhoto = { mime: f.mime, size: f.size, dataUrl: f.dataUrl, thumbDataUrl };
   _maintenancePhotoCleared = false;
   const p = document.getElementById('maint-photo-preview');
   if (p) p.innerHTML = maintenancePhotoPreviewHTML(thumbDataUrl, 'Photo preview');
@@ -10509,37 +10530,29 @@ function openReceiptModal() {
   }, { saveLabel: 'Save receipt' });
 }
 
-function handleReceiptFile(ev) {
-  const file = ev.target.files?.[0];
-  if (!file) return;
-  if (file.size > 5*1024*1024) { toast('File too large (max 5MB)', 'error'); ev.target.value=''; return; }
-  if (!isAllowedReceiptMime(file.type)) {
-    toast('Unsupported file type. Use an image (PNG/JPG/WebP) or PDF.', 'error');
-    ev.target.value = ''; return;
+async function handleReceiptFile(ev) {
+  const f = await readUploadedFile(ev, {
+    allowed: RECEIPT_ALLOWED_MIMES,
+    errorMsg: 'Unsupported file type. Use an image (PNG/JPG/WebP) or PDF.',
+  });
+  if (!f) return;
+  _receiptFile = { name: f.name, mime: f.mime, size: f.size, dataUrl: f.dataUrl };
+  const isImage = f.mime.startsWith('image/');
+  const p = document.getElementById('rc-preview');
+  if (p) {
+    p.innerHTML = isImage
+      ? `<img src="${f.dataUrl}" alt="Receipt preview" class="max-h-48 rounded-lg border border-slate-200" />`
+      : `<div class="text-sm text-slate-700">${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(f.name)}</strong> (${(f.size/1024).toFixed(1)} KB)</div>`;
   }
-  const reader = new FileReader();
-  reader.onload = e => {
-    _receiptFile = { name: file.name, mime: file.type, size: file.size, dataUrl: e.target.result };
-    const p = document.getElementById('rc-preview');
-    const isImage = file.type.startsWith('image/');
-    if (p) {
-      if (isImage) {
-        p.innerHTML = `<img src="${e.target.result}" alt="Receipt preview" class="max-h-48 rounded-lg border border-slate-200" />`;
-      } else {
-        p.innerHTML = `<div class="text-sm text-slate-700">${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(file.name)}</strong> (${(file.size/1024).toFixed(1)} KB)</div>`;
-      }
-    }
-    // OCR works on images directly and on PDFs via pdf.js (renders page 1 to
-    // a canvas, then hands the canvas to Tesseract).
-    const ocrBtn = document.getElementById('rc-ocr-btn');
-    if (ocrBtn) {
-      ocrBtn.disabled = false;
-      ocrBtn.title = isImage
-        ? 'Run OCR on the image and pre-fill the form'
-        : 'Render the first PDF page and OCR it';
-    }
-  };
-  reader.readAsDataURL(file);
+  // OCR works on images directly and on PDFs via pdf.js (renders page 1 to
+  // a canvas, then hands the canvas to Tesseract).
+  const ocrBtn = document.getElementById('rc-ocr-btn');
+  if (ocrBtn) {
+    ocrBtn.disabled = false;
+    ocrBtn.title = isImage
+      ? 'Run OCR on the image and pre-fill the form'
+      : 'Render the first PDF page and OCR it';
+  }
 }
 
 // Lazy-load tesseract.js from CDN on first OCR attempt. ~2MB plus
