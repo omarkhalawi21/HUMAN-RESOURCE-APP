@@ -260,7 +260,6 @@ const I18N = {
     advances: "Salary Advances",
     certificates: "Certificates",
     archive: "Archive",
-    resources: "Resources",
     receipts: "Receipts",
     inventory: "Inventory",
     roaster: "Roaster",
@@ -337,7 +336,6 @@ const I18N = {
     advances: "سُلف الرواتب",
     certificates: "الشهادات",
     archive: "الأرشيف",
-    resources: "الموارد",
     receipts: "الإيصالات",
     inventory: "المخزون",
     roaster: "محمصة",
@@ -1171,7 +1169,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'roaster', 'maintenance', 'reports', 'analytics', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'roaster', 'maintenance', 'reports', 'analytics', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1450,12 +1448,11 @@ function renderShell(routeContent) {
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
     /* Company resources */
-    { key:'archive',      icon:'archive',   label:t('archive'),      show:!hasRole('barista','maintenance','accounting'),  group:'company' },
+    { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
-    { key:'resources',    icon:'shield',    label:t('resources'),    show:!hasRole('maintenance'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
@@ -1469,7 +1466,6 @@ function renderShell(routeContent) {
         </div>
         <div class="min-w-0">
           <div class="text-sm font-bold text-slate-900 leading-tight truncate">${escapeHTML(state.settings.companyName)}</div>
-          <div class="text-xs text-slate-400">HR Console</div>
         </div>
       </div>
       <nav class="flex-1 overflow-y-auto p-3 space-y-1">
@@ -2115,7 +2111,7 @@ function renderDashboard() {
           <button onclick="openWarningModal()" class="btn btn-ghost justify-center !py-4">${icon('warning','w-4 h-4')} ${escapeHTML(t('issue_warning'))}</button>
           <button onclick="openCertificateModal('employee_of_month')" class="btn btn-ghost justify-center !py-4">${icon('award','w-4 h-4')} ${escapeHTML(t('issue_certificate'))}</button>
           <button onclick="location.hash='#/payroll'" class="btn btn-ghost justify-center !py-4">${icon('wallet','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
-          <button onclick="location.hash='#/archive'" class="btn btn-ghost justify-center !py-4">${icon('archive','w-4 h-4')} ${escapeHTML(t('archive'))}</button>
+          ${hasRole('admin','operations') ? `<button onclick="location.hash='#/archive'" class="btn btn-ghost justify-center !py-4">${icon('archive','w-4 h-4')} ${escapeHTML(t('archive'))}</button>` : ''}
         </div>
       </div>
     </div>
@@ -9168,19 +9164,6 @@ function renderRoasterDashboard() {
   `;
 }
 
-/* -------------------- RESOURCES (SOPs & company resources) -------------------- */
-// Thin lens over the existing Archive page. First visit pre-filters
-// to SOPs so the user lands on what they came for; chips let them
-// flip to other categories without leaving the page.
-let _resourcesPrimed = false;
-function renderResources() {
-  if (!_resourcesPrimed && archiveFilter === 'all') {
-    archiveFilter = 'sop';
-    _resourcesPrimed = true;
-  }
-  return renderArchive();
-}
-
 function renderHeadBaristaDashboard() {
   const me = currentEmployee();
   if (!me) return renderDashboard();
@@ -10192,12 +10175,11 @@ function render() {
     case 'advances':     content = renderAdvances(); break;
     case 'certificates': content = renderCertificates(); break;
     case 'documents':    content = renderDocuments(); break;
-    case 'archive':      content = renderArchive(); break;
+    case 'archive':      content = hasRole('admin','operations') ? renderArchive() : renderRoleDashboard(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','head_barista','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
-    case 'resources':    content = renderResources(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
