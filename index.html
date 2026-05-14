@@ -1094,6 +1094,24 @@ function canManagePeople() { return hasRole('admin','hr'); }
 // branch ops day-to-day). All HR-side mutations beyond leave approval
 // (employees, payroll, balances, certificates, etc.) stay on canManagePeople.
 function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations'); }
+// canViewAttendanceAndLeave — broader than canManage. Adds head_barista
+// (view-only, scoped to their own branch via viewerBranchScope). They see
+// the team-wide tabs but no approve/reject buttons — those stay on
+// canManageAttendanceAndLeave.
+function canViewAttendanceAndLeave() {
+  return canManageAttendanceAndLeave() || hasRole('head_barista');
+}
+// If the current user is a view-only role with a branch (head_barista),
+// returns their branch string — used to scope the "All" tabs to their
+// own employees. Returns null for full-access managers so they see all
+// branches, and null for head_barista with no branch assigned.
+function viewerBranchScope() {
+  if (canManageAttendanceAndLeave()) return null;
+  if (!hasRole('head_barista')) return null;
+  const me = currentEmployee();
+  if (!me) return null;
+  return (getEmpExtras(me.id).branch || '').trim() || null;
+}
 // Find employees whose system_role is still the default 'employee' but
 // whose department or job_title looks like a real role name. Used to
 // surface migration debt — after the big role migration, every non-admin
@@ -3101,8 +3119,15 @@ function renderAttendance() {
   const me = currentEmployee();
   const today = todayISO();
   const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
-  const admin = canManageAttendanceAndLeave();
+  // `admin` here gates tab visibility, not write actions — renderAttendance
+  // has no privileged mutations. Broadened to canView so head_barista sees
+  // the All/History tabs; branchScope below filters those rows to their branch.
+  const admin = canViewAttendanceAndLeave();
+  const branchScope = viewerBranchScope();
   if (!admin) attTab = 'me';
+  // Lock the History branch filter to the viewer's own branch when scoped —
+  // head_barista can't widen the view by changing the dropdown.
+  if (branchScope) attHistFilter.branch = branchScope;
 
   const tabs = admin ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
@@ -3191,7 +3216,10 @@ function renderAttendance() {
       </div>
     `;
   } else if (attTab==='all') {
-    const rows = state.employees.map(e => {
+    const empList = branchScope
+      ? state.employees.filter(e => (getEmpExtras(e.id).branch || '').trim() === branchScope)
+      : state.employees;
+    const rows = empList.map(e => {
       const a = state.attendance.find(x => x.employeeId===e.id && x.date===today);
       const onLeave = state.leaveRequests.find(r=>r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
       return { e, a, onLeave };
@@ -3273,11 +3301,15 @@ function renderAttendance() {
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Branch</div>
-              <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
-                <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
-                <option value="none" ${attHistFilter.branch==='none'?'selected':''}>None (unassigned)</option>
-                ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${attHistFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
-              </select>
+              ${branchScope ? `
+                <div class="input !py-2 !text-sm bg-slate-50 text-slate-600 cursor-not-allowed" title="Locked to your branch">${escapeHTML(branchScope)}</div>
+              ` : `
+                <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
+                  <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
+                  <option value="none" ${attHistFilter.branch==='none'?'selected':''}>None (unassigned)</option>
+                  ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${attHistFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+                </select>
+              `}
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">From</div>
@@ -3446,14 +3478,26 @@ async function clockOut() {
 let leaveTab = 'mine';
 function renderLeave() {
   const me = currentEmployee();
-  const admin = canManageAttendanceAndLeave();
-  if (!admin) leaveTab = 'mine';
+  // canView (head_barista + managers) gates the team-wide tabs and the
+  // Employee column. canManage (managers only) gates Approve/Reject buttons.
+  // branchScope (non-null for head_barista) scopes the team-wide rows to
+  // requests from employees at the viewer's branch.
+  const canView = canViewAttendanceAndLeave();
+  const canManage = canManageAttendanceAndLeave();
+  const branchScope = viewerBranchScope();
+  if (!canView) leaveTab = 'mine';
   const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
+  const inBranch = r => {
+    if (!branchScope) return true;
+    const e = getEmployee(r.employeeId);
+    if (!e) return false;
+    return (getEmpExtras(e.id).branch || '').trim() === branchScope;
+  };
   const myReqs = state.leaveRequests.filter(r => r.employeeId===me.id).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
-  const allReqs = state.leaveRequests.slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
-  const pending = state.leaveRequests.filter(r=>r.status==='pending');
+  const allReqs = state.leaveRequests.filter(inBranch).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
+  const pending = state.leaveRequests.filter(r=>r.status==='pending').filter(inBranch);
 
-  const tabs = admin ? `
+  const tabs = canView ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
       <button type="button" class="tab ${leaveTab==='mine'?'active':''}" onclick="leaveTab='mine'; render();">My Leave</button>
       <button type="button" class="tab ${leaveTab==='pending'?'active':''}" onclick="leaveTab='pending'; render();">Pending Approvals ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</button>
@@ -3482,21 +3526,21 @@ function renderLeave() {
       </div>
       <div class="overflow-x-auto">
         <table class="data">
-          <thead><tr>${admin && leaveTab!=='mine'?'<th>Employee</th>':''}<th>Type</th><th>Dates</th><th>Days</th><th>Reason</th><th>Requested</th><th>Status</th>${admin?'<th class="!text-end">Action</th>':''}</tr></thead>
+          <thead><tr>${canView && leaveTab!=='mine'?'<th>Employee</th>':''}<th>Type</th><th>Dates</th><th>Days</th><th>Reason</th><th>Requested</th><th>Status</th>${canManage?'<th class="!text-end">Action</th>':''}</tr></thead>
           <tbody>
-            ${rows.length===0 ? `<tr><td colspan="${admin?8:6}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+            ${rows.length===0 ? `<tr><td colspan="${6 + (canView && leaveTab!=='mine' ? 1 : 0) + (canManage ? 1 : 0)}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
               rows.map(r => {
                 const e = getEmployee(r.employeeId);
                 return `
                 <tr class="hover-row">
-                  ${admin && leaveTab!=='mine'?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span>${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>`:''}
+                  ${canView && leaveTab!=='mine'?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span>${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>`:''}
                   <td><span class="badge badge-blue">${escapeHTML(r.type)}</span></td>
                   <td class="text-slate-700 text-sm">${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}</td>
                   <td class="font-medium">${r.days}</td>
                   <td class="text-slate-600 text-sm">${escapeHTML(r.reason||'—')}</td>
                   <td class="text-slate-500 text-xs">${fmtDate(r.requestedAt)}</td>
                   <td>${statusBadge(r.status)}</td>
-                  ${admin ? `<td class="!text-end whitespace-nowrap">
+                  ${canManage ? `<td class="!text-end whitespace-nowrap">
                     ${r.status==='pending'?`
                       <button onclick="decideLeave('${r.id}','approved')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} ${escapeHTML(t('approve'))}</button>
                       <button onclick="decideLeave('${r.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
