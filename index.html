@@ -891,6 +891,9 @@ function mapMaintenanceFromDb(r) {
     assignedTo: r.assigned_to,
     resolution: r.resolution || '',
     resolvedAt: r.resolved_at,
+    photoMime: r.photo_mime || null,
+    photoSize: r.photo_size || 0,
+    photoDataUrl: r.photo_data_url || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -908,6 +911,9 @@ function maintenanceToDb(m) {
     assigned_to: m.assignedTo || null,
     resolution: m.resolution || null,
     resolved_at: m.resolvedAt || null,
+    photo_mime:     m.photoMime || null,
+    photo_size:     Number(m.photoSize) || 0,
+    photo_data_url: m.photoDataUrl || null,
   };
 }
 function mapExtrasFromDb(r) {
@@ -7686,10 +7692,12 @@ function renderMaintenance() {
             const st  = MAINT_STATUSES[r.status]     || MAINT_STATUSES.open;
             const reporter = getEmployee(r.reportedBy);
             const assignee = getEmployee(r.assignedTo);
+            const photoUrl = safeMaintenancePhotoUrl(r);
             return `
               <div class="px-5 py-4 hover:bg-slate-50">
                 <div class="flex items-start gap-3">
                   <div class="w-1 self-stretch rounded-full ${pri.bar}"></div>
+                  ${photoUrl ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-slate-200 hover:border-brand-400 transition" title="View photo"><img src="${photoUrl}" alt="" class="w-full h-full object-cover"/></button>` : ''}
                   <div class="flex-1 min-w-0">
                     <div class="flex items-start gap-2 flex-wrap">
                       <div class="font-medium text-slate-900">${escapeHTML(r.title||'—')}</div>
@@ -7728,7 +7736,71 @@ function renderMaintenance() {
   `;
 }
 
+// Photo attachments on maintenance requests — images only, inline data URL,
+// matches the receipt/archive storage pattern. Two module-level transients:
+// `_maintenancePhoto` carries a new upload (or null = no upload); the
+// `_maintenancePhotoCleared` flag means the user hit the X. Both are reset
+// on every modal open and again in closeModal.
+const MAINT_PHOTO_ALLOWED_MIMES = new Set(['image/png','image/jpeg','image/gif','image/webp']);
+let _maintenancePhoto = null;
+let _maintenancePhotoCleared = false;
+function safeMaintenancePhotoUrl(r) {
+  if (!r) return '';
+  const mime = (r.photoMime||'').toLowerCase();
+  if (!MAINT_PHOTO_ALLOWED_MIMES.has(mime)) return '';
+  const url = r.photoDataUrl;
+  if (typeof url !== 'string') return '';
+  // Bind URL scheme + MIME to the column value: the URL must declare the
+  // same base64 image/* MIME the row claims. This prefix check is the XSS
+  // guard for the `src=` injection in previewMaintenancePhoto — don't
+  // loosen it without revisiting that call site.
+  if (!url.startsWith('data:' + mime + ';base64,')) return '';
+  return url;
+}
+function maintenancePhotoPreviewHTML(src, alt) {
+  return `<div class="relative inline-block">
+    <img src="${src}" alt="${escapeHTML(alt)}" class="max-h-40 rounded-lg border border-slate-200" />
+    <button type="button" onclick="clearMaintenancePhoto()" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm text-slate-600 hover:text-rose-600 flex items-center justify-center" title="Remove photo">${icon('close','w-3.5 h-3.5')}</button>
+  </div>`;
+}
+function handleMaintenancePhoto(ev) {
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  if (file.size > 5*1024*1024) { toast('Photo too large (max 5MB)', 'error'); ev.target.value=''; return; }
+  if (!MAINT_PHOTO_ALLOWED_MIMES.has((file.type||'').toLowerCase())) {
+    toast('Unsupported file type. Use a PNG / JPG / GIF / WebP image.', 'error');
+    ev.target.value=''; return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    _maintenancePhoto = { mime: file.type, size: file.size, dataUrl: e.target.result };
+    _maintenancePhotoCleared = false;
+    const p = document.getElementById('maint-photo-preview');
+    if (p) p.innerHTML = maintenancePhotoPreviewHTML(e.target.result, 'Photo preview');
+  };
+  reader.readAsDataURL(file);
+}
+function clearMaintenancePhoto() {
+  _maintenancePhoto = null;
+  _maintenancePhotoCleared = true;
+  const p = document.getElementById('maint-photo-preview');
+  const f = document.getElementById('maint-photo');
+  if (p) p.innerHTML = '<div class="text-xs text-slate-500">Photo will be removed on save.</div>';
+  if (f) f.value = '';
+}
+function previewMaintenancePhoto(id) {
+  const r = (state.maintenance||[]).find(x => x.id === id);
+  const url = safeMaintenancePhotoUrl(r);
+  if (!url) return;
+  const w = window.open('', '_blank');
+  if (!w) return;
+  w.document.write(`<!doctype html><html><head><title>${escapeHTML(r.title||'Maintenance photo')}</title><style>body{margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh}img{max-width:100%;max-height:100vh;display:block}</style></head><body><img src="${url}" alt=""></body></html>`);
+  w.document.close();
+}
+
 function openMaintenanceModal(id) {
+  _maintenancePhoto = null;
+  _maintenancePhotoCleared = false;
   const me = currentEmployee();
   const isManager = hasRole('admin','maintenance');
   const editing = id ? (state.maintenance||[]).find(r => r.id === id) : null;
@@ -7790,12 +7862,24 @@ function openMaintenanceModal(id) {
           <textarea id="maint-resolution" class="input" rows="2" placeholder="What was done, parts replaced, follow-up needed...">${escapeHTML(editing?.resolution||'')}</textarea>
         </div>
       ` : ''}
+      <div>
+        <label class="label">Photo (optional)</label>
+        <input id="maint-photo" type="file" class="input" accept="image/png,image/jpeg,image/gif,image/webp" capture="environment" onchange="handleMaintenancePhoto(event)">
+        <div class="text-xs text-slate-500 mt-1">Max 5MB. PNG / JPG / GIF / WebP. On phones, the camera will open.</div>
+        <div id="maint-photo-preview" class="mt-2">${(() => {
+          const existing = editing && safeMaintenancePhotoUrl(editing);
+          return existing ? maintenancePhotoPreviewHTML(existing, 'Existing photo') : '';
+        })()}</div>
+      </div>
     </div>
   `;
   openModal(editing ? 'Edit request' : 'Report an issue', form, async () => {
     const title = $('#maint-title').value.trim();
     if (!title) { toast('Title is required', 'error'); return false; }
 
+    const photoMime    = _maintenancePhoto ? _maintenancePhoto.mime    : (_maintenancePhotoCleared ? null : (editing?.photoMime    || null));
+    const photoSize    = _maintenancePhoto ? _maintenancePhoto.size    : (_maintenancePhotoCleared ? 0    : (editing?.photoSize    || 0));
+    const photoDataUrl = _maintenancePhoto ? _maintenancePhoto.dataUrl : (_maintenancePhotoCleared ? null : (editing?.photoDataUrl || null));
     const data = {
       title,
       description: $('#maint-desc').value.trim(),
@@ -7807,6 +7891,7 @@ function openMaintenanceModal(id) {
       assignedTo:  isManager ? ($('#maint-asg')?.value || null) : (editing?.assignedTo || null),
       resolution:  isManager ? ($('#maint-resolution')?.value.trim() || '') : (editing?.resolution || ''),
       reportedBy:  editing?.reportedBy || me?.id,
+      photoMime, photoSize, photoDataUrl,
     };
 
     if (editing) {
@@ -10352,6 +10437,8 @@ function closeModal() {
   if (typeof _pendingPhoto !== 'undefined')  _pendingPhoto = null;
   if (typeof _archiveFile !== 'undefined')   _archiveFile = null;
   if (typeof _receiptFile !== 'undefined')   _receiptFile = null;
+  if (typeof _maintenancePhoto !== 'undefined') _maintenancePhoto = null;
+  if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
   if (_modalTrapHandler) {
     document.removeEventListener('keydown', _modalTrapHandler);
     _modalTrapHandler = null;
