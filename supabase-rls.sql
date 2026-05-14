@@ -1511,6 +1511,18 @@ BEGIN
 END $$;
 
 -- =============================================================
+-- 25. MAINTENANCE — photo attachment columns
+--     Adds optional photo fields to maintenance_requests so a
+--     reporter can attach an image of the broken thing (data URL
+--     stored inline, same pattern as receipts/archive_documents).
+--     RLS already covers the table; no policy changes needed.
+-- =============================================================
+ALTER TABLE public.maintenance_requests
+  ADD COLUMN IF NOT EXISTS photo_mime     text,
+  ADD COLUMN IF NOT EXISTS photo_size     integer,
+  ADD COLUMN IF NOT EXISTS photo_data_url text;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
