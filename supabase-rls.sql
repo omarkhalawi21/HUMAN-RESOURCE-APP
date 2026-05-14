@@ -1654,6 +1654,185 @@ BEGIN
 END $$;
 
 -- =============================================================
+-- 28. DROP LEGACY is_admin COLUMN
+--     system_role has been the source of truth since block 13.
+--     The legacy boolean is_admin column was kept as a fallback
+--     (defence in depth). Now: rewrite every SQL function that
+--     still reads it, rewrite the signup trigger that still
+--     writes it, and drop the column.
+--
+--     Each statement is individually idempotent. Order matters:
+--       (a) Resync any drift first (guarded on column existence).
+--       (b) Rewrite every function/trigger that references the
+--           column so they no longer touch it.
+--       (c) Drop the sync trigger + its function that only
+--           existed to keep system_role and is_admin in sync.
+--       (d) Drop the column.
+-- =============================================================
+
+-- (a) Resync drift. Any row with is_admin=true but a non-admin
+--     system_role gets promoted. Inverse (is_admin=false but
+--     system_role='admin') is intentionally NOT downgraded —
+--     system_role is the new truth, preserve admin if either says so.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'employees' AND column_name = 'is_admin'
+  ) THEN
+    UPDATE public.employees
+       SET system_role = 'admin'
+     WHERE is_admin = true
+       AND system_role IS DISTINCT FROM 'admin';
+  END IF;
+END $$;
+
+-- (b1) Signup trigger: insert system_role instead of is_admin.
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  is_first       boolean;
+  invited_emp_id uuid;
+  meta           jsonb;
+  new_emp_id     uuid;
+  signup_branch  text;
+BEGIN
+  meta := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
+  signup_branch := NULLIF(TRIM(COALESCE(meta->>'branch', '')), '');
+
+  IF EXISTS (SELECT 1 FROM public.employees WHERE user_id = NEW.id) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT id INTO invited_emp_id
+    FROM public.employees
+   WHERE LOWER(email) = LOWER(NEW.email)
+     AND user_id IS NULL
+   ORDER BY hire_date NULLS LAST
+   LIMIT 1;
+
+  IF invited_emp_id IS NOT NULL THEN
+    UPDATE public.employees
+       SET user_id   = NEW.id,
+           phone     = COALESCE(NULLIF(TRIM(phone),'')    , NULLIF(TRIM(meta->>'phone'),'')),
+           job_title = COALESCE(NULLIF(TRIM(job_title),''), NULLIF(TRIM(meta->>'role'),''),  job_title)
+     WHERE id = invited_emp_id;
+
+    IF signup_branch IS NOT NULL THEN
+      INSERT INTO public.employee_extras (employee_id, branch)
+      VALUES (invited_emp_id, signup_branch)
+      ON CONFLICT (employee_id) DO UPDATE
+        SET branch = COALESCE(NULLIF(TRIM(public.employee_extras.branch),''), EXCLUDED.branch);
+    END IF;
+
+    RETURN NEW;
+  END IF;
+
+  SELECT NOT EXISTS (SELECT 1 FROM public.employees) INTO is_first;
+
+  INSERT INTO public.employees (
+    user_id, email, first_name, last_name, phone,
+    system_role, status, job_title, department, hire_date, salary
+  ) VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(meta->>'first_name', ''),
+    COALESCE(meta->>'last_name', ''),
+    NULLIF(TRIM(meta->>'phone'), ''),
+    CASE WHEN is_first THEN 'admin'  ELSE 'employee' END,
+    CASE WHEN is_first THEN 'active' ELSE 'pending'  END,
+    COALESCE(NULLIF(TRIM(meta->>'role'), ''), CASE WHEN is_first THEN 'Admin'      ELSE 'Employee' END),
+    COALESCE(NULLIF(TRIM(meta->>'role'), ''), CASE WHEN is_first THEN 'Management' ELSE 'General'  END),
+    CURRENT_DATE,
+    0
+  )
+  RETURNING id INTO new_emp_id;
+
+  IF signup_branch IS NOT NULL AND new_emp_id IS NOT NULL THEN
+    INSERT INTO public.employee_extras (employee_id, branch)
+    VALUES (new_emp_id, signup_branch)
+    ON CONFLICT (employee_id) DO UPDATE SET branch = EXCLUDED.branch;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- (b2) is_admin() reads only system_role.
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.employees
+    WHERE user_id = auth.uid()
+      AND system_role = 'admin'
+  );
+$$;
+
+-- (b3) has_role() drops the legacy fallback. system_role has a
+--      DEFAULT 'employee' on the column, so NULL shouldn't occur,
+--      but we coalesce defensively to 'employee' just in case.
+CREATE OR REPLACE FUNCTION public.has_role(roles text[])
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.employees
+    WHERE user_id = auth.uid()
+      AND COALESCE(system_role, 'employee') = ANY(roles)
+  );
+$$;
+
+-- (b4) Self-change rule: only system_role is protected now.
+CREATE OR REPLACE FUNCTION public.enforce_employee_update_rules()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.user_id = auth.uid()
+     AND NEW.system_role IS DISTINCT FROM OLD.system_role THEN
+    RAISE EXCEPTION 'You cannot change your own role';
+  END IF;
+  IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+    RAISE EXCEPTION 'user_id is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- (c) Drop the BEFORE-INSERT trigger that copied is_admin -> system_role
+--     and its function — both become dead with the column gone.
+DROP TRIGGER  IF EXISTS sync_employee_system_role_trigger ON public.employees;
+DROP FUNCTION IF EXISTS public.sync_employee_system_role();
+
+-- (d) Tighten system_role to NOT NULL now that it's the only source of truth.
+--     Any straggler with NULL gets the 'employee' default first so the
+--     constraint can be added without error. Idempotent on re-runs.
+UPDATE public.employees SET system_role = 'employee' WHERE system_role IS NULL;
+ALTER TABLE public.employees ALTER COLUMN system_role SET NOT NULL;
+
+-- (e) Cheap insurance for the RLS hot path. is_admin() and has_role()
+--     both filter public.employees by user_id, called by every RLS-gated
+--     operation. The table has no PK-related index on this column.
+CREATE INDEX IF NOT EXISTS employees_user_id_idx ON public.employees(user_id);
+
+-- (f) Drop the column. After this, system_role is the single source of truth.
+ALTER TABLE public.employees DROP COLUMN IF EXISTS is_admin;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
