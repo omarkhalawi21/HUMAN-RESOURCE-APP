@@ -1523,6 +1523,82 @@ ALTER TABLE public.maintenance_requests
   ADD COLUMN IF NOT EXISTS photo_data_url text;
 
 -- =============================================================
+-- 26. ASSETS (admin / maintenance manage)
+--     Promotes the legacy `maintenance_requests.asset` text column
+--     to a first-class entity so equipment / machines can carry
+--     serial numbers, warranty dates, branch, and notes. Maintenance
+--     requests link to an asset via a new nullable asset_id FK.
+--     Phase 1 only: the legacy free-text `asset` column on
+--     maintenance_requests is kept as fallback display.
+--
+--     SELECT is broad (anyone who can see requests can see asset
+--     names so dropdowns work). Writes are admin / maintenance.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.assets (
+  id                uuid primary key default gen_random_uuid(),
+  name              text not null,
+  category          text,
+  branch            text,
+  serial_number     text,
+  purchased_at      date,
+  warranty_expires  date,
+  notes             text,
+  created_by        uuid references public.employees(id),
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS assets_name_idx     ON public.assets(LOWER(name));
+CREATE INDEX IF NOT EXISTS assets_category_idx ON public.assets(category);
+CREATE INDEX IF NOT EXISTS assets_branch_idx   ON public.assets(branch);
+
+CREATE OR REPLACE FUNCTION public.touch_assets_updated_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS assets_touch_updated_at ON public.assets;
+CREATE TRIGGER assets_touch_updated_at
+  BEFORE UPDATE ON public.assets
+  FOR EACH ROW EXECUTE FUNCTION public.touch_assets_updated_at();
+
+ALTER TABLE public.assets ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'assets'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "assets_select_roles"
+  ON public.assets FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','hr','operations','maintenance','head_barista','roaster']));
+CREATE POLICY "assets_insert_roles"
+  ON public.assets FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','maintenance']));
+CREATE POLICY "assets_update_roles"
+  ON public.assets FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','maintenance']))
+  WITH CHECK (public.has_role(ARRAY['admin','maintenance']));
+CREATE POLICY "assets_delete_roles"
+  ON public.assets FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','maintenance']));
+
+-- FK column on maintenance_requests. Nullable; legacy `asset` text
+-- column stays put as fallback so old rows still render.
+ALTER TABLE public.maintenance_requests
+  ADD COLUMN IF NOT EXISTS asset_id uuid REFERENCES public.assets(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS maintenance_requests_asset_id_idx ON public.maintenance_requests(asset_id);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

@@ -261,6 +261,7 @@ const I18N = {
     certificates: "Certificates",
     archive: "Archive",
     suppliers: "Suppliers",
+    assets: "Assets",
     receipts: "Receipts",
     inventory: "Inventory",
     roaster: "Roaster",
@@ -338,6 +339,7 @@ const I18N = {
     certificates: "الشهادات",
     archive: "الأرشيف",
     suppliers: "الموردون",
+    assets: "الأصول",
     receipts: "الإيصالات",
     inventory: "المخزون",
     roaster: "محمصة",
@@ -395,7 +397,8 @@ function emptyState() {
     inventory: [],          // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, supplierId, branch, notes, createdBy, createdAt, updatedAt }]
     suppliers: [],          // [{ id, name, contactName, phone, email, notes, createdBy, createdAt, updatedAt }]
     inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
-    maintenance: [],        // [{ id, title, description, branch, location, asset, priority, status, reportedBy, assignedTo, resolution, resolvedAt, createdAt, updatedAt }]
+    maintenance: [],        // [{ id, title, description, branch, location, asset, assetId, priority, status, reportedBy, assignedTo, resolution, resolvedAt, photoMime, photoSize, photoDataUrl, createdAt, updatedAt }]
+    assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -885,6 +888,7 @@ function mapMaintenanceFromDb(r) {
     branch: r.branch || '',
     location: r.location || '',
     asset: r.asset || '',
+    assetId: r.asset_id || null,
     priority: r.priority || 'normal',
     status: r.status || 'open',
     reportedBy: r.reported_by,
@@ -904,7 +908,10 @@ function maintenanceToDb(m) {
     description: m.description || null,
     branch: m.branch || null,
     location: m.location || null,
-    asset: m.asset || null,
+    // Prefer the asset_id FK when picked; clear the legacy text in that case
+    // so we don't carry duplicate sources of truth on the same row.
+    asset: m.assetId ? null : (m.asset || null),
+    asset_id: m.assetId || null,
     priority: m.priority || 'normal',
     status: m.status || 'open',
     reported_by: m.reportedBy || null,
@@ -914,6 +921,33 @@ function maintenanceToDb(m) {
     photo_mime:     m.photoMime || null,
     photo_size:     Number(m.photoSize) || 0,
     photo_data_url: m.photoDataUrl || null,
+  };
+}
+function mapAssetFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    category: r.category || 'other',
+    branch: r.branch || '',
+    serialNumber: r.serial_number || '',
+    purchasedAt: r.purchased_at || null,
+    warrantyExpires: r.warranty_expires || null,
+    notes: r.notes || '',
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+function assetToDb(a) {
+  return {
+    name: a.name,
+    category: a.category || null,
+    branch: a.branch || null,
+    serial_number: a.serialNumber || null,
+    purchased_at: a.purchasedAt || null,
+    warranty_expires: a.warrantyExpires || null,
+    notes: a.notes || null,
+    created_by: a.createdBy || null,
   };
 }
 function mapExtrasFromDb(r) {
@@ -954,7 +988,7 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').order('date', { ascending: false }),
@@ -980,6 +1014,9 @@ async function loadAll() {
       sb.from('inventory_movements').select('*').order('occurred_at', { ascending: false }).limit(2000),
       // Suppliers: same SELECT scope as inventory_items.
       sb.from('suppliers').select('*').order('name'),
+      // Assets: SELECT is broad so the maintenance modal's asset dropdown
+      // works for any role that can open a request.
+      sb.from('assets').select('*').order('name'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1018,6 +1055,7 @@ async function loadAll() {
     state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
     state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
+    state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
@@ -1247,7 +1285,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'roaster', 'maintenance', 'reports', 'analytics', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1532,6 +1570,7 @@ function renderShell(routeContent) {
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
+    { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
@@ -7586,11 +7625,199 @@ function getMaintenanceFiltered() {
     if (q) {
       const reporter = getEmployee(r.reportedBy);
       const reporterName = reporter ? ((reporter.firstName||'')+' '+(reporter.lastName||'')) : '';
-      const hay = `${r.title} ${r.description||''} ${r.location||''} ${r.asset||''} ${r.branch||''} ${reporterName}`.toLowerCase();
+      const hay = `${r.title} ${r.description||''} ${r.location||''} ${assetLabelForRequest(r)} ${r.branch||''} ${reporterName}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
+}
+
+const ASSET_CATEGORIES = {
+  espresso_machine: { label: 'Espresso Machine' },
+  grinder:          { label: 'Grinder' },
+  refrigerator:     { label: 'Refrigerator' },
+  freezer:          { label: 'Freezer' },
+  dishwasher:       { label: 'Dishwasher' },
+  pos:              { label: 'POS / Tablet' },
+  furniture:        { label: 'Furniture' },
+  other:            { label: 'Other' },
+};
+function assetCategoryLabel(k) { return ASSET_CATEGORIES[k]?.label || (k || 'Other'); }
+
+// Convenience: resolve the asset name for a maintenance request, preferring
+// the asset_id FK lookup but falling back to the legacy free-text `asset`
+// column on rows that pre-date the Assets registry.
+function assetLabelForRequest(r) {
+  if (!r) return '';
+  if (r.assetId) {
+    const a = (state.assets || []).find(x => x.id === r.assetId);
+    return a ? a.name : '(removed asset)';
+  }
+  return r.asset || '';
+}
+
+function renderAssets() {
+  const all = (state.assets || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const canEdit = hasRole('admin','maintenance');
+  const linksByAsset = {};
+  (state.maintenance || []).forEach(r => {
+    if (!r.assetId) return;
+    linksByAsset[r.assetId] = (linksByAsset[r.assetId] || 0) + 1;
+  });
+  const warrantyState = a => {
+    const days = daysUntil(a.warrantyExpires);
+    if (days === null || isNaN(days)) return null;
+    if (days < 0)  return { label: 'Expired', cls: 'bg-rose-50 text-rose-700' };
+    if (days < 30) return { label: 'Soon',    cls: 'bg-amber-50 text-amber-700' };
+    return                  { label: 'Active',  cls: 'bg-emerald-50 text-emerald-700' };
+  };
+
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('wrench','w-3.5 h-3.5')} Maintenance</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('assets'))}</h2>
+        <div class="text-xs text-slate-500 mt-1">Registry of physical equipment — espresso machines, grinders, fridges, etc. Maintenance requests can link to an asset so history per machine is searchable.</div>
+      </div>
+      ${canEdit ? `<button onclick="openAssetModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add asset</button>` : ''}
+    </div>`;
+
+  if (all.length === 0) {
+    return header + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('wrench','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">No assets yet</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Add equipment here, then pick it from the Asset dropdown when reporting a maintenance issue.</div>
+        ${canEdit ? `<button onclick="openAssetModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add your first asset</button>` : ''}
+      </div>`;
+  }
+
+  return header + `
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>
+            <th>Asset</th>
+            <th>Category</th>
+            <th>Branch</th>
+            <th>Serial</th>
+            <th>Warranty</th>
+            <th class="!text-end">Open requests</th>
+            ${canEdit ? '<th class="!text-end">Actions</th>' : ''}
+          </tr></thead>
+          <tbody>
+            ${all.map(a => {
+              const w = warrantyState(a);
+              return `
+              <tr class="hover-row">
+                <td>
+                  <div class="font-medium text-slate-900">${escapeHTML(a.name)}</div>
+                  ${a.notes ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-xs">${escapeHTML(a.notes)}</div>` : ''}
+                </td>
+                <td class="text-slate-700 text-sm">${escapeHTML(assetCategoryLabel(a.category))}</td>
+                <td class="text-slate-700 text-sm">${a.branch ? escapeHTML(a.branch) : '<span class="text-slate-400">—</span>'}</td>
+                <td class="text-slate-700 text-sm font-mono text-xs">${a.serialNumber ? escapeHTML(a.serialNumber) : '<span class="text-slate-400 font-sans">—</span>'}</td>
+                <td>${w ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${w.cls}">${w.label}</span> <span class="text-xs text-slate-500 ms-1">${escapeHTML(fmtDate(a.warrantyExpires))}</span>` : '<span class="text-slate-400 text-sm">—</span>'}</td>
+                <td class="!text-end tabular-nums">${linksByAsset[a.id] || 0}</td>
+                ${canEdit ? `
+                  <td class="!text-end">
+                    <div class="inline-flex gap-1">
+                      <button onclick="openAssetModal('${a.id}')" aria-label="Edit ${escapeHTML(a.name)}" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                      <button onclick="deleteAsset('${a.id}')" aria-label="Delete ${escapeHTML(a.name)}" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                    </div>
+                  </td>` : ''}
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function openAssetModal(id) {
+  const editing = id ? (state.assets||[]).find(a => a.id === id) : null;
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Asset name *</label>
+        <input id="ast-name" class="input" placeholder="e.g. La Marzocco Linea PB #1" value="${escapeHTML(editing?.name||'')}">
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Category</label>
+          <select id="ast-cat" class="input">
+            ${Object.entries(ASSET_CATEGORIES).map(([k,c]) => `<option value="${k}" ${(editing?.category||'other')===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Branch (optional)</label>
+          <input id="ast-branch" class="input" placeholder="e.g. Khobar" value="${escapeHTML(editing?.branch||'')}">
+        </div>
+        <div>
+          <label class="label">Serial number (optional)</label>
+          <input id="ast-serial" class="input" placeholder="manufacturer serial" value="${escapeHTML(editing?.serialNumber||'')}">
+        </div>
+        <div>
+          <label class="label">Purchased on (optional)</label>
+          <input id="ast-purchased" type="date" class="input" value="${escapeHTML(editing?.purchasedAt||'')}">
+        </div>
+        <div class="md:col-span-2">
+          <label class="label">Warranty expires (optional)</label>
+          <input id="ast-warranty" type="date" class="input" value="${escapeHTML(editing?.warrantyExpires||'')}">
+        </div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="ast-notes" class="input" rows="3" placeholder="service contract, install location, quirks...">${escapeHTML(editing?.notes||'')}</textarea>
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit asset' : 'Add asset', form, async () => {
+    const me = currentEmployee();
+    const name = $('#ast-name').value.trim();
+    if (!name) { toast('Asset name is required', 'error'); return false; }
+    const data = {
+      name,
+      category:        $('#ast-cat').value,
+      branch:          $('#ast-branch').value.trim(),
+      serialNumber:    $('#ast-serial').value.trim(),
+      purchasedAt:     $('#ast-purchased').value || null,
+      warrantyExpires: $('#ast-warranty').value || null,
+      notes:           $('#ast-notes').value.trim(),
+      createdBy:       editing?.createdBy || me?.id,
+    };
+    const dbRow = assetToDb(data);
+    if (editing) {
+      const { data: row, error } = await sb.from('assets').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapAssetFromDb(row));
+      toast('Asset updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('assets').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.assets.push(mapAssetFromDb(row));
+      toast('Asset added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add asset' });
+}
+
+async function deleteAsset(id) {
+  const a = (state.assets||[]).find(x => x.id === id);
+  if (!a) return;
+  const linked = (state.maintenance||[]).filter(r => r.assetId === id).length;
+  const msg = linked
+    ? `Delete asset "${a.name}"? ${linked} maintenance request(s) link to it — those requests will be unlinked (asset field goes blank, no request data is lost).`
+    : `Delete asset "${a.name}"?`;
+  if (!confirm(msg)) return;
+  const { error } = await sb.from('assets').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.assets = state.assets.filter(x => x.id !== id);
+  // FK is ON DELETE SET NULL on the server; mirror that locally.
+  (state.maintenance||[]).forEach(r => { if (r.assetId === id) r.assetId = null; });
+  toast('Asset deleted', 'success');
+  render();
 }
 
 function renderMaintenance() {
@@ -7693,6 +7920,7 @@ function renderMaintenance() {
             const reporter = getEmployee(r.reportedBy);
             const assignee = getEmployee(r.assignedTo);
             const photoUrl = safeMaintenancePhotoUrl(r);
+            const assetLbl = assetLabelForRequest(r);
             return `
               <div class="px-5 py-4 hover:bg-slate-50">
                 <div class="flex items-start gap-3">
@@ -7706,7 +7934,7 @@ function renderMaintenance() {
                     </div>
                     ${r.description ? `<div class="text-sm text-slate-600 mt-1">${escapeHTML(r.description)}</div>` : ''}
                     <div class="text-xs text-slate-500 mt-2 flex items-center gap-3 flex-wrap">
-                      ${r.asset    ? `<span>${icon('building','w-3 h-3 inline')} ${escapeHTML(r.asset)}</span>` : ''}
+                      ${assetLbl ? `<span>${icon('building','w-3 h-3 inline')} ${escapeHTML(assetLbl)}</span>` : ''}
                       ${r.location ? `<span>${icon('pin','w-3 h-3 inline')} ${escapeHTML(r.location)}</span>` : ''}
                       ${r.branch   ? `<span>${escapeHTML(r.branch)}</span>` : ''}
                       <span>Reported by ${escapeHTML(reporter ? ((reporter.firstName||'')+' '+(reporter.lastName||'')).trim() : '—')} &middot; ${escapeHTML(fmtDate((r.createdAt||'').slice(0,10)))}</span>
@@ -7824,7 +8052,22 @@ function openMaintenanceModal(id) {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <label class="label">Asset / Equipment (optional)</label>
-          <input id="maint-asset" class="input" placeholder="e.g. La Marzocco Linea PB" value="${escapeHTML(editing?.asset||'')}">
+          ${(state.assets||[]).length === 0 ? `
+            <div class="text-xs text-slate-500 px-3 py-2 rounded-lg bg-slate-50 border border-dashed border-slate-200">
+              No assets registered yet.
+              ${hasRole('admin','maintenance') ? `<button type="button" onclick="closeModal(); location.hash='#/assets';" class="text-brand-700 hover:underline font-medium">Add one</button> first, then come back to link it here.` : 'Ask an admin / maintenance to add one.'}
+            </div>
+          ` : `
+            <select id="maint-asset-id" class="input">
+              <option value="">— None —</option>
+              ${(state.assets||[]).slice().sort((a,b)=>a.name.localeCompare(b.name)).map(a =>
+                `<option value="${a.id}" ${editing?.assetId===a.id?'selected':''}>${escapeHTML(a.name)}${a.branch?` · ${escapeHTML(a.branch)}`:''}</option>`
+              ).join('')}
+            </select>
+            ${editing && !editing.assetId && editing.asset ? `
+              <div class="text-[10px] text-slate-500 mt-1">Legacy text: <span class="font-medium">${escapeHTML(editing.asset)}</span>. Pick an asset above to replace it.</div>
+            ` : ''}
+          `}
         </div>
         <div>
           <label class="label">Location (optional)</label>
@@ -7880,10 +8123,15 @@ function openMaintenanceModal(id) {
     const photoMime    = _maintenancePhoto ? _maintenancePhoto.mime    : (_maintenancePhotoCleared ? null : (editing?.photoMime    || null));
     const photoSize    = _maintenancePhoto ? _maintenancePhoto.size    : (_maintenancePhotoCleared ? 0    : (editing?.photoSize    || 0));
     const photoDataUrl = _maintenancePhoto ? _maintenancePhoto.dataUrl : (_maintenancePhotoCleared ? null : (editing?.photoDataUrl || null));
+    // Dropdown only renders when at least one asset exists; otherwise we
+    // preserve whatever was on the row so legacy text isn't wiped.
+    const astEl  = $('#maint-asset-id');
+    const astId  = astEl ? (astEl.value || null) : (editing?.assetId || null);
     const data = {
       title,
       description: $('#maint-desc').value.trim(),
-      asset:       $('#maint-asset').value.trim(),
+      asset:       astEl ? '' : (editing?.asset || ''),
+      assetId:     astId,
       location:    $('#maint-loc').value.trim(),
       branch:      $('#maint-branch').value.trim(),
       priority:    $('#maint-pri').value,
@@ -8038,6 +8286,7 @@ function renderMaintenanceDashboard() {
             ${triage.map(r => {
               const pri = MAINT_PRIORITIES[r.priority] || MAINT_PRIORITIES.normal;
               const reporter = getEmployee(r.reportedBy);
+              const assetLbl = assetLabelForRequest(r);
               return `
                 <div class="px-1 py-3 flex items-start gap-3">
                   <div class="w-1 self-stretch rounded-full ${pri.bar} mt-1" style="min-height:24px"></div>
@@ -8046,7 +8295,7 @@ function renderMaintenanceDashboard() {
                       <span class="font-medium text-slate-900 truncate">${escapeHTML(r.title)}</span>
                       <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full ${pri.pill}">${escapeHTML(pri.label)}</span>
                     </div>
-                    <div class="text-xs text-slate-500 truncate">${reporter ? escapeHTML((reporter.firstName||'')+' '+(reporter.lastName||'')) : '—'}${r.location?' &middot; '+escapeHTML(r.location):''}${r.asset?' &middot; '+escapeHTML(r.asset):''}</div>
+                    <div class="text-xs text-slate-500 truncate">${reporter ? escapeHTML((reporter.firstName||'')+' '+(reporter.lastName||'')) : '—'}${r.location?' &middot; '+escapeHTML(r.location):''}${assetLbl?' &middot; '+escapeHTML(assetLbl):''}</div>
                   </div>
                 </div>`;
             }).join('')}
@@ -10739,6 +10988,7 @@ function render() {
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','head_barista','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
+    case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
