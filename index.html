@@ -794,6 +794,7 @@ function mapReceiptFromDb(r) {
     mime: r.mime || '',
     size: Number(r.size) || 0,
     dataUrl: r.data_url || '',
+    ocrText: r.ocr_text || '',
     uploadedBy: r.uploaded_by,
     uploadedAt: r.uploaded_at,
   };
@@ -809,6 +810,7 @@ function receiptToDb(r) {
     mime: r.mime || null,
     size: Number(r.size) || 0,
     data_url: r.dataUrl || null,
+    ocr_text: r.ocrText || null,
     uploaded_by: r.uploadedBy || null,
   };
 }
@@ -10534,6 +10536,7 @@ function openReceiptModal() {
       mime: _receiptFile?.mime || null,
       size: _receiptFile?.size || 0,
       dataUrl: _receiptFile?.dataUrl || null,
+      ocrText: _receiptFile?.ocrText || null,
       uploadedBy: me?.id,
     });
     const { data, error } = await sb.from('receipts').insert(payload).select().single();
@@ -10672,6 +10675,9 @@ async function runReceiptOCR() {
       if (status) status.innerHTML = '<span class="text-amber-700">No text detected — try a clearer photo.</span>';
       return;
     }
+    // Persist on the transient so the save handler can write it to the
+    // receipt row — lets previewReceipt show the OCR text after save.
+    if (_receiptFile) _receiptFile.ocrText = text;
     const parsed = parseReceiptText(text);
     const filled = [];
     const amountEl = $('#rc-amount');
@@ -10788,9 +10794,40 @@ function previewReceipt(id) {
   const r = (state.receipts||[]).find(x => x.id === id);
   if (!r) return;
   const url = safeReceiptDataUrl(r);
-  if (!url) { toast('Cannot preview this receipt', 'error'); return; }
   const w = window.open();
   if (!w) { toast('Popup blocked', 'error'); return; }
+  // If OCR text was captured at upload time, show that as the primary
+  // preview — that's what the user wants to glance at (a list of fields
+  // they recognize), not the photo. Photo is one click away via the link.
+  if (r.ocrText && r.ocrText.trim()) {
+    const cur = r.currency || state.settings.currency || 'SAR';
+    const safeDate = r.receiptDate ? fmtDate(r.receiptDate) : '';
+    const photoLink = url
+      ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener" style="color:#a87035;text-decoration:none;font-size:13px">${(r.mime||'').startsWith('image/') ? 'View photo' : 'Open original file'} &rarr;</a>`
+      : `<span style="color:#94a3b8;font-size:13px">No file attached</span>`;
+    w.document.write(`<!doctype html><html><head><title>${escapeHTML(r.vendor||'Receipt')} &mdash; OCR text</title><style>
+      body{margin:0;background:#f8fafc;font-family:system-ui,-apple-system,sans-serif;color:#1e293b;padding:32px 16px}
+      .card{max-width:760px;margin:0 auto;background:white;border-radius:12px;padding:24px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+      h1{margin:0 0 4px;font-size:20px;font-weight:600}
+      .meta{font-size:13px;color:#64748b;margin-bottom:16px}
+      .row{display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid #e2e8f0;padding-top:16px;margin-top:16px}
+      pre{margin:16px 0 0;padding:16px;background:#f1f5f9;border-radius:8px;font-size:13px;line-height:1.55;white-space:pre-wrap;word-break:break-word;overflow-x:auto;color:#334155}
+    </style></head><body>
+      <div class="card">
+        <h1>${escapeHTML(r.vendor||'Receipt')}</h1>
+        <div class="meta">${escapeHTML(safeDate)}${safeDate?' · ':''}${escapeHTML(cur)} ${escapeHTML(String(r.amount||0))}${r.category?' · '+escapeHTML(r.category):''}</div>
+        <div class="row">
+          <strong style="font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b">Extracted text</strong>
+          ${photoLink}
+        </div>
+        <pre>${escapeHTML(r.ocrText)}</pre>
+      </div>
+    </body></html>`);
+    w.document.close();
+    return;
+  }
+  // No OCR text on file — fall back to the original photo / PDF preview.
+  if (!url) { try { w.close(); } catch(_) {} toast('Cannot preview this receipt', 'error'); return; }
   if ((r.mime||'').startsWith('image/')) {
     w.document.write(`<title>${escapeHTML(r.vendor)} &mdash; receipt</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${url}" alt="" style="max-width:100%;max-height:100vh" /></body>`);
   } else {

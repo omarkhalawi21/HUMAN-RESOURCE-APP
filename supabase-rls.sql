@@ -1849,6 +1849,19 @@ ALTER TABLE public.maintenance_requests
   ADD COLUMN IF NOT EXISTS photo_thumb_data_url text;
 
 -- =============================================================
+-- 30. RECEIPTS — persist OCR-extracted text
+--     PR #48 added Tesseract.js OCR. The extracted text was used
+--     to pre-fill vendor/date/amount on the Add Receipt modal but
+--     wasn't saved with the receipt. This column persists the raw
+--     OCR output so the eye-icon preview on a saved receipt can
+--     show the extracted text (per user request), not just the
+--     photo. Legacy receipts have NULL — UI falls back to the
+--     photo preview path for those.
+-- =============================================================
+ALTER TABLE public.receipts
+  ADD COLUMN IF NOT EXISTS ocr_text text;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
