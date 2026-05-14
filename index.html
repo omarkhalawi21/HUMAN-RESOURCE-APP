@@ -395,6 +395,7 @@ function emptyState() {
     maintenance: [],        // [{ id, title, description, branch, location, asset, priority, status, reportedBy, assignedTo, resolution, resolvedAt, createdAt, updatedAt }]
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
+    viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
   };
 }
 
@@ -1071,11 +1072,36 @@ function currentEmployee() {
   if (!state.session) return null;
   return state.employees.find(e => e.user_id === state.session.userId) || null;
 }
-function isAdmin() {
+// realRole / isRealAdmin / isPreviewing always reflect the *underlying* user,
+// ignoring any "View as role" preview override. Used to gate the preview
+// controls themselves (only real admins can enter preview).
+function realRole() {
   const e = currentEmployee();
-  return e?.systemRole === 'admin' || e?.isAdmin === true;
+  if (!e) return null;
+  return e.systemRole || (e.isAdmin ? 'admin' : 'employee');
+}
+function isRealAdmin() { return realRole() === 'admin'; }
+function isPreviewing() {
+  return isRealAdmin() && !!state?.viewAsRole && state.viewAsRole !== 'admin' && !!ROLES[state.viewAsRole];
+}
+function setViewAsRole(role) {
+  if (!isRealAdmin()) return;
+  state.viewAsRole = (role && role !== 'admin' && ROLES[role]) ? role : null;
+  // Land on the dashboard so the previewed role doesn't sit on a route
+  // they can't access (e.g. admin was on Settings, switches to Barista).
+  location.hash = '#/dashboard';
+  render();
+}
+function exitViewAsRole() {
+  state.viewAsRole = null;
+  render();
+}
+function isAdmin() {
+  // Respects the preview override — admin previewing as another role is not admin.
+  return currentRole() === 'admin';
 }
 function currentRole() {
+  if (isRealAdmin() && state?.viewAsRole && ROLES[state.viewAsRole]) return state.viewAsRole;
   const e = currentEmployee();
   return e?.systemRole || (e?.isAdmin ? 'admin' : 'employee');
 }
@@ -1517,9 +1543,15 @@ function renderShell(routeContent) {
           ${avatarHTML(emp, 36)}
           <div class="flex-1 min-w-0">
             <div class="text-sm font-semibold text-slate-900 truncate">${escapeHTML(emp.firstName+' '+emp.lastName)}</div>
-            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)} &middot; ${escapeHTML(roleLabel(emp.systemRole))}</div>
+            <div class="text-xs text-slate-500 truncate">${escapeHTML(emp.role)} &middot; ${escapeHTML(roleLabel(realRole()))}${isPreviewing()?` &middot; <span class="text-amber-700 font-semibold">viewing as ${escapeHTML(roleLabel(state.viewAsRole))}</span>`:''}</div>
           </div>
         </div>
+        ${isRealAdmin() ? `
+          <select onchange="setViewAsRole(this.value)" class="w-full mt-2 text-xs py-1.5 px-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:border-brand-300 focus:outline-none focus:ring-2 focus:ring-brand-200" title="Preview the app as a different role">
+            <option value="">View as: Admin (real)</option>
+            ${Object.entries(ROLES).filter(([k])=>k!=='admin').map(([k,v]) => `<option value="${k}" ${state.viewAsRole===k?'selected':''}>View as ${escapeHTML(v.label)}</option>`).join('')}
+          </select>
+        ` : ''}
         <button onclick="logout()" class="w-full mt-2 flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-slate-900 py-2 rounded-lg hover:bg-slate-50">
           ${icon('logout','w-4 h-4')} ${escapeHTML(t('logout'))}
         </button>
@@ -1547,11 +1579,22 @@ function renderShell(routeContent) {
       </button>
     </header>`;
 
+  const previewBanner = isPreviewing() ? `
+    <div class="bg-amber-400 text-amber-950 px-4 md:px-6 py-2 flex items-center justify-between gap-3 flex-wrap text-sm sticky top-0 z-30">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="shrink-0">${icon('eye','w-4 h-4')}</span>
+        <span class="truncate"><strong>Preview mode</strong> — viewing the app as <strong>${escapeHTML(roleLabel(state.viewAsRole))}</strong>. Any data changes still happen as your real admin user.</span>
+      </div>
+      <button onclick="exitViewAsRole()" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white text-amber-900 hover:bg-amber-50 text-xs font-semibold">
+        ${icon('close','w-3.5 h-3.5')} Exit preview
+      </button>
+    </div>` : '';
   return `
     <div class="flex min-h-screen ${lang==='ar'?'flex-row-reverse':''}">
       <div class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
       ${sidebar}
       <main class="flex-1 min-w-0">
+        ${previewBanner}
         ${topbar}
         <div class="p-4 md:p-6 fade-in" id="route-content">${routeContent}</div>
       </main>
