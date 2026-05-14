@@ -4596,6 +4596,72 @@ function renderAnalytics() {
           </div>
         </div>`;
     })()}
+
+    ${(() => {
+      // Per-employee attendance for the selected period. "Productivity" framing
+      // intentionally avoided — these are attendance metrics, not subjective
+      // output. Sorted best-first so the table reads as a ranking; color
+      // surfaces low rates / absent days without forcing the admin to re-sort.
+      // One pass to bucket records by employee — avoids an O(employees ×
+      // records) filter loop that would bite once attendance grows past a
+      // few thousand rows.
+      const recsByEmp = new Map();
+      (state.attendance || []).forEach(a => {
+        if (a.date < period.fromDate || a.date > period.toDate) return;
+        const arr = recsByEmp.get(a.employeeId);
+        if (arr) arr.push(a);
+        else     recsByEmp.set(a.employeeId, [a]);
+      });
+      const rows = state.employees
+        .filter(isActiveEmployee)
+        .map(e => {
+          const recs = recsByEmp.get(e.id) || [];
+          const { present, late, absent } = computeAttStats(recs);
+          const totalRec = present + late + absent;
+          if (totalRec === 0) return null;
+          const workedDays = recs.filter(r => r.clockIn && r.clockOut).length;
+          const totalMin   = recs.reduce((s, r) => s + (r.clockIn && r.clockOut ? diffMinutes(r.clockIn, r.clockOut) : 0), 0);
+          return {
+            emp: e, present, late, absent, totalRec,
+            avgHrs: workedDays > 0 ? (totalMin / workedDays / 60) : 0,
+            rate:   ((present + late) / totalRec) * 100,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.rate - a.rate || b.totalRec - a.totalRec);
+      const rateTone = pct => pct >= 95 ? 'text-emerald-600' : pct >= 80 ? 'text-amber-600' : 'text-rose-600';
+      return `
+        <div class="bg-white rounded-2xl shadow-card overflow-hidden mt-5">
+          <div class="p-5 border-b border-slate-100">
+            <h3 class="font-display text-lg font-semibold text-slate-900 flex items-center gap-2">${icon('users','w-4 h-4 text-brand-700')} Per-employee attendance</h3>
+            <div class="text-xs text-slate-500 mt-0.5">${escapeHTML(period.label)} · active employees with attendance records, sorted by attendance rate</div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data">
+              <thead><tr>
+                <th>Employee</th>
+                <th class="!text-end">Present</th>
+                <th class="!text-end">Late</th>
+                <th class="!text-end">Absent</th>
+                <th class="!text-end">Avg hrs/day</th>
+                <th class="!text-end">Rate</th>
+              </tr></thead>
+              <tbody>
+                ${rows.length === 0 ? `<tr><td colspan="6" class="text-center text-slate-400 !py-8">No attendance records in this period</td></tr>` :
+                  rows.map(r => `
+                    <tr class="hover-row">
+                      <td><a href="#/employee/${r.emp.id}" class="flex items-center gap-2 hover:text-brand-700">${avatarHTML(r.emp, 24)}<span class="font-medium">${escapeHTML(r.emp.firstName+' '+(r.emp.lastName||''))}</span></a></td>
+                      <td class="!text-end tabular-nums">${r.present}</td>
+                      <td class="!text-end tabular-nums ${r.late>0?'text-amber-700':'text-slate-400'}">${r.late}</td>
+                      <td class="!text-end tabular-nums ${r.absent>0?'text-rose-700':'text-slate-400'}">${r.absent}</td>
+                      <td class="!text-end tabular-nums">${r.avgHrs > 0 ? r.avgHrs.toFixed(1) : '—'}</td>
+                      <td class="!text-end tabular-nums font-semibold ${rateTone(r.rate)}">${r.rate.toFixed(0)}%</td>
+                    </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    })()}
   `;
 }
 
