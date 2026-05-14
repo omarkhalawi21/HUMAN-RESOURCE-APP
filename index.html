@@ -4527,6 +4527,75 @@ function renderAnalytics() {
         </div>
       </div>
     </div>
+
+    ${(() => {
+      // Roaster yield — pair green-out + roasted-in movements by occurredAt.
+      // Each logRoastBatch() call writes both legs with the same timestamp,
+      // so grouping by occurredAt reconstitutes the batch. Sum within a key
+      // tolerates multi-batch groupings (rare but possible).
+      const roastMoves = (state.inventoryMovements || []).filter(m => m.type === 'roast');
+      const byKey = {};
+      roastMoves.forEach(m => {
+        const k = m.occurredAt || m.createdAt;
+        if (!k) return;
+        if (!byKey[k]) byKey[k] = { out: 0, in: 0 };
+        if (m.qtyDelta < 0) byKey[k].out += Math.abs(m.qtyDelta);
+        else                byKey[k].in  += m.qtyDelta;
+      });
+      const pairs = Object.entries(byKey)
+        .filter(([, v]) => v.out > 0 && v.in > 0)
+        .map(([k, v]) => ({ at: k, yield: (v.in / v.out) * 100, out: v.out, in: v.in }))
+        .sort((a, b) => a.at.localeCompare(b.at));
+      const recent = pairs.slice(-12);
+      if (recent.length === 0) {
+        return `
+          <div class="bg-white rounded-2xl shadow-card overflow-hidden mt-5">
+            <div class="p-5 border-b border-slate-100">
+              <h3 class="font-display text-lg font-semibold text-slate-900 flex items-center gap-2">${icon('cash','w-4 h-4 text-brand-700')} Roaster yield</h3>
+              <div class="text-xs text-slate-500 mt-0.5">Healthy band ${ROAST_YIELD_LOW}%–${ROAST_YIELD_HIGH}%</div>
+            </div>
+            <div class="p-5 text-center text-slate-400 py-8 text-sm">No roasts logged yet. <a href="#/roaster" class="text-brand-700 hover:underline">Log a roast</a> to start the trend.</div>
+          </div>`;
+      }
+      const current = recent[recent.length - 1];
+      const prior   = recent[recent.length - 2] || null;
+      const avg = recent.reduce((s,p) => s + p.yield, 0) / recent.length;
+      return `
+        <div class="bg-white rounded-2xl shadow-card overflow-hidden mt-5">
+          <div class="p-5 border-b border-slate-100 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h3 class="font-display text-lg font-semibold text-slate-900 flex items-center gap-2">${icon('cash','w-4 h-4 text-brand-700')} Roaster yield</h3>
+              <div class="text-xs text-slate-500 mt-0.5">Last ${recent.length} roast${recent.length===1?'':'s'} · healthy band ${ROAST_YIELD_LOW}%–${ROAST_YIELD_HIGH}%</div>
+            </div>
+            <button onclick="location.hash='#/roaster'" class="btn btn-ghost btn-sm">${icon('eye','w-4 h-4')} Open roaster</button>
+          </div>
+          <div class="p-5">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Latest yield</div>
+                <div class="font-display text-3xl font-semibold mt-1 ${roastYieldTone(current.yield)}">${current.yield.toFixed(1)}%</div>
+                <div class="text-xs text-slate-500 mt-1 tabular-nums">${current.in.toFixed(2)} kg roasted from ${current.out.toFixed(2)} kg green</div>
+                ${prior ? `
+                  <div class="text-xs mt-1 ${current.yield >= prior.yield ? 'text-emerald-600' : 'text-rose-600'}">
+                    ${current.yield >= prior.yield ? '+' : ''}${(current.yield - prior.yield).toFixed(1)} pts vs previous batch
+                  </div>
+                ` : ''}
+              </div>
+              <div class="md:col-span-2">
+                <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center justify-between">
+                  <span>Trend</span>
+                  <span class="text-slate-400">avg ${avg.toFixed(1)}%</span>
+                </div>
+                ${sparkline(recent.map(p => p.yield), '#a87035')}
+                <div class="flex justify-between text-[10px] text-slate-400 tabular-nums mt-1">
+                  <span>${escapeHTML(fmtDate((recent[0].at||'').slice(0,10)))}</span>
+                  <span>${escapeHTML(fmtDate((current.at||'').slice(0,10)))}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    })()}
   `;
 }
 
@@ -8887,6 +8956,23 @@ const MOVEMENT_TYPES = {
   other:     { label: 'Other' },
 };
 
+// Roaster yield bands — the healthy roast loses 8–22% of green weight.
+// Below the low band means over-roast (too much loss); above the high band
+// means under-roast (likely under-developed). Shared so any tone-coding
+// surface (roast logger, Analytics card) uses the same source of truth.
+// `darker=true` for surfaces on white backgrounds that need higher contrast
+// (the inline yield readout in the roast logger); default is the standard
+// shade used by Analytics cards. Literal class names so Tailwind's JIT
+// sees them at build time.
+const ROAST_YIELD_LOW  = 78;
+const ROAST_YIELD_HIGH = 92;
+function roastYieldTone(pct, darker = false) {
+  if (pct == null || isNaN(pct))   return darker ? 'text-slate-500'   : 'text-slate-400';
+  if (pct < ROAST_YIELD_LOW)       return darker ? 'text-rose-700'    : 'text-rose-600';
+  if (pct > ROAST_YIELD_HIGH)      return darker ? 'text-amber-700'   : 'text-amber-600';
+  return                                  darker ? 'text-emerald-700' : 'text-emerald-600';
+}
+
 // Per-item movements history. Read-only listing — sourced from
 // state.inventoryMovements which the loader fetches with the most
 // recent 2000 entries (any role with inventory SELECT can see them).
@@ -9099,8 +9185,7 @@ function recalcRoastYield() {
   const roasted = parseFloat(outEl.value) || 0;
   if (green > 0 && roasted > 0) {
     const pct = (roasted / green) * 100;
-    const tone = pct < 78 ? 'text-rose-700' : pct > 92 ? 'text-amber-700' : 'text-emerald-700';
-    yEl.innerHTML = `Yield: <span class="font-semibold ${tone}">${pct.toFixed(1)}%</span> &middot; loss ${(green - roasted).toFixed(2)} kg`;
+    yEl.innerHTML = `Yield: <span class="font-semibold ${roastYieldTone(pct, true)}">${pct.toFixed(1)}%</span> &middot; loss ${(green - roasted).toFixed(2)} kg`;
   } else {
     yEl.innerHTML = 'Yield: <span class="font-semibold">—</span>';
   }
