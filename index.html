@@ -908,9 +908,6 @@ function maintenanceToDb(m) {
     description: m.description || null,
     branch: m.branch || null,
     location: m.location || null,
-    // Prefer the asset_id FK when picked; clear the legacy text in that case
-    // so we don't carry duplicate sources of truth on the same row.
-    asset: m.assetId ? null : (m.asset || null),
     asset_id: m.assetId || null,
     priority: m.priority || 'normal',
     status: m.status || 'open',
@@ -8123,14 +8120,11 @@ function openMaintenanceModal(id) {
     const photoMime    = _maintenancePhoto ? _maintenancePhoto.mime    : (_maintenancePhotoCleared ? null : (editing?.photoMime    || null));
     const photoSize    = _maintenancePhoto ? _maintenancePhoto.size    : (_maintenancePhotoCleared ? 0    : (editing?.photoSize    || 0));
     const photoDataUrl = _maintenancePhoto ? _maintenancePhoto.dataUrl : (_maintenancePhotoCleared ? null : (editing?.photoDataUrl || null));
-    // Dropdown only renders when at least one asset exists; otherwise we
-    // preserve whatever was on the row so legacy text isn't wiped.
     const astEl  = $('#maint-asset-id');
     const astId  = astEl ? (astEl.value || null) : (editing?.assetId || null);
     const data = {
       title,
       description: $('#maint-desc').value.trim(),
-      asset:       astEl ? '' : (editing?.asset || ''),
       assetId:     astId,
       location:    $('#maint-loc').value.trim(),
       branch:      $('#maint-branch').value.trim(),
