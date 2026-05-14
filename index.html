@@ -1204,28 +1204,14 @@ function canManagePeople() { return hasRole('admin','hr'); }
 // (employees, payroll, balances, certificates, etc.) stay on canManagePeople.
 function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations'); }
 // canViewAttendanceAndLeave — broader than canManage. Adds two view-only roles:
-//   • head_barista — scoped to their own branch via viewerBranchScope() for
-//     shift planning at their location.
-//   • accounting   — unscoped (sees all branches) so they can prep payroll
-//     against attendance + approved leave across the company.
+//   • head_barista — cross-branch visibility for shift planning across all
+//     locations (use the page's branch filter to narrow if needed).
+//   • accounting   — cross-branch visibility to prep payroll against
+//     attendance + approved leave.
 // Both see the team-wide tabs but no approve/reject buttons — those stay
 // on canManageAttendanceAndLeave.
 function canViewAttendanceAndLeave() {
   return canManageAttendanceAndLeave() || hasRole('head_barista', 'accounting');
-}
-// If the current user is a view-only role (head_barista), returns their
-// branch string — used to scope the "All" tabs to their own employees.
-// Returns null for full-access managers so they see all branches.
-// A head_barista without a branch assigned returns the NO_BRANCH_SCOPE
-// sentinel so filters match zero employees (rather than falling through
-// to "see everything"). The UI swaps the sentinel for a readable label.
-const NO_BRANCH_SCOPE = '__no_branch_assigned__';
-function viewerBranchScope() {
-  if (canManageAttendanceAndLeave()) return null;
-  if (!hasRole('head_barista')) return null;
-  const me = currentEmployee();
-  if (!me) return null;
-  return (getEmpExtras(me.id).branch || '').trim() || NO_BRANCH_SCOPE;
 }
 // Find employees whose system_role is still the default 'employee' but
 // whose department or job_title looks like a real role name. Used to
@@ -3282,14 +3268,10 @@ function renderAttendance() {
   const today = todayISO();
   const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
   // `admin` here gates tab visibility, not write actions — renderAttendance
-  // has no privileged mutations. Broadened to canView so head_barista sees
-  // the All/History tabs; branchScope below filters those rows to their branch.
+  // has no privileged mutations. canView adds head_barista + accounting on
+  // top of admin/hr/operations; both view-only roles see all branches.
   const admin = canViewAttendanceAndLeave();
-  const branchScope = viewerBranchScope();
   if (!admin) attTab = 'me';
-  // Lock the History branch filter to the viewer's own branch when scoped —
-  // head_barista can't widen the view by changing the dropdown.
-  if (branchScope) attHistFilter.branch = branchScope;
 
   const tabs = admin ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
@@ -3378,10 +3360,7 @@ function renderAttendance() {
       </div>
     `;
   } else if (attTab==='all') {
-    const empList = branchScope
-      ? state.employees.filter(e => (getEmpExtras(e.id).branch || '').trim() === branchScope)
-      : state.employees;
-    const rows = empList.map(e => {
+    const rows = state.employees.map(e => {
       const a = state.attendance.find(x => x.employeeId===e.id && x.date===today);
       const onLeave = state.leaveRequests.find(r=>r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
       return { e, a, onLeave };
@@ -3463,15 +3442,11 @@ function renderAttendance() {
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Branch</div>
-              ${branchScope ? `
-                <div class="input !py-2 !text-sm bg-slate-50 ${branchScope===NO_BRANCH_SCOPE?'text-amber-700':'text-slate-600'} cursor-not-allowed" title="${branchScope===NO_BRANCH_SCOPE?'Ask an admin to set your branch in Employees':'Locked to your branch'}">${branchScope===NO_BRANCH_SCOPE?'No branch assigned':escapeHTML(branchScope)}</div>
-              ` : `
-                <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
-                  <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
-                  <option value="none" ${attHistFilter.branch==='none'?'selected':''}>None (unassigned)</option>
-                  ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${attHistFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
-                </select>
-              `}
+              <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
+                <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
+                <option value="none" ${attHistFilter.branch==='none'?'selected':''}>None (unassigned)</option>
+                ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${attHistFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+              </select>
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">From</div>
@@ -3536,15 +3511,7 @@ function renderAttendance() {
       </div>
     `;
   }
-  const noBranchBanner = (admin && attTab!=='me' && branchScope===NO_BRANCH_SCOPE) ? `
-    <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-4 mb-5 flex items-start gap-3">
-      ${icon('warning','w-5 h-5 flex-shrink-0 mt-0.5')}
-      <div class="text-sm">
-        <div class="font-semibold mb-0.5">No branch assigned</div>
-        <div>Your account doesn't have a branch set, so team-wide attendance is hidden. Ask an admin to set your branch on the Employees page.</div>
-      </div>
-    </div>` : '';
-  return tabs + clockTile + noBranchBanner + main;
+  return tabs + clockTile + main;
 }
 function computeAttStats(records) {
   const present = records.filter(r => r.status==='present').length;
@@ -3648,24 +3615,16 @@ async function clockOut() {
 let leaveTab = 'mine';
 function renderLeave() {
   const me = currentEmployee();
-  // canView (head_barista + managers) gates the team-wide tabs and the
-  // Employee column. canManage (managers only) gates Approve/Reject buttons.
-  // branchScope (non-null for head_barista) scopes the team-wide rows to
-  // requests from employees at the viewer's branch.
+  // canView (head_barista + accounting + managers) gates the team-wide tabs
+  // and the Employee column. canManage (managers only) gates Approve/Reject
+  // buttons. All viewers see all branches.
   const canView = canViewAttendanceAndLeave();
   const canManage = canManageAttendanceAndLeave();
-  const branchScope = viewerBranchScope();
   if (!canView) leaveTab = 'mine';
   const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
-  const inBranch = r => {
-    if (!branchScope) return true;
-    const e = getEmployee(r.employeeId);
-    if (!e) return false;
-    return (getEmpExtras(e.id).branch || '').trim() === branchScope;
-  };
   const myReqs = state.leaveRequests.filter(r => r.employeeId===me.id).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
-  const allReqs = state.leaveRequests.filter(inBranch).slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
-  const pending = state.leaveRequests.filter(r=>r.status==='pending').filter(inBranch);
+  const allReqs = state.leaveRequests.slice().sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt));
+  const pending = state.leaveRequests.filter(r=>r.status==='pending');
 
   const tabs = canView ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
@@ -3723,15 +3682,7 @@ function renderLeave() {
       </div>
     </div>
   `;
-  const noBranchBanner = (canView && leaveTab!=='mine' && branchScope===NO_BRANCH_SCOPE) ? `
-    <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-4 mb-5 flex items-start gap-3">
-      ${icon('warning','w-5 h-5 flex-shrink-0 mt-0.5')}
-      <div class="text-sm">
-        <div class="font-semibold mb-0.5">No branch assigned</div>
-        <div>Your account doesn't have a branch set, so team-wide leave is hidden. Ask an admin to set your branch on the Employees page.</div>
-      </div>
-    </div>` : '';
-  return tabs + noBranchBanner + balanceCards + requestBtn + table;
+  return tabs + balanceCards + requestBtn + table;
 }
 // `remaining` is days NOT yet consumed (state.leaveBalances stores remaining,
 // not used). The bar visualizes consumption — width grows as remaining shrinks.
