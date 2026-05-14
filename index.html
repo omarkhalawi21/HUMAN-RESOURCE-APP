@@ -10566,13 +10566,17 @@ async function handleReceiptFile(ev) {
 
 // Lazy-load tesseract.js from CDN on first OCR attempt. ~2MB plus
 // per-language data (cached by the browser after the first run).
+// Pinned to v4.1.4: v5 sometimes fails silently from CDN when its
+// auto-path-detection can't find the worker/core scripts. v4's simple
+// recognize API is robust from a plain <script src=>.
+const TESSERACT_VERSION = '4.1.4';
 let _tesseractLoadingPromise = null;
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
   if (_tesseractLoadingPromise) return _tesseractLoadingPromise;
   _tesseractLoadingPromise = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.src = `https://cdn.jsdelivr.net/npm/tesseract.js@${TESSERACT_VERSION}/dist/tesseract.min.js`;
     s.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('OCR engine missing after load'));
     s.onerror = () => { _tesseractLoadingPromise = null; reject(new Error('Failed to load OCR engine (offline?)')); };
     document.head.appendChild(s);
@@ -10675,7 +10679,14 @@ async function runReceiptOCR() {
         : `<span class="text-amber-700">Couldn't auto-fill — see extracted text below.</span>`;
     }
   } catch (e) {
-    toast('OCR failed: ' + (e?.message || 'unknown error'), 'error');
+    // Log the full error to devtools so users can copy/paste it back when
+    // reporting issues — toast space is limited, console isn't.
+    console.error('Receipt OCR failed:', e);
+    const detail = e?.message
+      || (typeof e === 'string' ? e : '')
+      || (e?.name)
+      || 'check the browser console for details';
+    toast('OCR failed: ' + detail, 'error');
     if (status) status.innerHTML = '';
   } finally {
     if (btn) btn.disabled = false;
