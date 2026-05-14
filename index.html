@@ -1099,16 +1099,19 @@ function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations
 function canViewAttendanceAndLeave() {
   return canManageAttendanceAndLeave() || hasRole('head_barista');
 }
-// If the current user is a view-only role with a branch (head_barista),
-// returns their branch string — used to scope the "All" tabs to their
-// own employees. Returns null for full-access managers so they see all
-// branches, and null for head_barista with no branch assigned.
+// If the current user is a view-only role (head_barista), returns their
+// branch string — used to scope the "All" tabs to their own employees.
+// Returns null for full-access managers so they see all branches.
+// A head_barista without a branch assigned returns the NO_BRANCH_SCOPE
+// sentinel so filters match zero employees (rather than falling through
+// to "see everything"). The UI swaps the sentinel for a readable label.
+const NO_BRANCH_SCOPE = '__no_branch_assigned__';
 function viewerBranchScope() {
   if (canManageAttendanceAndLeave()) return null;
   if (!hasRole('head_barista')) return null;
   const me = currentEmployee();
   if (!me) return null;
-  return (getEmpExtras(me.id).branch || '').trim() || null;
+  return (getEmpExtras(me.id).branch || '').trim() || NO_BRANCH_SCOPE;
 }
 // Find employees whose system_role is still the default 'employee' but
 // whose department or job_title looks like a real role name. Used to
@@ -3298,7 +3301,7 @@ function renderAttendance() {
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Branch</div>
               ${branchScope ? `
-                <div class="input !py-2 !text-sm bg-slate-50 text-slate-600 cursor-not-allowed" title="Locked to your branch">${escapeHTML(branchScope)}</div>
+                <div class="input !py-2 !text-sm bg-slate-50 ${branchScope===NO_BRANCH_SCOPE?'text-amber-700':'text-slate-600'} cursor-not-allowed" title="${branchScope===NO_BRANCH_SCOPE?'Ask an admin to set your branch in Employees':'Locked to your branch'}">${branchScope===NO_BRANCH_SCOPE?'No branch assigned':escapeHTML(branchScope)}</div>
               ` : `
                 <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
                   <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
@@ -3370,7 +3373,15 @@ function renderAttendance() {
       </div>
     `;
   }
-  return tabs + clockTile + main;
+  const noBranchBanner = (admin && attTab!=='me' && branchScope===NO_BRANCH_SCOPE) ? `
+    <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-4 mb-5 flex items-start gap-3">
+      ${icon('warning','w-5 h-5 flex-shrink-0 mt-0.5')}
+      <div class="text-sm">
+        <div class="font-semibold mb-0.5">No branch assigned</div>
+        <div>Your account doesn't have a branch set, so team-wide attendance is hidden. Ask an admin to set your branch on the Employees page.</div>
+      </div>
+    </div>` : '';
+  return tabs + clockTile + noBranchBanner + main;
 }
 function computeAttStats(records) {
   const present = records.filter(r => r.status==='present').length;
@@ -3549,7 +3560,15 @@ function renderLeave() {
       </div>
     </div>
   `;
-  return tabs + balanceCards + requestBtn + table;
+  const noBranchBanner = (canView && leaveTab!=='mine' && branchScope===NO_BRANCH_SCOPE) ? `
+    <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-4 mb-5 flex items-start gap-3">
+      ${icon('warning','w-5 h-5 flex-shrink-0 mt-0.5')}
+      <div class="text-sm">
+        <div class="font-semibold mb-0.5">No branch assigned</div>
+        <div>Your account doesn't have a branch set, so team-wide leave is hidden. Ask an admin to set your branch on the Employees page.</div>
+      </div>
+    </div>` : '';
+  return tabs + noBranchBanner + balanceCards + requestBtn + table;
 }
 // `remaining` is days NOT yet consumed (state.leaveBalances stores remaining,
 // not used). The bar visualizes consumption — width grows as remaining shrinks.
