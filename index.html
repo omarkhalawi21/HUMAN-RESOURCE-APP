@@ -1821,7 +1821,7 @@ function renderDashboard() {
             <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${fmtMoney(receiptsMtdTotal)}</div>
             <div class="text-xs text-slate-500 mt-1">${receiptsMtd.length} receipt${receiptsMtd.length===1?'':'s'} this month</div>
           </button>
-          <button onclick="inventoryFilter={category:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+          <button onclick="inventoryFilter={category:'all',branch:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
             <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('box','w-3.5 h-3.5')} Low stock</div>
             <div class="font-display text-2xl font-semibold ${lowStock>0?'text-rose-600':'text-slate-900'} mt-1">${lowStock}</div>
             <div class="text-xs text-slate-500 mt-1">${lowStock>0?'need restock':'all healthy'}</div>
@@ -8466,7 +8466,7 @@ const INVENTORY_CATEGORIES = {
 };
 const INVENTORY_UNITS = ['units','kg','g','L','mL','box','pack','bag'];
 
-let inventoryFilter = { category:'all', q:'', lowStock:false };
+let inventoryFilter = { category:'all', branch:'all', q:'', lowStock:false };
 let _inventoryFilterTimer = null;
 
 function setInventoryFilter(updates) {
@@ -8483,7 +8483,7 @@ function setInventoryFilter(updates) {
   render();
 }
 function clearInventoryFilter() {
-  inventoryFilter = { category:'all', q:'', lowStock:false };
+  inventoryFilter = { category:'all', branch:'all', q:'', lowStock:false };
   render();
 }
 function isLowStock(item) {
@@ -8569,9 +8569,12 @@ function getInventoryFiltered() {
   const q = (f.q||'').trim().toLowerCase();
   return (state.inventory || []).filter(it => {
     if (f.category && f.category !== 'all' && it.category !== f.category) return false;
+    if (f.branch === 'none') {
+      if ((it.branch||'').trim() !== '') return false;
+    } else if (f.branch && f.branch !== 'all' && (it.branch||'') !== f.branch) return false;
     if (f.lowStock && !isLowStock(it)) return false;
     if (q) {
-      const hay = `${it.name} ${it.sku||''} ${supplierLabelForItem(it)} ${it.notes||''}`.toLowerCase();
+      const hay = `${it.name} ${it.sku||''} ${supplierLabelForItem(it)} ${it.branch||''} ${it.notes||''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -8738,7 +8741,7 @@ function renderInventory() {
   const f = inventoryFilter;
   const lowCount = all.filter(isLowStock).length;
   const totalQty = all.reduce((s,i) => s + (Number(i.quantity)||0), 0);
-  const hasFilter = (f.category && f.category !== 'all') || !!f.q || !!f.lowStock;
+  const hasFilter = (f.category && f.category !== 'all') || (f.branch && f.branch !== 'all') || !!f.q || !!f.lowStock;
 
   return `
     <!-- Hero -->
@@ -8780,16 +8783,24 @@ function renderInventory() {
 
     <!-- Filter bar -->
     <div class="bg-white rounded-2xl shadow-card p-4 mb-5">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
         <div>
           <label class="label">Search</label>
-          <input id="inv-q" type="text" class="input" placeholder="name, SKU, supplier..." value="${escapeHTML(f.q||'')}" oninput="setInventoryFilter({q:this.value})">
+          <input id="inv-q" type="text" class="input" placeholder="name, SKU, supplier, branch..." value="${escapeHTML(f.q||'')}" oninput="setInventoryFilter({q:this.value})">
         </div>
         <div>
           <label class="label">Category</label>
           <select class="input" onchange="setInventoryFilter({category:this.value})">
             <option value="all">All categories</option>
             ${Object.entries(INVENTORY_CATEGORIES).map(([k,c]) => `<option value="${k}" ${f.category===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Branch</label>
+          <select class="input" onchange="setInventoryFilter({branch:this.value})">
+            <option value="all">All branches</option>
+            <option value="none" ${f.branch==='none'?'selected':''}>None (unassigned)</option>
+            ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${f.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
           </select>
         </div>
         <div class="flex items-end gap-2">
@@ -10047,7 +10058,7 @@ function renderHeadBaristaDashboard() {
         <div class="flex-1 min-w-0">
           <div class="font-semibold text-rose-900">${lowItems.length} item${lowItems.length===1?'':'s'} at or below the reorder threshold</div>
           <div class="text-sm text-rose-800 mt-1">${escapeHTML(lowItems.slice(0,3).map(i => i.name).join(', '))}${lowItems.length>3?` and ${lowItems.length-3} more`:''}.</div>
-          <button onclick="inventoryFilter={category:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="btn btn-primary btn-sm mt-3">${icon('eye','w-4 h-4')} Review low stock</button>
+          <button onclick="inventoryFilter={category:'all',branch:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="btn btn-primary btn-sm mt-3">${icon('eye','w-4 h-4')} Review low stock</button>
         </div>
       </div>
     ` : ''}
