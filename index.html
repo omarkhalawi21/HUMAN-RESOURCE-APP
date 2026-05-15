@@ -795,6 +795,7 @@ function mapReceiptFromDb(r) {
     size: Number(r.size) || 0,
     dataUrl: r.data_url || '',
     ocrText: r.ocr_text || '',
+    extractedData: r.extracted_data || null,
     uploadedBy: r.uploaded_by,
     uploadedAt: r.uploaded_at,
   };
@@ -811,6 +812,7 @@ function receiptToDb(r) {
     size: Number(r.size) || 0,
     data_url: r.dataUrl || null,
     ocr_text: r.ocrText || null,
+    extracted_data: r.extractedData || null,
     uploaded_by: r.uploadedBy || null,
   };
 }
@@ -10538,6 +10540,7 @@ function openReceiptModal() {
       size: _receiptFile?.size || 0,
       dataUrl: _receiptFile?.dataUrl || null,
       ocrText: _receiptFile?.ocrText || null,
+      extractedData: _receiptFile?.extractedData || null,
       uploadedBy: me?.id,
     });
     const { data, error } = await sb.from('receipts').insert(payload).select().single();
@@ -10720,6 +10723,12 @@ async function runReceiptOCR() {
       console.warn('Claude OCR unavailable, falling back to Tesseract:', e);
     }
     if (aiResult && (aiResult.raw_text || aiResult.amount != null || aiResult.vendor || aiResult.date)) {
+      if (_receiptFile) {
+        // Drop fields that already live on the top-level receipt row to
+        // avoid drift between the two copies.
+        const { usage: _u, raw_text: _r, vendor: _v, date: _d, amount: _a, currency: _c, ...rest } = aiResult;
+        _receiptFile.extractedData = rest;
+      }
       applyOcrResult({
         vendor: aiResult.vendor || null,
         date: aiResult.date || null,
@@ -10923,9 +10932,11 @@ function previewReceipt(id) {
   const url = safeReceiptDataUrl(r);
   const w = window.open();
   if (!w) { toast('Popup blocked', 'error'); return; }
-  // If OCR text was captured at upload time, show that as the primary
-  // preview — that's what the user wants to glance at (a list of fields
-  // they recognize), not the photo. Photo is one click away via the link.
+  if (r.extractedData && typeof r.extractedData === 'object') {
+    w.document.write(renderStructuredReceiptHTML(r, url));
+    w.document.close();
+    return;
+  }
   if (r.ocrText && r.ocrText.trim()) {
     const cur = r.currency || state.settings.currency || 'SAR';
     const safeDate = r.receiptDate ? fmtDate(r.receiptDate) : '';
@@ -10960,6 +10971,90 @@ function previewReceipt(id) {
   } else {
     w.location.href = url;
   }
+}
+
+function renderStructuredReceiptHTML(r, url) {
+  const d = r.extractedData || {};
+  const cur = r.currency || d.currency || state.settings.currency || 'SAR';
+  const money = (n) => (n == null || isNaN(n)) ? '' : `${escapeHTML(cur)} ${Number(n).toFixed(2)}`;
+  const safeDate = r.receiptDate ? fmtDate(r.receiptDate) : (d.date ? escapeHTML(d.date) : '');
+  const safeTime = d.time ? escapeHTML(d.time) : '';
+  const photoLink = url
+    ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener" style="color:#a87035;text-decoration:none;font-size:13px;white-space:nowrap">${(r.mime||'').startsWith('image/') ? 'View photo' : 'Open file'} &rarr;</a>`
+    : '';
+  const field = (label, value) => value
+    ? `<div class="f"><div class="fl">${escapeHTML(label)}</div><div class="fv">${escapeHTML(String(value))}</div></div>`
+    : '';
+  const merchantBlock = `
+    <div class="merchant">
+      ${field('Address', d.merchant_address)}
+      ${field('Phone',   d.merchant_phone)}
+      ${field('Tax ID',  d.merchant_tax_id)}
+      ${field('Country', d.country)}
+    </div>`;
+  const metaBlock = `
+    <div class="meta-grid">
+      ${field('Receipt no', d.receipt_no)}
+      ${field('Date',       safeDate)}
+      ${field('Time',       safeTime)}
+      ${field('Currency',   cur)}
+      ${field('Payment',    d.payment_method)}
+      ${field('Card',       d.card_type)}
+    </div>`;
+  const items = Array.isArray(d.line_items) ? d.line_items : [];
+  const itemsRows = items.map(it => `
+    <tr>
+      <td class="qty">${it.qty != null ? escapeHTML(String(it.qty)) : ''}</td>
+      <td>${escapeHTML(it.description || '')}</td>
+      <td class="amt">${money(it.amount)}</td>
+    </tr>`).join('');
+  const itemsBlock = items.length ? `
+    <table class="items">
+      <thead><tr><th class="qty">Qty</th><th>Description</th><th class="amt">Amount</th></tr></thead>
+      <tbody>${itemsRows}</tbody>
+    </table>` : '';
+  const totalsBlock = `
+    <div class="totals">
+      ${d.subtotal != null ? `<div class="t"><span>Subtotal</span><span>${money(d.subtotal)}</span></div>` : ''}
+      ${d.tax      != null ? `<div class="t"><span>Tax</span><span>${money(d.tax)}</span></div>` : ''}
+      <div class="t total"><span>Total</span><span>${money(r.amount != null ? r.amount : d.amount)}</span></div>
+    </div>`;
+  return `<!doctype html><html><head><title>${escapeHTML(r.vendor||'Receipt')} &mdash; receipt</title><style>
+    body{margin:0;background:#f8fafc;font-family:system-ui,-apple-system,sans-serif;color:#1e293b;padding:32px 16px}
+    .card{max-width:760px;margin:0 auto;background:white;border-radius:12px;padding:28px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:1px solid #e2e8f0;padding-bottom:20px;margin-bottom:20px}
+    h1{margin:0 0 4px;font-size:22px;font-weight:600;color:#0f172a}
+    .cat{font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b}
+    .merchant{display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:20px}
+    .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px 24px;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;padding:16px 0;margin-bottom:20px}
+    .f{display:flex;flex-direction:column;gap:2px}
+    .fl{font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#94a3b8}
+    .fv{font-size:14px;color:#1e293b;font-weight:500}
+    table.items{width:100%;border-collapse:collapse;margin-bottom:16px}
+    table.items th,table.items td{padding:10px 8px;text-align:left;font-size:13px;border-bottom:1px solid #f1f5f9}
+    table.items th{font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;background:#f8fafc;font-weight:600}
+    table.items td.qty,table.items th.qty{width:48px;text-align:center;color:#64748b}
+    table.items td.amt,table.items th.amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .totals{display:flex;flex-direction:column;gap:6px;align-items:flex-end;padding-top:8px}
+    .t{display:flex;justify-content:space-between;gap:32px;min-width:240px;font-size:13px;color:#64748b}
+    .t span:last-child{color:#1e293b;font-variant-numeric:tabular-nums}
+    .t.total{border-top:1px solid #e2e8f0;padding-top:10px;margin-top:6px;font-size:15px;font-weight:600;color:#0f172a}
+    .t.total span{color:#0f172a}
+  </style></head><body>
+    <div class="card">
+      <div class="hdr">
+        <div>
+          <h1>${escapeHTML(r.vendor || d.vendor || 'Receipt')}</h1>
+          ${r.category ? `<div class="cat">${escapeHTML(r.category)}</div>` : ''}
+        </div>
+        ${photoLink}
+      </div>
+      ${merchantBlock}
+      ${metaBlock}
+      ${itemsBlock}
+      ${totalsBlock}
+    </div>
+  </body></html>`;
 }
 
 // Save the receipt photo / PDF to disk. Filename is vendor + date so the
