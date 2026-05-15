@@ -10735,26 +10735,47 @@ function parseReceiptText(text) {
   const out = { amount: null, date: null, vendor: null };
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // Amount — collect every number that looks like money. Prefer ones on
-  // lines mentioning "total" / "إجمالي" / "المجموع" / "grand total" / "net".
+  // Amount — picked by priority tier. Each tier scans only the lines whose
+  // role matches, ignores EXCLUDE lines entirely, and returns the largest
+  // number found. We fall through to the next tier only if the current one
+  // is empty. This was rebuilt after a real receipt mis-fired: "Gross Total
+  // 24.78" got picked over "Net Total 28.50" because the Net Total line had
+  // been mangled by OCR, but the flat "any line with 'total'" heuristic
+  // treated Gross and Net as equally relevant.
   const numRe = /(?:SAR|ر\.?س|ريال|\$|USD|AED|EUR)?\s*(\d{1,7}(?:[.,]\d{1,2})?)\s*(?:SAR|ر\.?س|ريال|\$|USD|AED|EUR)?/gi;
-  const totalKw = /(total|grand\s*total|amount|net|إجمالي|المجموع|الإجمالي)/i;
-  const candidates = [];
-  for (const line of lines) {
-    let m; numRe.lastIndex = 0;
-    while ((m = numRe.exec(line)) !== null) {
+  const numbersOn = line => {
+    const arr = []; numRe.lastIndex = 0;
+    let m; while ((m = numRe.exec(line)) !== null) {
       const n = parseFloat(m[1].replace(',', '.'));
-      if (!isNaN(n) && n > 0 && n < 1_000_000) {
-        candidates.push({ val: n, hasKeyword: totalKw.test(line) });
-      }
+      if (!isNaN(n) && n > 0 && n < 1_000_000) arr.push(n);
     }
+    return arr;
+  };
+  // Lines we should never treat as a total. Subtotals / gross totals are
+  // pre-tax; VAT is tax; change / balance / discount are not the total.
+  const EXCLUDE_RE = /\b(vat|tax|discount|change|sub\s*total|subtotal|gross\s*total|الخصم|الرصيد|الضريبة)\b/i;
+  // Tier 1: definitive final-total signal.
+  const FINAL_RE = /\b(net\s*total|grand\s*total|total\s*due|amount\s*due|net\s*amount|الإجمالي\s*النهائي)\b/i;
+  // Tier 2: payment line. When the user paid exactly the bill, this equals
+  // the total; when they overpaid, FINAL_RE above usually already caught it.
+  const PAID_RE = /\b(cash\s*reci?eved|cash\s*recived|paid|tendered|amount\s*paid|total\s*paid|المدفوع|النقدية)\b/i;
+  // Tier 3: weak total signal — plain "total" / "amount" / Arabic equivalents.
+  const WEAK_RE = /\b(total|amount|إجمالي|المجموع)\b/i;
+  const pickFromTier = re => {
+    const nums = [];
+    for (const line of lines) {
+      if (EXCLUDE_RE.test(line)) continue;
+      if (re.test(line)) nums.push(...numbersOn(line));
+    }
+    return nums.length ? Math.max(...nums) : null;
+  };
+  let amount = pickFromTier(FINAL_RE) ?? pickFromTier(PAID_RE) ?? pickFromTier(WEAK_RE);
+  // Last-ditch fallback: largest plausible number anywhere in the text.
+  if (amount == null) {
+    const all = lines.flatMap(numbersOn);
+    if (all.length) amount = Math.max(...all);
   }
-  if (candidates.length) {
-    const kw = candidates.filter(c => c.hasKeyword);
-    const pool = kw.length ? kw : candidates;
-    const best = pool.reduce((b, c) => c.val > b.val ? c : b, pool[0]);
-    out.amount = best.val.toFixed(2);
-  }
+  if (amount != null) out.amount = amount.toFixed(2);
 
   // Date — try common Saudi-receipt formats. First plausible hit wins.
   const dateRes = [
