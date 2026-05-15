@@ -1629,6 +1629,7 @@ function renderShell(routeContent) {
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
     { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company' },
+    { key:'spend_report', icon:'report',    label:'Spend report',    show:hasRole('admin','accounting'), group:'company' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
   ];
@@ -4732,6 +4733,420 @@ function renderAnalytics() {
         </div>`;
     })()}
   `;
+}
+
+/* -------------------- SPEND REPORT (admin + accounting) -------------------- */
+let spendPeriod = 'thisQuarter'; // thisMonth | lastMonth | thisQuarter | lastQuarter | thisYear | lastYear
+
+function spendPeriodRange(period) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const pad = n => String(n).padStart(2,'0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const monthName = d => d.toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  // Saudi VAT quarters: Q1 Jan-Mar, Q2 Apr-Jun, Q3 Jul-Sep, Q4 Oct-Dec.
+  const qStart = (yr, q) => new Date(yr, q*3, 1);
+  const qEnd   = (yr, q) => new Date(yr, q*3+3, 0);
+  const qLabel = (yr, q) => `Q${q+1} ${yr}`;
+  if (period === 'lastMonth') {
+    const start = new Date(y, m-1, 1), end = new Date(y, m, 0);
+    const pStart = new Date(y, m-2, 1), pEnd = new Date(y, m-1, 0);
+    return { fromDate: iso(start), toDate: iso(end), prevFromDate: iso(pStart), prevToDate: iso(pEnd), label: monthName(start), prevLabel: monthName(pStart) };
+  }
+  if (period === 'thisQuarter') {
+    const q = Math.floor(m / 3);
+    const prevQ = q === 0 ? 3 : q - 1;
+    const prevY = q === 0 ? y - 1 : y;
+    return { fromDate: iso(qStart(y, q)), toDate: iso(qEnd(y, q)), prevFromDate: iso(qStart(prevY, prevQ)), prevToDate: iso(qEnd(prevY, prevQ)), label: qLabel(y, q), prevLabel: qLabel(prevY, prevQ) };
+  }
+  if (period === 'lastQuarter') {
+    const curQ = Math.floor(m / 3);
+    const q = curQ === 0 ? 3 : curQ - 1;
+    const yr = curQ === 0 ? y - 1 : y;
+    const prevQ = q === 0 ? 3 : q - 1;
+    const prevY = q === 0 ? yr - 1 : yr;
+    return { fromDate: iso(qStart(yr, q)), toDate: iso(qEnd(yr, q)), prevFromDate: iso(qStart(prevY, prevQ)), prevToDate: iso(qEnd(prevY, prevQ)), label: qLabel(yr, q), prevLabel: qLabel(prevY, prevQ) };
+  }
+  if (period === 'thisYear') {
+    const start = new Date(y, 0, 1);
+    const pStart = new Date(y-1, 0, 1);
+    const pEnd = new Date(y-1, m, now.getDate());
+    return { fromDate: iso(start), toDate: iso(now), prevFromDate: iso(pStart), prevToDate: iso(pEnd), label: y+' YTD', prevLabel: (y-1)+' (same period)' };
+  }
+  if (period === 'lastYear') {
+    return { fromDate: iso(new Date(y-1, 0, 1)), toDate: iso(new Date(y-1, 11, 31)), prevFromDate: iso(new Date(y-2, 0, 1)), prevToDate: iso(new Date(y-2, 11, 31)), label: String(y-1), prevLabel: String(y-2) };
+  }
+  const start = new Date(y, m, 1), end = new Date(y, m+1, 0);
+  const pStart = new Date(y, m-1, 1), pEnd = new Date(y, m, 0);
+  return { fromDate: iso(start), toDate: iso(end), prevFromDate: iso(pStart), prevToDate: iso(pEnd), label: monthName(start), prevLabel: monthName(pStart) };
+}
+
+// Pull VAT / subtotal from extracted_data (Claude OCR). Falls back to amount
+// when the receipt was Tesseract-parsed or manually entered without VAT.
+function receiptVat(r) {
+  const t = r.extractedData?.tax;
+  return typeof t === 'number' && t > 0 ? t : 0;
+}
+function receiptSubtotal(r) {
+  const s = r.extractedData?.subtotal;
+  if (typeof s === 'number') return s;
+  return Math.max(0, (Number(r.amount)||0) - receiptVat(r));
+}
+// ZATCA input tax credit can only be claimed on receipts that are proper tax
+// invoices — i.e. the vendor's VAT number is on them.
+function receiptHasTaxInvoice(r) {
+  return Boolean(r.extractedData?.merchant_tax_id);
+}
+
+function renderSpendReport() {
+  const period = spendPeriodRange(spendPeriod);
+  const inCur  = d => d && d >= period.fromDate     && d <= period.toDate;
+  const inPrev = d => d && d >= period.prevFromDate && d <= period.prevToDate;
+  const cur = state.settings.currency || 'SAR';
+  const receipts = state.receipts || [];
+  const recCur  = receipts.filter(r => inCur(r.receiptDate||''));
+  const recPrev = receipts.filter(r => inPrev(r.receiptDate||''));
+
+  const total      = recCur.reduce((s,r) => s + (Number(r.amount)||0), 0);
+  const totalPrev  = recPrev.reduce((s,r) => s + (Number(r.amount)||0), 0);
+  const vat        = recCur.reduce((s,r) => s + receiptVat(r), 0);
+  const vatPrev    = recPrev.reduce((s,r) => s + receiptVat(r), 0);
+  const claimable  = recCur.filter(receiptHasTaxInvoice).reduce((s,r) => s + receiptVat(r), 0);
+  const taxInvoiceCount = recCur.filter(receiptHasTaxInvoice).length;
+  const withoutTaxInvoice = recCur.length - taxInvoiceCount;
+  const avg = recCur.length ? total / recCur.length : 0;
+
+  const byCat = {};
+  recCur.forEach(r => {
+    const c = r.category || 'other';
+    if (!byCat[c]) byCat[c] = { count:0, subtotal:0, vat:0, total:0 };
+    byCat[c].count++;
+    byCat[c].subtotal += receiptSubtotal(r);
+    byCat[c].vat += receiptVat(r);
+    byCat[c].total += Number(r.amount)||0;
+  });
+  const sortedCats = Object.entries(byCat).sort((a,b) => b[1].total - a[1].total);
+  const maxCatTotal = sortedCats[0]?.[1].total || 1;
+
+  const byVendor = {};
+  recCur.forEach(r => {
+    const display = (r.vendor||'(unknown)').trim();
+    const lc = display.toLowerCase();
+    if (!byVendor[lc]) byVendor[lc] = { display, count:0, total:0 };
+    byVendor[lc].count++;
+    byVendor[lc].total += Number(r.amount)||0;
+  });
+  const topVendors = Object.values(byVendor).sort((a,b) => b.total - a.total).slice(0, 10);
+
+  // 12-month trend independent of the period selector — keeps the backdrop
+  // stable while the KPI numbers track whichever period is selected.
+  const sparkMonths = lastNMonths(12);
+  const sparkValues = sparkMonths.map(ym =>
+    receipts.filter(r => (r.receiptDate||'').startsWith(ym))
+            .reduce((s,r) => s + (Number(r.amount)||0), 0)
+  );
+  const sparkLabels = sparkMonths.map(ym => {
+    const [yy, mm] = ym.split('-');
+    return new Date(Number(yy), Number(mm)-1, 1).toLocaleDateString(undefined, {month:'short'});
+  });
+
+  const pctDelta = (a, b) => {
+    if (b === 0) return a === 0 ? '0%' : '—';
+    const p = ((a - b) / b) * 100;
+    return (p>=0?'+':'') + p.toFixed(0) + '%';
+  };
+  const deltaColor = (a, b, lowerBetter=false) => {
+    if (a === b) return 'text-slate-500';
+    const better = lowerBetter ? a < b : a > b;
+    return better ? 'text-emerald-600' : 'text-rose-600';
+  };
+  const trendSpark = (values, color) => {
+    const w = 600, h = 60, padY = 4;
+    const max = Math.max(...values, 1);
+    const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+    const pts = values.map((v, i) => {
+      const x = i * stepX;
+      const yC = padY + (h - 2*padY) - (v / max) * (h - 2*padY);
+      return `${x.toFixed(1)},${yC.toFixed(1)}`;
+    });
+    return `<svg viewBox="0 0 ${w} ${h}" class="block w-full mt-3" preserveAspectRatio="none" aria-label="12-month spend trend">
+      <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+  };
+
+  const periods = [
+    ['thisMonth','This month'], ['lastMonth','Last month'],
+    ['thisQuarter','This quarter'], ['lastQuarter','Last quarter'],
+    ['thisYear','This year'], ['lastYear','Last year'],
+  ];
+
+  return `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Spend report</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(period.label)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Comparing against ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1 flex-wrap">
+          ${periods.map(([k,l]) => `
+            <button onclick="spendPeriod='${k}'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${spendPeriod===k?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">${escapeHTML(l)}</button>
+          `).join('')}
+        </div>
+        ${recCur.length > 0 ? `<button onclick="printSpendReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Print report</button>` : ''}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Total spend</div>
+        <div class="text-xl font-bold text-slate-900">${escapeHTML(cur)} ${fmtMoney(total)}</div>
+        <div class="text-xs ${deltaColor(total, totalPrev, true)} mt-0.5">${pctDelta(total, totalPrev)} vs ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Total VAT</div>
+        <div class="text-xl font-bold text-slate-900">${escapeHTML(cur)} ${fmtMoney(vat)}</div>
+        <div class="text-xs ${deltaColor(vat, vatPrev)} mt-0.5">${pctDelta(vat, vatPrev)} vs ${escapeHTML(period.prevLabel)}</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Receipts</div>
+        <div class="text-xl font-bold text-slate-900">${recCur.length}</div>
+        <div class="text-xs text-slate-500 mt-0.5">${taxInvoiceCount} tax invoice${taxInvoiceCount===1?'':'s'}${withoutTaxInvoice>0?' · '+withoutTaxInvoice+' without':''}</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Avg per receipt</div>
+        <div class="text-xl font-bold text-slate-900">${escapeHTML(cur)} ${fmtMoney(avg)}</div>
+        <div class="text-xs text-slate-500 mt-0.5">${recCur.length ? 'Across all categories' : 'No receipts yet'}</div>
+      </div>
+    </div>
+
+    ${claimable > 0 ? `
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6 flex items-start gap-3">
+        ${icon('check','w-5 h-5 text-emerald-700')}
+        <div class="flex-1">
+          <div class="text-sm font-semibold text-emerald-900">Claimable input VAT: ${escapeHTML(cur)} ${fmtMoney(claimable)}</div>
+          <div class="text-xs text-emerald-800 mt-1">From ${taxInvoiceCount} receipt${taxInvoiceCount===1?'':'s'} with a valid merchant tax ID — the input tax credit you can claim on your ZATCA quarterly return.${withoutTaxInvoice>0 ? ' '+withoutTaxInvoice+' receipt'+(withoutTaxInvoice===1?'':'s')+' without a tax ID '+(withoutTaxInvoice===1?'is':'are')+' not claimable.' : ''}</div>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="bg-white border border-slate-200 rounded-xl p-5 mb-6">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-display text-base font-semibold text-slate-900">Spend by category</h3>
+        <div class="text-xs text-slate-500">${sortedCats.length} ${sortedCats.length===1?'category':'categories'}</div>
+      </div>
+      ${sortedCats.length === 0 ? `
+        <div class="text-sm text-slate-500 py-6 text-center">No receipts in this period.</div>
+      ` : `
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
+              <th class="py-2">Category</th>
+              <th class="py-2 text-right">Receipts</th>
+              <th class="py-2 text-right">Subtotal</th>
+              <th class="py-2 text-right">VAT</th>
+              <th class="py-2 text-right">Total</th>
+              <th class="py-2 w-24">% of spend</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sortedCats.map(([k, v]) => {
+              const cat = RECEIPT_CATEGORIES[k] || RECEIPT_CATEGORIES.other;
+              const pct = total > 0 ? Math.round((v.total / total) * 100) : 0;
+              const barW = Math.max(2, (v.total / maxCatTotal) * 100);
+              return `
+                <tr class="border-b border-slate-100 last:border-b-0">
+                  <td class="py-2.5">${escapeHTML(cat.label)}</td>
+                  <td class="py-2.5 text-right tabular-nums">${v.count}</td>
+                  <td class="py-2.5 text-right tabular-nums text-slate-600">${fmtMoney(v.subtotal)}</td>
+                  <td class="py-2.5 text-right tabular-nums text-slate-600">${fmtMoney(v.vat)}</td>
+                  <td class="py-2.5 text-right tabular-nums font-semibold">${fmtMoney(v.total)}</td>
+                  <td class="py-2.5">
+                    <div class="flex items-center gap-2">
+                      <div class="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-brand-600 rounded-full" style="width:${barW.toFixed(1)}%"></div></div>
+                      <div class="text-xs text-slate-500 w-8 text-right tabular-nums">${pct}%</div>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="bg-white border border-slate-200 rounded-xl p-5">
+        <h3 class="font-display text-base font-semibold text-slate-900 mb-4">Top vendors</h3>
+        ${topVendors.length === 0 ? `
+          <div class="text-sm text-slate-500 py-6 text-center">No vendors in this period.</div>
+        ` : `
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
+                <th class="py-2">Vendor</th>
+                <th class="py-2 text-right">Receipts</th>
+                <th class="py-2 text-right">Total</th>
+                <th class="py-2 text-right w-14">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${topVendors.map(v => {
+                const pct = total > 0 ? Math.round((v.total / total) * 100) : 0;
+                return `
+                  <tr class="border-b border-slate-100 last:border-b-0">
+                    <td class="py-2.5 truncate max-w-xs">${escapeHTML(v.display)}</td>
+                    <td class="py-2.5 text-right tabular-nums">${v.count}</td>
+                    <td class="py-2.5 text-right tabular-nums font-semibold">${fmtMoney(v.total)}</td>
+                    <td class="py-2.5 text-right tabular-nums text-slate-500">${pct}%</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded-xl p-5">
+        <h3 class="font-display text-base font-semibold text-slate-900">Last 12 months</h3>
+        <div class="text-xs text-slate-500 mt-1">Monthly spend trend across all categories</div>
+        ${trendSpark(sparkValues, '#a87035')}
+        <div class="flex justify-between text-[10px] text-slate-400 mt-2 px-1">
+          ${sparkLabels.map(l => `<span>${escapeHTML(l)}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function printSpendReport() {
+  const period = spendPeriodRange(spendPeriod);
+  const cur = state.settings.currency || 'SAR';
+  const inCur = d => d && d >= period.fromDate && d <= period.toDate;
+  const receipts = (state.receipts || []).filter(r => inCur(r.receiptDate||''));
+  if (receipts.length === 0) { toast('No receipts in this period — pick another or add scans first.', 'error'); return; }
+
+  const total = receipts.reduce((s,r) => s + (Number(r.amount)||0), 0);
+  const vat = receipts.reduce((s,r) => s + receiptVat(r), 0);
+  const subtotal = receipts.reduce((s,r) => s + receiptSubtotal(r), 0);
+  const taxInvoiceCount = receipts.filter(receiptHasTaxInvoice).length;
+  const claimable = receipts.filter(receiptHasTaxInvoice).reduce((s,r) => s + receiptVat(r), 0);
+
+  const byCat = {};
+  receipts.forEach(r => {
+    const c = r.category || 'other';
+    if (!byCat[c]) byCat[c] = { count:0, subtotal:0, vat:0, total:0 };
+    byCat[c].count++;
+    byCat[c].subtotal += receiptSubtotal(r);
+    byCat[c].vat += receiptVat(r);
+    byCat[c].total += Number(r.amount)||0;
+  });
+  const sortedCats = Object.entries(byCat).sort((a,b) => b[1].total - a[1].total);
+
+  const byVendor = {};
+  receipts.forEach(r => {
+    const display = (r.vendor||'(unknown)').trim();
+    const lc = display.toLowerCase();
+    if (!byVendor[lc]) byVendor[lc] = { display, count:0, total:0, vat:0 };
+    byVendor[lc].count++;
+    byVendor[lc].total += Number(r.amount)||0;
+    byVendor[lc].vat += receiptVat(r);
+  });
+  const allVendors = Object.values(byVendor).sort((a,b) => b.total - a.total);
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Spend Report — ${escapeHTML(state.settings.companyName||'')}</title>
+  <style>
+    ${LETTERHEAD_CSS}
+    .page { max-width:900px; }
+    .summary-row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:0 0 22px; }
+    .summary-row .stat { border:1px solid #e5e7eb; padding:14px 16px; }
+    .summary-row .lbl { font-size:10px; color:#6b7280; text-transform:uppercase; letter-spacing:0.08em; font-weight:600; }
+    .summary-row .val { font-size:18px; font-weight:700; margin-top:6px; color:#0f172a; font-variant-numeric: tabular-nums; }
+    .summary-row .sub { font-size:10px; color:#6b7280; margin-top:4px; }
+    .claimable-callout { padding:14px 18px; background:#ecfdf5; border:1px solid #a7f3d0; margin:0 0 22px; }
+    .claimable-callout .lbl { font-size:11px; color:#065f46; text-transform:uppercase; letter-spacing:0.08em; font-weight:700; }
+    .claimable-callout .val { font-size:22px; font-weight:800; color:#065f46; margin-top:4px; font-variant-numeric: tabular-nums; }
+    .claimable-callout .note { font-size:11px; color:#047857; margin-top:6px; }
+    .section { margin: 0 0 22px; page-break-inside: avoid; }
+    .section h3 { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; padding:10px 12px; background:#0f172a; color:#fff; margin:0; }
+    table.dt { width:100%; border-collapse:collapse; font-size:12px; }
+    table.dt th { text-align:left; padding:8px 10px; background:#fafafa; color:#0f172a; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; border-bottom:1px solid #e5e7eb; }
+    table.dt td { padding:8px 10px; border-bottom:1px solid #f1f5f9; }
+    table.dt td.r, table.dt th.r { text-align:right; font-variant-numeric: tabular-nums; }
+    table.dt tfoot td { font-weight:700; background:#fafafa; }
+    .grand-total { display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding:14px 18px; background:#0f172a; color:#fff; }
+    .grand-total .lbl { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; }
+    .grand-total .val { font-size:22px; font-weight:800; font-variant-numeric: tabular-nums; }
+    @media print { .actions { display:none; } }
+  </style></head><body>
+  <div class="actions" style="margin:18px;"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML('SPEND REPORT.')}
+    <div class="doc-date">Period: ${escapeHTML(period.label)} (${escapeHTML(period.fromDate)} → ${escapeHTML(period.toDate)})</div>
+    <p class="doc-intro">Summary of receipts for the period above. Issued by the Accounting Department for ZATCA filing and internal review.</p>
+
+    <div class="summary-row">
+      <div class="stat"><div class="lbl">Receipts</div><div class="val">${receipts.length}</div><div class="sub">${taxInvoiceCount} with tax invoice</div></div>
+      <div class="stat"><div class="lbl">Subtotal (${escapeHTML(cur)})</div><div class="val">${fmtMoney(subtotal)}</div></div>
+      <div class="stat"><div class="lbl">VAT (${escapeHTML(cur)})</div><div class="val">${fmtMoney(vat)}</div></div>
+      <div class="stat"><div class="lbl">Total (${escapeHTML(cur)})</div><div class="val">${fmtMoney(total)}</div></div>
+    </div>
+
+    ${claimable > 0 ? `
+      <div class="claimable-callout">
+        <div class="lbl">Claimable input VAT</div>
+        <div class="val">${escapeHTML(cur)} ${fmtMoney(claimable)}</div>
+        <div class="note">From ${taxInvoiceCount} receipt${taxInvoiceCount===1?'':'s'} with a valid merchant tax ID — the input tax credit you can claim on your ZATCA quarterly return.</div>
+      </div>
+    ` : ''}
+
+    <div class="section">
+      <h3>Spend by category</h3>
+      <table class="dt">
+        <thead><tr><th>Category</th><th class="r">Receipts</th><th class="r">Subtotal</th><th class="r">VAT</th><th class="r">Total</th></tr></thead>
+        <tbody>
+          ${sortedCats.map(([k, v]) => {
+            const cat = RECEIPT_CATEGORIES[k] || RECEIPT_CATEGORIES.other;
+            return `<tr>
+              <td>${escapeHTML(cat.label)}</td>
+              <td class="r">${v.count}</td>
+              <td class="r">${fmtMoney(v.subtotal)}</td>
+              <td class="r">${fmtMoney(v.vat)}</td>
+              <td class="r">${fmtMoney(v.total)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr><td>Total</td><td class="r">${receipts.length}</td><td class="r">${fmtMoney(subtotal)}</td><td class="r">${fmtMoney(vat)}</td><td class="r">${fmtMoney(total)}</td></tr></tfoot>
+      </table>
+    </div>
+
+    <div class="section">
+      <h3>Vendors</h3>
+      <table class="dt">
+        <thead><tr><th>Vendor</th><th class="r">Receipts</th><th class="r">VAT</th><th class="r">Total</th></tr></thead>
+        <tbody>
+          ${allVendors.map(v => `<tr>
+            <td>${escapeHTML(v.display)}</td>
+            <td class="r">${v.count}</td>
+            <td class="r">${fmtMoney(v.vat)}</td>
+            <td class="r">${fmtMoney(v.total)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grand-total">
+      <div class="lbl">Total spend</div>
+      <div class="val">${escapeHTML(cur)} ${fmtMoney(total)}</div>
+    </div>
+  </div>
+  </body></html>`;
+
+  const w = window.open();
+  if (!w) { toast('Popup blocked — allow popups to print.', 'error'); return; }
+  w.document.write(html);
+  w.document.close();
 }
 
 function renderReports() {
@@ -11647,6 +12062,7 @@ function render() {
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
+    case 'spend_report': content = hasRole('admin','accounting') ? renderSpendReport() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
     case 'account':      content = renderAccount(); break;
