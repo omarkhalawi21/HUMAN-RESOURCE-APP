@@ -1862,6 +1862,16 @@ ALTER TABLE public.receipts
   ADD COLUMN IF NOT EXISTS ocr_text text;
 
 -- =============================================================
+-- 31. RECEIPTS — structured extraction blob (jsonb)
+--     Holds merchant address/phone/tax id, receipt no, time,
+--     subtotal, tax, payment method, card type, and line items
+--     for the rich preview. Top-level columns still own the
+--     searchable fields. NULL on legacy / Tesseract receipts.
+-- =============================================================
+ALTER TABLE public.receipts
+  ADD COLUMN IF NOT EXISTS extracted_data jsonb;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

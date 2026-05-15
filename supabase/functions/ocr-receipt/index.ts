@@ -20,24 +20,38 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-const EXTRACTION_PROMPT = `You are a receipt OCR engine for a coffee shop's expense tracker.
+const EXTRACTION_PROMPT = `You are a receipt OCR engine for a coffee shop's expense tracker. Read the receipt and extract structured fields.
 
-Extract the following fields and return ONLY a JSON object, no markdown fences, no commentary:
+Return ONLY a JSON object, no markdown fences, no commentary, no leading or trailing text:
 
 {
-  "vendor": string | null,        // merchant / store / restaurant name
-  "date":   string | null,        // YYYY-MM-DD; convert from any format you see
-  "amount": number | null,        // the FINAL TOTAL the customer paid (net total / grand total / total due / cash paid). NEVER subtotal, gross-before-discount, VAT-only, or change-due.
-  "currency": string,             // 3-letter ISO code; default "SAR" for Arabic receipts, "USD" for $ with no other hint
-  "raw_text": string              // every readable line of text on the receipt, joined with \\n
+  "vendor": string | null,              // merchant / store / restaurant name
+  "merchant_address": string | null,
+  "merchant_phone": string | null,
+  "merchant_tax_id": string | null,     // VAT number, CR number, GST number, etc
+  "country": string | null,             // ISO-2 if you can tell ("SA", "US", "SG"), else null
+  "receipt_no": string | null,          // invoice / receipt / order number
+  "date": string | null,                // YYYY-MM-DD; convert from any format you see
+  "time": string | null,                // HH:MM 24-hour; null if no time on receipt
+  "currency": string,                   // 3-letter ISO code; default "SAR" for Arabic receipts, "USD" for $ with no other hint
+  "subtotal": number | null,            // pre-tax / pre-VAT total if listed
+  "tax": number | null,                 // VAT / GST / sales tax amount if listed
+  "amount": number | null,              // the FINAL TOTAL the customer paid (net total / grand total / total due). NEVER subtotal, gross-before-discount, VAT-only, or change-due.
+  "payment_method": string | null,      // "cash", "credit_card", "debit_card", "mada", "apple_pay", null if unclear
+  "card_type": string | null,           // "visa", "mastercard", "amex", "mada", null
+  "line_items": [                       // each purchased item; [] if none readable
+    { "qty": number | null, "description": string, "amount": number | null }
+  ],
+  "raw_text": string                    // every readable line of text on the receipt, joined with \\n
 }
 
 Rules:
-- The receipt may be bilingual (Arabic + English). Read both.
-- If the receipt shows subtotal, VAT, and total separately, pick the line clearly labelled "Total" / "Net Total" / "Grand Total" / "Total Due" / "المجموع".
-- If the receipt shows "Cash Received" or "Paid" and a "Change Due", the AMOUNT is (Cash Received - Change Due), or equivalently the line labelled Total — never the cash-received figure itself if a change-due is present.
-- Numbers may use Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩). Convert to standard digits.
+- The receipt may be bilingual (Arabic + English). Read both. Prefer English names where the receipt is bilingual.
+- "amount" is the line clearly labelled "Total" / "Net Total" / "Grand Total" / "Total Due" / "المجموع" — NOT subtotal, NOT gross-before-discount, NOT VAT-only, NOT cash-received-when-a-change-due-is-shown.
+- Numbers may use Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩). Convert all to standard ASCII digits.
+- Amounts are numbers, not strings: 28.50 not "28.50".
 - If a field is genuinely unreadable, use null. Don't guess.
+- "line_items" is an array — empty if you can't read individual lines, but include it.
 - Return ONLY the JSON object, starting with { and ending with }.`;
 
 Deno.serve(async (req) => {
@@ -91,17 +105,43 @@ Deno.serve(async (req) => {
       return json({ error: "Model returned non-JSON", raw }, 502);
     }
 
-    // Coerce amount to a number if the model handed back a string
-    if (parsed.amount != null && typeof parsed.amount === "string") {
-      const n = Number(String(parsed.amount).replace(/[^\d.\-]/g, ""));
-      parsed.amount = Number.isFinite(n) ? n : null;
-    }
+    // Coerce numeric fields to numbers when the model handed back strings
+    const toNumber = (v: unknown): number | null => {
+      if (v == null) return null;
+      if (typeof v === "number") return Number.isFinite(v) ? v : null;
+      if (typeof v === "string") {
+        const n = Number(v.replace(/[^\d.\-]/g, ""));
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+    const lineItems: Array<{ qty: number | null; description: string; amount: number | null }> =
+      Array.isArray(parsed.line_items)
+        ? (parsed.line_items as Array<Record<string, unknown>>)
+            .map((row) => ({
+              qty: toNumber(row?.qty),
+              description: typeof row?.description === "string" ? row.description : "",
+              amount: toNumber(row?.amount),
+            }))
+            .filter((row) => row.description || row.amount != null)
+        : [];
 
     return json({
-      vendor: parsed.vendor ?? null,
-      date: parsed.date ?? null,
-      amount: typeof parsed.amount === "number" ? parsed.amount : null,
+      vendor: typeof parsed.vendor === "string" ? parsed.vendor : null,
+      merchant_address: typeof parsed.merchant_address === "string" ? parsed.merchant_address : null,
+      merchant_phone: typeof parsed.merchant_phone === "string" ? parsed.merchant_phone : null,
+      merchant_tax_id: typeof parsed.merchant_tax_id === "string" ? parsed.merchant_tax_id : null,
+      country: typeof parsed.country === "string" ? parsed.country : null,
+      receipt_no: typeof parsed.receipt_no === "string" ? parsed.receipt_no : null,
+      date: typeof parsed.date === "string" ? parsed.date : null,
+      time: typeof parsed.time === "string" ? parsed.time : null,
       currency: typeof parsed.currency === "string" ? parsed.currency : "SAR",
+      subtotal: toNumber(parsed.subtotal),
+      tax: toNumber(parsed.tax),
+      amount: toNumber(parsed.amount),
+      payment_method: typeof parsed.payment_method === "string" ? parsed.payment_method : null,
+      card_type: typeof parsed.card_type === "string" ? parsed.card_type : null,
+      line_items: lineItems,
       raw_text: typeof parsed.raw_text === "string" ? parsed.raw_text : "",
       usage: response.usage,
     });
