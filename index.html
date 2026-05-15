@@ -1625,11 +1625,11 @@ function renderShell(routeContent) {
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
-    { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company' },
-    { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company' },
-    { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company' },
-    { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company' },
-    { key:'spend_report', icon:'report',    label:'Spend report',    show:hasRole('admin','accounting'), group:'company' },
+    { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
+    { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
+    { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
+    { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company', parent:'reports' },
+    { key:'spend_report', icon:'report',    label:'Spend report',    show:hasRole('admin','accounting'), group:'company', parent:'reports' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
   ];
@@ -1651,14 +1651,14 @@ function renderShell(routeContent) {
             people:  state.settings.lang==='ar' ? 'شؤون الموظفين' : 'People Care',
             company: state.settings.lang==='ar' ? 'الشركة' : 'Company',
           };
-          let html = '';
-          let lastGroup = null;
-          visible.forEach(n => {
-            if (n.group !== lastGroup) {
-              if (lastGroup !== null) html += '<div class="h-px bg-slate-100 my-2"></div>';
-              html += `<div class="px-3 pt-1 pb-1 text-[10px] uppercase tracking-[0.18em] text-slate-400 font-semibold">${escapeHTML(groupLabels[n.group]||'')}</div>`;
-              lastGroup = n.group;
-            }
+          // Collapsible parent buckets in the company group. Keeps related
+          // items (Maintenance + Assets, Reports + Analytics + Spend report)
+          // behind one row so the sidebar stays scannable.
+          const subgroupMeta = {
+            maintenance: { label: state.settings.lang==='ar' ? 'الصيانة' : 'Maintenance', icon: 'wrench' },
+            reports:     { label: state.settings.lang==='ar' ? 'التقارير' : 'Reports',    icon: 'report' },
+          };
+          const renderItem = n => {
             // Inline alert-count chips on certain nav items
             let chip = '';
             if (n.key === 'warnings' && admin) {
@@ -1676,10 +1676,49 @@ function renderShell(routeContent) {
               },0);
               if (exp) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">${exp}</span>`;
             }
-            html += `<a href="#/${n.key}" onclick="toggleSidebar(false)" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
-              <span class="icon w-5 h-5 text-slate-400">${ICONS[n.icon]}</span>
+            // Children render without their icon — the parent row carries it,
+            // and the indent + smaller padding tells you it's a sub-item.
+            const inSubgroup = !!n.parent;
+            return `<a href="#/${n.key}" onclick="toggleSidebar(false)" class="nav-item flex items-center gap-3 ${inSubgroup?'pl-10 pr-3 py-2':'px-3 py-2.5'} rounded-lg text-sm text-slate-600 hover:bg-slate-50 ${route===n.key?'active':''}">
+              ${inSubgroup ? '' : `<span class="icon w-5 h-5 text-slate-400">${ICONS[n.icon]}</span>`}
               <span>${escapeHTML(n.label)}</span>${chip}
             </a>`;
+          };
+          // Walk visible items, collapsing runs of items with the same parent
+          // into a single { kind:'subgroup' } entry. Items without a parent
+          // stay as { kind:'single' }.
+          const groupsSeq = {};
+          visible.forEach(n => {
+            if (!groupsSeq[n.group]) groupsSeq[n.group] = [];
+            const seq = groupsSeq[n.group];
+            if (n.parent && subgroupMeta[n.parent]) {
+              const last = seq[seq.length - 1];
+              if (last && last.kind === 'subgroup' && last.key === n.parent) last.items.push(n);
+              else seq.push({ kind:'subgroup', key:n.parent, items:[n] });
+            } else {
+              seq.push({ kind:'single', item:n });
+            }
+          });
+          let html = '';
+          ['main','people','company'].forEach((g, idx) => {
+            const seq = groupsSeq[g];
+            if (!seq || !seq.length) return;
+            if (idx > 0) html += '<div class="h-px bg-slate-100 my-2"></div>';
+            html += `<div class="px-3 pt-1 pb-1 text-[10px] uppercase tracking-[0.18em] text-slate-400 font-semibold">${escapeHTML(groupLabels[g]||'')}</div>`;
+            seq.forEach(entry => {
+              if (entry.kind === 'single') { html += renderItem(entry.item); return; }
+              const meta = subgroupMeta[entry.key];
+              // Auto-open when the active route is inside this subgroup; otherwise honor the saved preference.
+              const activeInside = entry.items.some(it => it.key === route);
+              const isOpen = activeInside || isSidebarSubgroupOpen(entry.key);
+              const chev = isOpen ? '▾' : '▸';
+              html += `<button type="button" onclick="toggleSidebarSubgroup('${entry.key}')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 text-left">
+                <span class="icon w-5 h-5 text-slate-400">${ICONS[meta.icon]}</span>
+                <span>${escapeHTML(meta.label)}</span>
+                <span class="ml-auto text-slate-400 text-xs">${chev}</span>
+              </button>`;
+              if (isOpen) html += `<div class="space-y-1">${entry.items.map(renderItem).join('')}</div>`;
+            });
           });
           return html;
         })()}
@@ -1750,6 +1789,20 @@ function renderShell(routeContent) {
 function toggleSidebar(force) {
   const open = typeof force === 'boolean' ? force : !document.body.classList.contains('sidebar-open');
   document.body.classList.toggle('sidebar-open', open);
+}
+// Collapsible sidebar subgroups (Maintenance, Reports). State persists across
+// sessions via localStorage. Subgroups containing the active route are forced
+// open elsewhere — this only governs the user-toggled preference.
+function readSidebarSubgroups() {
+  try { return JSON.parse(localStorage.getItem('sidebar_subgroups') || '{}'); }
+  catch { return {}; }
+}
+function isSidebarSubgroupOpen(key) { return readSidebarSubgroups()[key] === true; }
+function toggleSidebarSubgroup(key) {
+  const st = readSidebarSubgroups();
+  st[key] = !st[key];
+  try { localStorage.setItem('sidebar_subgroups', JSON.stringify(st)); } catch {}
+  render();
 }
 function globalSearch(q) {
   // simple — only highlights employees route results
