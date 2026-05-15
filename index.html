@@ -1341,7 +1341,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1643,7 +1643,7 @@ function renderShell(routeContent) {
           <div class="text-sm font-bold text-slate-900 leading-tight truncate">${escapeHTML(state.settings.companyName)}</div>
         </div>
       </div>
-      <nav class="flex-1 overflow-y-auto p-3 space-y-1">
+      <nav id="sidebar-nav" class="flex-1 overflow-y-auto p-3 space-y-1">
         ${(() => {
           const visible = navItems.filter(n=>n.show);
           const groupLabels = {
@@ -12121,7 +12121,12 @@ function render() {
     case 'account':      content = renderAccount(); break;
     default:             content = renderDashboard();
   }
+  // Preserve sidebar scroll across re-renders — innerHTML replaces the whole
+  // shell, which would otherwise reset the nav back to the top on every click.
+  const prevSidebarScroll = document.getElementById('sidebar-nav')?.scrollTop || 0;
   app.innerHTML = renderShell(content);
+  const newNav = document.getElementById('sidebar-nav');
+  if (newNav && prevSidebarScroll) newNav.scrollTop = prevSidebarScroll;
 }
 
 /* -------------------- INIT -------------------- */
