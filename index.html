@@ -10709,23 +10709,25 @@ async function runReceiptOCR() {
       imageDataUrl = await pdfFirstPageToImageDataUrl(_receiptFile.dataUrl);
     }
 
-    // Try Claude Vision via Edge Function first — handles bilingual receipts
-    // natively and returns structured {vendor, date, amount, currency, raw_text}.
+    // Try Google Cloud Vision via Edge Function first — far better OCR than
+    // Tesseract on phone photos and bilingual (en+ar) receipts. Returns raw
+    // text; we still run parseReceiptText() on it for vendor/date/amount.
     // Falls through to Tesseract if the function isn't deployed or errors.
-    if (status) status.innerHTML = '<span class="text-slate-500">Scanning with AI…</span>';
-    let aiResult = null;
+    if (status) status.innerHTML = '<span class="text-slate-500">Scanning…</span>';
+    let cloudText = null;
     try {
-      aiResult = await callClaudeReceiptOCR(imageDataUrl);
+      cloudText = await callCloudReceiptOCR(imageDataUrl);
     } catch (e) {
-      console.warn('Claude OCR unavailable, falling back to Tesseract:', e);
+      console.warn('Cloud OCR unavailable, falling back to Tesseract:', e);
     }
-    if (aiResult && (aiResult.raw_text || aiResult.amount != null || aiResult.vendor || aiResult.date)) {
+    if (cloudText) {
+      const parsed = parseReceiptText(cloudText);
       applyOcrResult({
-        vendor: aiResult.vendor || null,
-        date: aiResult.date || null,
-        amount: typeof aiResult.amount === 'number' ? aiResult.amount : null,
-        text: aiResult.raw_text || '',
-        engine: 'claude',
+        vendor: parsed.vendor,
+        date: parsed.date,
+        amount: parsed.amount,
+        text: cloudText,
+        engine: 'cloud',
         els: { status, dump, details },
       });
       return;
@@ -10779,9 +10781,10 @@ async function runReceiptOCR() {
   }
 }
 
-// Calls the ocr-receipt Supabase Edge Function. Throws if the function is
-// not deployed (the caller catches and falls back to Tesseract).
-async function callClaudeReceiptOCR(imageDataUrl) {
+// Calls the ocr-receipt Supabase Edge Function (Google Cloud Vision behind it).
+// Returns the OCR'd text as a string, or throws if the function is not
+// deployed (the caller catches and falls back to Tesseract).
+async function callCloudReceiptOCR(imageDataUrl) {
   const m = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!m) throw new Error('Bad image data URL');
   const [, mimeType, imageBase64] = m;
@@ -10790,7 +10793,8 @@ async function callClaudeReceiptOCR(imageDataUrl) {
   });
   if (error) throw error;
   if (data?.error) throw new Error(data.error);
-  return data;
+  const text = (data?.raw_text || '').trim();
+  return text || null;
 }
 
 // Shared "fill the form fields + swap the preview to show extracted text"
