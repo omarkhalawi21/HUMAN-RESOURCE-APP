@@ -10814,7 +10814,10 @@ function applyOcrResult({ vendor, date, amount, text, engine, els }) {
   const dateEl   = $('#rc-date');
   const vendorEl = $('#rc-vendor');
   if (amount != null && amountEl && !amountEl.value) { amountEl.value = amount; filled.push('amount'); }
-  if (date && dateEl && !dateEl.value) { dateEl.value = date; filled.push('date'); }
+  // Date defaults to today on modal open, so an empty check would never let
+  // the OCR'd date through. Override when the field still holds the default,
+  // but respect anything the user typed before clicking Extract.
+  if (date && dateEl && (!dateEl.value || dateEl.value === todayISO())) { dateEl.value = date; filled.push('date'); }
   if (vendor && vendorEl && !vendorEl.value.trim()) { vendorEl.value = vendor; filled.push('vendor'); }
   const engineNote = engine === 'tesseract' ? ' (offline)' : '';
   if (status) {
