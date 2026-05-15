@@ -7382,8 +7382,8 @@ function renderReceipts() {
                               <div class="font-semibold text-slate-900">${fmtMoney(r.amount)}</div>
                             </div>
                             <div class="flex gap-1 shrink-0">
-                              ${r.dataUrl ? `<button onclick="previewReceipt('${r.id}')" title="View" aria-label="View receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>` : ''}
-                              ${r.dataUrl ? `<button onclick="downloadReceipt('${r.id}')" title="Download" aria-label="Download receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>` : ''}
+                              ${(r.dataUrl || r.extractedData) ? `<button onclick="previewReceipt('${r.id}')" title="View" aria-label="View receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>` : ''}
+                              ${(r.dataUrl || r.extractedData) ? `<button onclick="downloadReceipt('${r.id}')" title="Download" aria-label="Download receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>` : ''}
                               <button onclick="deleteReceipt('${r.id}')" title="Delete" aria-label="Delete receipt" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                             </div>
                           </div>`;
@@ -10726,13 +10726,14 @@ async function runReceiptOCR() {
       if (_receiptFile) {
         // Drop fields that already live on the top-level receipt row to
         // avoid drift between the two copies.
-        const { usage: _u, raw_text: _r, vendor: _v, date: _d, amount: _a, currency: _c, ...rest } = aiResult;
+        const { usage: _u, raw_text: _r, vendor: _v, date: _d, amount: _a, currency: _c, category: _cat, ...rest } = aiResult;
         _receiptFile.extractedData = rest;
       }
       applyOcrResult({
         vendor: aiResult.vendor || null,
         date: aiResult.date || null,
         amount: typeof aiResult.amount === 'number' ? aiResult.amount : null,
+        category: aiResult.category || null,
         text: aiResult.raw_text || '',
         engine: 'claude',
         els: { status, dump, details },
@@ -10804,21 +10805,25 @@ async function callClaudeReceiptOCR(imageDataUrl) {
 
 // Shared "fill the form fields + swap the preview to show extracted text"
 // step, used by both the Claude and Tesseract paths.
-function applyOcrResult({ vendor, date, amount, text, engine, els }) {
+function applyOcrResult({ vendor, date, amount, category, text, engine, els }) {
   const { status, dump, details } = els;
   if (dump) dump.textContent = text || '(no text detected)';
   if (details) details.classList.remove('hidden');
   if (_receiptFile) _receiptFile.ocrText = text || '';
   const filled = [];
-  const amountEl = $('#rc-amount');
-  const dateEl   = $('#rc-date');
-  const vendorEl = $('#rc-vendor');
+  const amountEl   = $('#rc-amount');
+  const dateEl     = $('#rc-date');
+  const vendorEl   = $('#rc-vendor');
+  const categoryEl = $('#rc-cat');
   if (amount != null && amountEl && !amountEl.value) { amountEl.value = amount; filled.push('amount'); }
   // Date defaults to today on modal open, so an empty check would never let
   // the OCR'd date through. Override when the field still holds the default,
   // but respect anything the user typed before clicking Extract.
   if (date && dateEl && (!dateEl.value || dateEl.value === todayISO())) { dateEl.value = date; filled.push('date'); }
   if (vendor && vendorEl && !vendorEl.value.trim()) { vendorEl.value = vendor; filled.push('vendor'); }
+  // Category select pre-selects the first option, so there's no "empty" state
+  // to gate on. Always set it when the model returned one of the allowed keys.
+  if (category && categoryEl && RECEIPT_CATEGORIES[category]) { categoryEl.value = category; filled.push('category'); }
   const engineNote = engine === 'tesseract' ? ' (offline)' : '';
   if (status) {
     status.innerHTML = filled.length
@@ -11060,12 +11065,23 @@ function renderStructuredReceiptHTML(r, url) {
   </body></html>`;
 }
 
-// Save the receipt photo / PDF to disk. Filename is vendor + date so the
-// user can tell scans apart in their downloads folder; safeFileName strips
-// path separators so a malicious vendor string can't influence the path.
+// Default: print the Asprise-style structured preview (user picks "Save as
+// PDF" from the print dialog — that's the file). Legacy receipts without
+// extractedData fall back to downloading the raw photo/PDF.
 function downloadReceipt(id) {
   const r = (state.receipts||[]).find(x => x.id === id);
   if (!r) return;
+  if (r.extractedData && typeof r.extractedData === 'object') {
+    const w = window.open();
+    if (!w) { toast('Popup blocked — allow popups to download.', 'error'); return; }
+    const url = safeReceiptDataUrl(r);
+    w.document.write(renderStructuredReceiptHTML(r, url));
+    w.document.close();
+    // Wait one frame so the styled content paints before the print dialog
+    // opens — Safari otherwise races and prints an empty page.
+    w.onload = () => { try { w.focus(); w.print(); } catch (_) {} };
+    return;
+  }
   const safeUrl = safeReceiptDataUrl(r);
   if (!safeUrl) { toast('This receipt has no downloadable file.', 'error'); return; }
   const mimeExt = {

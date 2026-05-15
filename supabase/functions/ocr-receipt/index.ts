@@ -39,6 +39,7 @@ Return ONLY a JSON object, no markdown fences, no commentary, no leading or trai
   "amount": number | null,              // the FINAL TOTAL the customer paid (net total / grand total / total due). NEVER subtotal, gross-before-discount, VAT-only, or change-due.
   "payment_method": string | null,      // "cash", "credit_card", "debit_card", "mada", "apple_pay", null if unclear
   "card_type": string | null,           // "visa", "mastercard", "amex", "mada", null
+  "category": string | null,            // EXACTLY ONE of: "coffee_beans", "food_beverage", "equipment", "supplies", "utilities", "maintenance", "rent", "transport", "office", "other". Pick based on what was purchased — green/roasted coffee beans → "coffee_beans"; milk / sugar / pastries / restaurant meals → "food_beverage"; espresso machine / grinder / oven → "equipment"; cups / lids / napkins / cleaning materials → "supplies"; electricity / water / internet → "utilities"; repair services / spare parts → "maintenance"; fuel / taxi / shipping → "transport"; printer paper / pens / stationery → "office"; rent / lease payment → "rent"; anything you can't confidently slot → "other".
   "line_items": [                       // each purchased item; [] if none readable
     { "qty": number | null, "description": string, "amount": number | null }
   ],
@@ -126,6 +127,16 @@ Deno.serve(async (req) => {
             .filter((row) => row.description || row.amount != null)
         : [];
 
+    // Whitelist the category against the frontend's RECEIPT_CATEGORIES keys —
+    // the model occasionally invents adjacent values ("groceries", "food").
+    const allowedCategories = new Set([
+      "coffee_beans", "food_beverage", "equipment", "supplies", "utilities",
+      "maintenance", "rent", "transport", "office", "other",
+    ]);
+    const category = typeof parsed.category === "string" && allowedCategories.has(parsed.category)
+      ? parsed.category
+      : null;
+
     return json({
       vendor: typeof parsed.vendor === "string" ? parsed.vendor : null,
       merchant_address: typeof parsed.merchant_address === "string" ? parsed.merchant_address : null,
@@ -141,6 +152,7 @@ Deno.serve(async (req) => {
       amount: toNumber(parsed.amount),
       payment_method: typeof parsed.payment_method === "string" ? parsed.payment_method : null,
       card_type: typeof parsed.card_type === "string" ? parsed.card_type : null,
+      category,
       line_items: lineItems,
       raw_text: typeof parsed.raw_text === "string" ? parsed.raw_text : "",
       usage: response.usage,
