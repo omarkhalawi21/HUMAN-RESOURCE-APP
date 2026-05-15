@@ -10702,16 +10702,39 @@ async function runReceiptOCR() {
   const details = document.getElementById('rc-ocr-details');
   const dump = document.getElementById('rc-ocr-text');
   if (btn) btn.disabled = true;
-  if (status) status.innerHTML = '<span class="text-slate-500">Loading OCR engine…</span>';
   try {
-    // Kick off Tesseract loading in parallel — on the PDF path the page
-    // render runs concurrently, saving a round trip on first use.
-    const tesseractPromise = loadTesseract();
     let imageDataUrl = _receiptFile.dataUrl;
     if (isPdf) {
       if (status) status.innerHTML = '<span class="text-slate-500">Rendering PDF page…</span>';
       imageDataUrl = await pdfFirstPageToImageDataUrl(_receiptFile.dataUrl);
-    } else {
+    }
+
+    // Try Claude Vision via Edge Function first — handles bilingual receipts
+    // natively and returns structured {vendor, date, amount, currency, raw_text}.
+    // Falls through to Tesseract if the function isn't deployed or errors.
+    if (status) status.innerHTML = '<span class="text-slate-500">Scanning with AI…</span>';
+    let aiResult = null;
+    try {
+      aiResult = await callClaudeReceiptOCR(imageDataUrl);
+    } catch (e) {
+      console.warn('Claude OCR unavailable, falling back to Tesseract:', e);
+    }
+    if (aiResult && (aiResult.raw_text || aiResult.amount != null || aiResult.vendor || aiResult.date)) {
+      applyOcrResult({
+        vendor: aiResult.vendor || null,
+        date: aiResult.date || null,
+        amount: typeof aiResult.amount === 'number' ? aiResult.amount : null,
+        text: aiResult.raw_text || '',
+        engine: 'claude',
+        els: { status, dump, details },
+      });
+      return;
+    }
+
+    // Fallback: client-side Tesseract OCR + regex parser.
+    if (status) status.innerHTML = '<span class="text-slate-500">Loading offline OCR engine…</span>';
+    const tesseractPromise = loadTesseract();
+    if (!isPdf) {
       // Phone-camera photos OCR much better after grayscale + auto-contrast.
       // Failure falls back to the raw photo — never block OCR on this step.
       if (status) status.innerHTML = '<span class="text-slate-500">Enhancing image…</span>';
@@ -10728,52 +10751,22 @@ async function runReceiptOCR() {
       }
     });
     const text = (data?.text || '').trim();
-    if (dump) dump.textContent = text || '(no text detected)';
-    if (details) details.classList.remove('hidden');
     if (!text) {
+      if (dump) dump.textContent = '(no text detected)';
+      if (details) details.classList.remove('hidden');
       if (status) status.innerHTML = '<span class="text-amber-700">No text detected — try a clearer photo.</span>';
       return;
     }
-    // Persist on the transient so the save handler can write it to the
-    // receipt row — lets previewReceipt show the OCR text after save.
-    if (_receiptFile) _receiptFile.ocrText = text;
     const parsed = parseReceiptText(text);
-    const filled = [];
-    const amountEl = $('#rc-amount');
-    const dateEl   = $('#rc-date');
-    const vendorEl = $('#rc-vendor');
-    if (parsed.amount != null && amountEl && !amountEl.value) { amountEl.value = parsed.amount; filled.push('amount'); }
-    if (parsed.date && dateEl) { dateEl.value = parsed.date; filled.push('date'); }
-    if (parsed.vendor && vendorEl && !vendorEl.value.trim()) { vendorEl.value = parsed.vendor; filled.push('vendor'); }
-    if (status) {
-      status.innerHTML = filled.length
-        ? `<span class="text-emerald-700">Filled ${filled.join(', ')} — review and edit as needed.</span>`
-        : `<span class="text-amber-700">Couldn't auto-fill — see extracted text below.</span>`;
-    }
-    // Swap the receipt photo / "Loaded …" badge for the raw OCR text the
-    // engine actually read, with a one-line parsed-summary chip above it.
-    // The form fields below got pre-filled where the parser matched.
-    const previewEl = document.getElementById('rc-preview');
-    if (previewEl) {
-      const cur = state.settings.currency || 'SAR';
-      const parts = [];
-      if (parsed.vendor) parts.push(escapeHTML(parsed.vendor));
-      if (parsed.date)   parts.push(escapeHTML(parsed.date));
-      if (parsed.amount != null) parts.push(`${escapeHTML(cur)} ${escapeHTML(String(parsed.amount))}`);
-      const summary = parts.length
-        ? `<span class="text-emerald-700 font-medium">Parsed:</span> <span class="text-slate-700">${parts.join(' · ')}</span>`
-        : `<span class="text-amber-700">Couldn't auto-fill — review the text below and type the fields manually.</span>`;
-      previewEl.innerHTML = `
-        <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-          <div class="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold mb-1.5 flex items-center gap-1.5">${icon('check','w-3.5 h-3.5')} Extracted text</div>
-          <div class="text-xs mb-2">${summary}</div>
-          <pre class="bg-white border border-emerald-100 rounded p-2 text-[11px] leading-snug whitespace-pre-wrap max-h-64 overflow-auto text-slate-700">${escapeHTML(text)}</pre>
-        </div>
-      `;
-    }
+    applyOcrResult({
+      vendor: parsed.vendor,
+      date: parsed.date,
+      amount: parsed.amount,
+      text,
+      engine: 'tesseract',
+      els: { status, dump, details },
+    });
   } catch (e) {
-    // Log the full error to devtools so users can copy/paste it back when
-    // reporting issues — toast space is limited, console isn't.
     console.error('Receipt OCR failed:', e);
     const detail = e?.message
       || (typeof e === 'string' ? e : '')
@@ -10783,6 +10776,60 @@ async function runReceiptOCR() {
     if (status) status.innerHTML = '';
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+// Calls the ocr-receipt Supabase Edge Function. Throws if the function is
+// not deployed (the caller catches and falls back to Tesseract).
+async function callClaudeReceiptOCR(imageDataUrl) {
+  const m = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) throw new Error('Bad image data URL');
+  const [, mimeType, imageBase64] = m;
+  const { data, error } = await sb.functions.invoke('ocr-receipt', {
+    body: { imageBase64, mimeType }
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+// Shared "fill the form fields + swap the preview to show extracted text"
+// step, used by both the Claude and Tesseract paths.
+function applyOcrResult({ vendor, date, amount, text, engine, els }) {
+  const { status, dump, details } = els;
+  if (dump) dump.textContent = text || '(no text detected)';
+  if (details) details.classList.remove('hidden');
+  if (_receiptFile) _receiptFile.ocrText = text || '';
+  const filled = [];
+  const amountEl = $('#rc-amount');
+  const dateEl   = $('#rc-date');
+  const vendorEl = $('#rc-vendor');
+  if (amount != null && amountEl && !amountEl.value) { amountEl.value = amount; filled.push('amount'); }
+  if (date && dateEl && !dateEl.value) { dateEl.value = date; filled.push('date'); }
+  if (vendor && vendorEl && !vendorEl.value.trim()) { vendorEl.value = vendor; filled.push('vendor'); }
+  const engineNote = engine === 'tesseract' ? ' (offline)' : '';
+  if (status) {
+    status.innerHTML = filled.length
+      ? `<span class="text-emerald-700">Filled ${filled.join(', ')}${engineNote} — review and edit as needed.</span>`
+      : `<span class="text-amber-700">Couldn't auto-fill${engineNote} — see extracted text below.</span>`;
+  }
+  const previewEl = document.getElementById('rc-preview');
+  if (previewEl) {
+    const cur = state.settings.currency || 'SAR';
+    const parts = [];
+    if (vendor) parts.push(escapeHTML(vendor));
+    if (date)   parts.push(escapeHTML(date));
+    if (amount != null) parts.push(`${escapeHTML(cur)} ${escapeHTML(String(amount))}`);
+    const summary = parts.length
+      ? `<span class="text-emerald-700 font-medium">Parsed:</span> <span class="text-slate-700">${parts.join(' · ')}</span>`
+      : `<span class="text-amber-700">Couldn't auto-fill — review the text below and type the fields manually.</span>`;
+    previewEl.innerHTML = `
+      <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+        <div class="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold mb-1.5 flex items-center gap-1.5">${icon('check','w-3.5 h-3.5')} Extracted text</div>
+        <div class="text-xs mb-2">${summary}</div>
+        <pre class="bg-white border border-emerald-100 rounded p-2 text-[11px] leading-snug whitespace-pre-wrap max-h-64 overflow-auto text-slate-700">${escapeHTML(text)}</pre>
+      </div>
+    `;
   }
 }
 
