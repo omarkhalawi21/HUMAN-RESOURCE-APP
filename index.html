@@ -7381,6 +7381,7 @@ function renderReceipts() {
                             </div>
                             <div class="flex gap-1 shrink-0">
                               ${r.dataUrl ? `<button onclick="previewReceipt('${r.id}')" title="View" aria-label="View receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('eye','w-4 h-4')}</button>` : ''}
+                              ${r.dataUrl ? `<button onclick="downloadReceipt('${r.id}')" title="Download" aria-label="Download receipt" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>` : ''}
                               <button onclick="deleteReceipt('${r.id}')" title="Delete" aria-label="Delete receipt" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                             </div>
                           </div>`;
@@ -10833,6 +10834,27 @@ function previewReceipt(id) {
   } else {
     w.location.href = url;
   }
+}
+
+// Save the receipt photo / PDF to disk. Filename is vendor + date so the
+// user can tell scans apart in their downloads folder; safeFileName strips
+// path separators so a malicious vendor string can't influence the path.
+function downloadReceipt(id) {
+  const r = (state.receipts||[]).find(x => x.id === id);
+  if (!r) return;
+  const safeUrl = safeReceiptDataUrl(r);
+  if (!safeUrl) { toast('This receipt has no downloadable file.', 'error'); return; }
+  const mimeExt = {
+    'image/png':'png', 'image/jpeg':'jpg', 'image/gif':'gif', 'image/webp':'webp',
+    'application/pdf':'pdf',
+  };
+  const ext = mimeExt[(r.mime||'').toLowerCase()] || 'bin';
+  const base = [r.vendor, r.receiptDate].filter(Boolean).join('-') || 'receipt';
+  const a = document.createElement('a');
+  a.href = safeUrl;
+  a.download = safeFileName(base) + '.' + ext;
+  a.rel = 'noopener noreferrer';
+  a.click();
 }
 
 async function deleteReceipt(id) {
