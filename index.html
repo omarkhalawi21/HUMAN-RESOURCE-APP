@@ -441,6 +441,7 @@ function emptyState() {
     maintenance: [],        // [{ id, title, description, branch, location, asset, assetId, priority, status, reportedBy, assignedTo, resolution, resolvedAt, photoMime, photoSize, photoDataUrl, createdAt, updatedAt }]
     assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
     dailyCountItems: [],    // catalog: [{ id, name, unit, category, tracksWaste, sortOrder, active }]
+    dailyCountsToday: [],   // bounded: all branches' counts for today only (admin dashboard snapshot)
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
@@ -1077,7 +1078,7 @@ async function loadAll() {
   try {
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1114,6 +1115,10 @@ async function loadAll() {
       // themselves are a per-branch/day time series and are loaded on
       // demand per branch+month — never bulk-loaded here.
       sb.from('daily_count_items').select('*').order('sort_order'),
+      // Just today's counts across all branches — bounded (1 day × 3
+      // branches × ~39 items) so it's fine to bulk-load for the admin
+      // dashboard snapshot. The full series stays on-demand only.
+      sb.from('daily_counts').select('*').eq('count_date', todayISO()),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1155,6 +1160,7 @@ async function loadAll() {
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.dailyCountItems    = (dailyCountItemsR.data || []).map(mapDailyCountItemFromDb);
+    state.dailyCountsToday   = (dailyCountsTodayR.data || []).map(mapDailyCountFromDb);
     state.dailyCountsCache   = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
@@ -2059,6 +2065,9 @@ function renderDashboard() {
 
     <!-- Inventory snapshot (read-only) -->
     ${admin ? inventorySnapshotHTML() : ''}
+
+    <!-- Daily-count snapshot (read-only, admin) -->
+    ${admin ? dailyCountSnapshotHTML() : ''}
 
     <!-- Attendance Snapshot — date + branch filterable (admin only) -->
     ${admin ? (() => {
@@ -9803,6 +9812,60 @@ function inventorySnapshotHTML() {
     </div>
   `;
 }
+// Compact admin-dashboard card: did each branch run today's count, and
+// what's urgent (out / low / wasted). Reads the bounded "today, all
+// branches" slice loaded in loadAll. Returns '' if the feature is unused.
+function dailyCountSnapshotHTML() {
+  const items = state.dailyCountItems || [];
+  if (items.length === 0) return '';
+  const itemById = {};
+  items.forEach(i => { itemById[i.id] = i; });
+  const today = (state.dailyCountsToday || []);
+  const branches = SUGGESTED_BRANCHES.slice();
+  const countedBranches = branches.filter(b => today.some(c => c.branch === b && c.qty != null)).length;
+
+  const rows = branches.map(b => {
+    const recs = today.filter(c => c.branch === b);
+    const counted = recs.filter(c => c.qty != null).length;
+    let out = 0, low = 0, wasted = 0;
+    recs.forEach(c => {
+      const it = itemById[c.itemId];
+      if (it && c.qty != null) {
+        const f = dcFlag(it, Number(c.qty));
+        if (f && f.kind === 'out') out++;
+        else if (f && f.kind === 'low') low++;
+      }
+      wasted += Number(c.wasteQty) || 0;
+    });
+    const chip = (txt, cls) => `<span class="text-[11px] font-semibold px-1.5 py-0.5 rounded-full ${cls}">${txt}</span>`;
+    const status = counted > 0
+      ? `<span class="inline-flex items-center gap-1 text-[12px] text-emerald-700">${icon('check','w-3.5 h-3.5')} ${counted} counted</span>`
+      : `<span class="text-[12px] text-slate-400">not counted yet</span>`;
+    return `
+      <div class="flex items-center justify-between gap-3 py-2 border-t border-slate-50 first:border-t-0">
+        <div class="text-sm font-medium text-slate-800 w-28 shrink-0">${escapeHTML(b)}</div>
+        <div class="flex-1 min-w-0">${status}</div>
+        <div class="flex items-center gap-1.5 flex-wrap justify-end">
+          ${out    ? chip(out + ' out',     'bg-rose-100 text-rose-700')   : ''}
+          ${low    ? chip(low + ' low',     'bg-amber-100 text-amber-700') : ''}
+          ${wasted ? chip((+wasted.toFixed(2)) + ' wasted', 'bg-rose-50 text-rose-600') : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Daily count</div>
+          <div class="font-display text-lg font-semibold text-slate-900">Today · ${countedBranches}/${branches.length} branches counted</div>
+        </div>
+        <a href="#/daily_count" class="text-sm text-brand-700 hover:underline">Open &rarr;</a>
+      </div>
+      ${rows}
+    </div>`;
+}
+
 function getInventoryFiltered() {
   const f = inventoryFilter;
   const q = (f.q||'').trim().toLowerCase();
