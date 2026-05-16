@@ -442,6 +442,7 @@ function emptyState() {
     assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
     dailyCountItems: [],    // catalog: [{ id, name, unit, category, tracksWaste, sortOrder, active }]
     dailyCountsToday: [],   // bounded: all branches' counts for today only (admin dashboard snapshot)
+    incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
@@ -866,9 +867,29 @@ function mapInventoryItemFromDb(r) {
     supplierId: r.supplier_id || null,
     branch: r.branch || '',
     notes: r.notes || '',
+    dcMap: r.dc_map || null,
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+  };
+}
+function mapIncomingTransferFromDb(r) {
+  return {
+    id: r.id,
+    dcItemId: r.dc_item_id,
+    toBranch: r.to_branch || '',
+    fromBranch: r.from_branch || '',
+    transferDate: r.transfer_date || '',
+    pack: r.pack || 'loose',
+    dispatchedQty: Number(r.dispatched_qty) || 0,
+    status: r.status || 'pending',
+    confirmedQty: r.confirmed_qty == null ? null : Number(r.confirmed_qty),
+    sourceItemId: r.source_item_id || null,
+    sourceMovementId: r.source_movement_id || null,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    confirmedBy: r.confirmed_by,
+    confirmedAt: r.confirmed_at,
   };
 }
 function mapDailyCountItemFromDb(r) {
@@ -907,6 +928,7 @@ function inventoryItemToDb(i) {
     supplier_id: i.supplierId || null,
     branch: i.branch || null,
     notes: i.notes || null,
+    dc_map: i.dcMap || null,
     created_by: i.createdBy || null,
   };
 }
@@ -1078,7 +1100,7 @@ async function loadAll() {
   try {
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1119,6 +1141,9 @@ async function loadAll() {
       // branches × ~39 items) so it's fine to bulk-load for the admin
       // dashboard snapshot. The full series stays on-demand only.
       sb.from('daily_counts').select('*').eq('count_date', todayISO()),
+      // Pending incoming transfers across all branches — bounded
+      // (only unconfirmed rows; confirmed/rejected fall out of scope).
+      sb.from('incoming_transfers').select('*').eq('status', 'pending'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1161,6 +1186,7 @@ async function loadAll() {
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.dailyCountItems    = (dailyCountItemsR.data || []).map(mapDailyCountItemFromDb);
     state.dailyCountsToday   = (dailyCountsTodayR.data || []).map(mapDailyCountFromDb);
+    state.incomingTransfers  = (incomingTransfersR.data || []).map(mapIncomingTransferFromDb);
     state.dailyCountsCache   = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
@@ -9364,7 +9390,106 @@ function renderDailyCount() {
         : `<button onclick="dcStep(1)" class="btn btn-primary">${step===totalSteps-1?'Review':'Next'} ${icon('chevron-right','w-4 h-4')}</button>`}
     </div>`;
 
-  return `${header}<div class="max-w-2xl mx-auto">${dateBar}${body}${navBar}</div>`;
+  return `${header}<div class="max-w-2xl mx-auto">${dateBar}${dcRenderIncoming(branch)}${body}${navBar}</div>`;
+}
+
+// Pending roaster→branch transfers awaiting this branch's confirmation.
+// Qty is pre-filled from what was dispatched but editable — confirming
+// writes received_qty into that transfer's date and flags any mismatch.
+function dcRenderIncoming(branch) {
+  const pend = (state.incomingTransfers||[])
+    .filter(t => t.toBranch === branch && t.status === 'pending')
+    .sort((a,b) => (a.transferDate||'').localeCompare(b.transferDate||''));
+  if (!pend.length) return '';
+  const itemById = {};
+  (state.dailyCountItems||[]).forEach(d => { itemById[d.id] = d; });
+  const packLbl = p => p === 'loose' ? 'kg (loose)' : p + 'g bags';
+  return `
+    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-5">
+      <div class="flex items-center gap-2 mb-1">
+        ${icon('refresh','w-4 h-4 text-amber-700')}
+        <div class="text-sm font-semibold text-amber-900">Incoming to confirm (${pend.length})</div>
+      </div>
+      <div class="text-[11px] text-amber-800 mb-3">Stock transferred to ${escapeHTML(branch)}. Check the physical count, adjust if it differs, then confirm — it's added to that day's <em>received</em>.</div>
+      <div class="space-y-2">
+        ${pend.map(t => {
+          const it = itemById[t.dcItemId];
+          return `<div class="bg-white rounded-xl p-3 flex items-center gap-3 flex-wrap">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-slate-900 truncate">${escapeHTML(it?.name || 'Daily-count item')}</div>
+              <div class="text-[11px] text-slate-500">${escapeHTML(packLbl(t.pack))} · from ${escapeHTML(t.fromBranch||'?')} · ${escapeHTML(fmtDate(t.transferDate))} · dispatched <span class="font-semibold">${escapeHTML(String(t.dispatchedQty))}</span></div>
+            </div>
+            <input id="it-q-${t.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(t.dispatchedQty))}" class="input !w-20 !h-10 !text-center tabular-nums" title="Quantity actually received">
+            <button onclick="confirmIncoming('${t.id}')" class="btn btn-primary btn-sm">${icon('check','w-4 h-4')} Confirm</button>
+            <button onclick="rejectIncoming('${t.id}')" class="btn btn-ghost btn-sm" title="Discard — not received">${icon('trash','w-4 h-4')}</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+// In-flight guard: a double-tap on Confirm/Reject would otherwise race
+// the read-modify-write on received_qty (lost update).
+const _itBusy = new Set();
+
+async function confirmIncoming(id) {
+  if (_itBusy.has(id)) return;
+  const t = (state.incomingTransfers||[]).find(x => x.id === id && x.status === 'pending');
+  if (!t) return;
+  const el = document.getElementById('it-q-'+id);
+  const qty = dcNum(el ? el.value : '') ?? t.dispatchedQty;
+  if (qty == null || qty < 0) { toast('Enter a valid received quantity', 'error'); return; }
+  _itBusy.add(id);
+  try {
+  const me = currentEmployee();
+  const branch = t.toBranch, dateD = t.transferDate, dcItemId = t.dcItemId;
+  // Read-modify-write: unlike saveDailyCounts (which owns the whole row),
+  // this only adds to received_qty and must preserve a count/waste/note
+  // the barista may have already saved for that day. Fresh DB read (not
+  // the cache) so sequential confirms accumulate off committed state.
+  const { data: ex } = await sb.from('daily_counts').select('*')
+    .eq('item_id', dcItemId).eq('branch', branch).eq('count_date', dateD).maybeSingle();
+  const newReceived = (ex && ex.received_qty != null ? Number(ex.received_qty) : 0) + qty;
+  const up = await sb.from('daily_counts').upsert({
+    item_id: dcItemId, branch, count_date: dateD,
+    qty: ex ? ex.qty : null,
+    waste_qty: ex ? ex.waste_qty : null,
+    received_qty: newReceived,
+    note: ex ? ex.note : null,
+    recorded_by: me?.id || null,
+    recorded_at: new Date().toISOString(),
+  }, { onConflict: 'item_id,branch,count_date' });
+  if (up.error) { toast(up.error.message, 'error'); return; }
+  const cf = await sb.from('incoming_transfers').update({
+    status: 'confirmed', confirmed_qty: qty,
+    confirmed_by: me?.id || null, confirmed_at: new Date().toISOString(),
+  }).eq('id', id);
+  if (cf.error) { toast(cf.error.message, 'error'); return; }
+  state.incomingTransfers = state.incomingTransfers.filter(x => x.id !== id);
+  delete state.dailyCountsCache[dcCacheKey(branch, dateD.slice(0,7))];
+  const variance = qty - t.dispatchedQty;
+  toast(variance !== 0
+    ? `Confirmed ${qty} (dispatched ${t.dispatchedQty} — variance ${variance>0?'+':''}${+variance.toFixed(2)})`
+    : `Confirmed ${qty} into ${branch}'s count`, variance !== 0 ? 'info' : 'success');
+  render();
+  } finally { _itBusy.delete(id); }
+}
+
+async function rejectIncoming(id) {
+  if (_itBusy.has(id)) return;
+  const t = (state.incomingTransfers||[]).find(x => x.id === id);
+  if (!t) return;
+  if (!confirm("Reject this incoming? It won't be added to the daily count.")) return;
+  _itBusy.add(id);
+  const me = currentEmployee();
+  const { error } = await sb.from('incoming_transfers').update({
+    status: 'rejected', confirmed_by: me?.id || null, confirmed_at: new Date().toISOString(),
+  }).eq('id', id);
+  _itBusy.delete(id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.incomingTransfers = state.incomingTransfers.filter(x => x.id !== id);
+  toast('Incoming rejected', 'success');
+  render();
 }
 
 // One tap-friendly item card: yesterday → today (big input) → used/restock
@@ -10260,6 +10385,9 @@ function renderInventory() {
 function openInventoryItemModal(id, defaults = {}) {
   const editing = id ? (state.inventory||[]).find(i => i.id === id) : null;
   const initial = editing || defaults || {};
+  const dcItems = (state.dailyCountItems||[]).filter(d => d.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const dcMapInit = (initial.dcMap && typeof initial.dcMap === 'object') ? initial.dcMap : {};
   const form = `
     <div class="space-y-4">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -10321,6 +10449,21 @@ function openInventoryItemModal(id, defaults = {}) {
         <label class="label">Notes (optional)</label>
         <textarea id="inv-notes" class="input" rows="2" placeholder="storage location, lot number, etc.">${escapeHTML(editing?.notes||'')}</textarea>
       </div>
+      ${dcItems.length ? `
+      <div class="border-t border-slate-100 pt-4">
+        <label class="label">When transferred, count as…</label>
+        <div class="text-[11px] text-slate-500 -mt-1 mb-2">Maps each pack form to a daily-count item. A roaster transfer then auto-posts a pending “incoming” for the destination branch to confirm. Leave a row as “none” to skip.</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          ${[['loose','Loose (kg)'],['250','250 g bags'],['125','125 g bags']].map(([p,lbl]) => `
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">${lbl}</div>
+              <select id="inv-dc-${p}" class="input">
+                <option value="">— none —</option>
+                ${dcItems.map(d => `<option value="${d.id}" ${dcMapInit[p]===d.id?'selected':''}>${escapeHTML(d.name)} (${escapeHTML(d.unit)})</option>`).join('')}
+              </select>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
     </div>
   `;
   openModal(editing ? 'Edit item' : 'Add item', form, async () => {
@@ -10344,6 +10487,12 @@ function openInventoryItemModal(id, defaults = {}) {
       notes:            $('#inv-notes').value.trim(),
       createdBy:        editing?.createdBy || me?.id,
     };
+    const dcMap = {};
+    ['loose','250','125'].forEach(p => {
+      const el = $('#inv-dc-'+p);
+      if (el && el.value) dcMap[p] = el.value;
+    });
+    data.dcMap = Object.keys(dcMap).length ? dcMap : null;
     const dbRow = inventoryItemToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('inventory_items').update(dbRow).eq('id', editing.id).select().single();
@@ -10752,8 +10901,28 @@ function openTransferModal() {
     const composed = [packLabel, notes].filter(Boolean).join(' · ');
     const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, notes: composed });
     if (!m) return false;
+    // If this bean+pack is mapped to a daily-count item, drop a pending
+    // "incoming" for the destination branch to confirm during its count.
+    let posted = '';
+    const dcItemId = it?.dcMap && typeof it.dcMap === 'object' ? it.dcMap[pack] : null;
+    if (dcItemId) {
+      const me = currentEmployee();
+      const { data: itRow, error: itErr } = await sb.from('incoming_transfers').insert({
+        dc_item_id: dcItemId, to_branch: toB, from_branch: sourceBranch || null,
+        transfer_date: date, pack, dispatched_qty: qty, status: 'pending',
+        source_item_id: itemId, source_movement_id: m.id || null,
+        created_by: me?.id || null,
+      }).select().single();
+      if (itErr) { toast('Transfer saved, but the incoming link failed: ' + itErr.message, 'error'); }
+      else {
+        state.incomingTransfers = state.incomingTransfers || [];
+        state.incomingTransfers.push(mapIncomingTransferFromDb(itRow));
+        const dci = (state.dailyCountItems||[]).find(d => d.id === dcItemId);
+        posted = ` · pending in ${escapeHTML(toB)} (${escapeHTML(dci?.name||'daily count')})`;
+      }
+    }
     render();
-    toast(`Transfer logged — ${packLabel || (+qty + ' ' + (it?.unit||'kg'))} → ${toB}`, 'success');
+    toast(`Transfer logged — ${packLabel || (+qty + ' ' + (it?.unit||'kg'))} → ${toB}${posted}`, 'success');
     return true;
   }, { saveLabel: 'Log transfer' });
   // Pre-select the from-branch from the chosen item once the modal mounts.
