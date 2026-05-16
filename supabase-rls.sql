@@ -2020,6 +2020,17 @@ CREATE POLICY "dc_delete_admin_or_head_barista"
   USING (public.has_role(ARRAY['admin','head_barista']));
 
 -- =============================================================
+-- 34. DAILY COUNT — received_qty (mid-day deliveries / transfers)
+--     Stock that arrived during the day, recorded alongside the
+--     end-of-day count. Lets the page compute true consumption:
+--     used = yesterday + received − today (without it, a restock
+--     makes usage look negative). Nullable — legacy rows = no
+--     receipt that day. No RLS change (same row, existing policies).
+-- =============================================================
+ALTER TABLE public.daily_counts
+  ADD COLUMN IF NOT EXISTS received_qty numeric(12,2);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

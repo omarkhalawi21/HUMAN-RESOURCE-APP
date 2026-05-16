@@ -889,6 +889,7 @@ function mapDailyCountFromDb(r) {
     countDate: r.count_date || '',
     qty: r.qty == null ? null : Number(r.qty),
     wasteQty: r.waste_qty == null ? null : Number(r.waste_qty),
+    receivedQty: r.received_qty == null ? null : Number(r.received_qty),
     note: r.note || '',
     recordedBy: r.recorded_by,
     recordedAt: r.recorded_at,
@@ -9361,15 +9362,16 @@ function renderDailyCount() {
 // One tap-friendly item card: yesterday → today (big input) → used/restock
 // chip + LOW/OUT flag; sweets also get a prominent waste input + note.
 function dcItemCard(it, branch, date) {
-  const d = dailyCountState.draft.byItem[it.id] || { q:'', w:'', n:'' };
+  const d = dailyCountState.draft.byItem[it.id] || { q:'', w:'', r:'', n:'' };
   const yRow = dcGetSavedCount(branch, dcPrevDate(date), it.id);
   const yQty = yRow && yRow.qty != null ? Number(yRow.qty) : null;
   const tNum = dcNum(d.q);
-  const used = dcUsedChip(yQty, tNum);
+  const rcv  = dcNum(d.r) || 0;
+  const used = dcUsedChip(yQty, rcv, tNum);
   const flag = dcFlag(it, tNum);
   return `
     <div class="bg-white rounded-2xl shadow-card p-4">
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-3">
         <div class="flex-1 min-w-0">
           <div class="text-[15px] font-medium text-slate-900 truncate">${escapeHTML(it.name)}</div>
           <div class="text-[11px] text-slate-400 mt-0.5">
@@ -9378,12 +9380,19 @@ function dcItemCard(it, branch, date) {
           </div>
         </div>
         <div class="text-center">
+          <div class="text-[10px] uppercase tracking-wider text-emerald-600 mb-1">Received</div>
+          <input id="dc-r-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(d.r)}" placeholder="0"
+            class="input !w-16 !h-12 !text-center tabular-nums bg-emerald-50/50 border-emerald-200">
+        </div>
+        <div class="text-slate-300 text-lg pt-4">→</div>
+        <div class="text-center">
           <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Today</div>
           <input id="dc-q-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(d.q)}"
-            class="input !w-24 !h-12 !text-xl !text-center tabular-nums font-semibold">
+            class="input !w-20 !h-12 !text-xl !text-center tabular-nums font-semibold">
         </div>
       </div>
       <div class="flex items-center gap-2 mt-3 flex-wrap">
+        ${rcv > 0 ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700">+${rcv} received</span>` : ''}
         ${used ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full ${used.cls}">${used.label}</span>` : ''}
         ${flag ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full ${flag.cls}">${flag.label}</span>` : ''}
         ${it.tracksWaste ? `
@@ -9400,10 +9409,10 @@ function dcItemCard(it, branch, date) {
 
 function dcRenderReview(branch, date, items) {
   const by = dailyCountState.draft.byItem;
-  let counted = 0, out = 0, low = 0, wasted = 0;
+  let counted = 0, out = 0, low = 0, wasted = 0, received = 0;
   const outList = [], lowList = [];
   items.forEach(it => {
-    const d = by[it.id] || { q:'', w:'', n:'' };
+    const d = by[it.id] || { q:'', w:'', r:'', n:'' };
     if (d.q.trim() !== '') {
       counted++;
       const t = dcNum(d.q);
@@ -9411,7 +9420,8 @@ function dcRenderReview(branch, date, items) {
       if (f && f.kind === 'out') { out++; outList.push(it.name); }
       else if (f && f.kind === 'low') { low++; lowList.push(it.name + ' (' + t + ')'); }
     }
-    wasted += dcNum(d.w) || 0;
+    wasted   += dcNum(d.w) || 0;
+    received += dcNum(d.r) || 0;
   });
   const tile = (label, val, cls) => `
     <div class="bg-white rounded-2xl shadow-card p-4 text-center">
@@ -9428,11 +9438,12 @@ function dcRenderReview(branch, date, items) {
       <div class="text-[11px] uppercase tracking-[0.16em] text-slate-400 font-semibold">Review</div>
       <h3 class="font-display text-xl font-semibold text-slate-900 mt-0.5">${escapeHTML(branch)} · ${escapeHTML(fmtDate(date))}</h3>
     </div>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
       ${tile('Counted', counted, 'text-slate-900')}
+      ${tile('Received', +received.toFixed(2), received?'text-emerald-600':'text-slate-300')}
       ${tile('Out', out, out?'text-rose-600':'text-slate-300')}
       ${tile('Low', low, low?'text-amber-600':'text-slate-300')}
-      ${tile('Wasted', wasted, wasted?'text-rose-600':'text-slate-300')}
+      ${tile('Wasted', +wasted.toFixed(2), wasted?'text-rose-600':'text-slate-300')}
     </div>
     <div class="space-y-3">
       ${list('Out of stock — reorder/transfer', outList, 'text-rose-600')}
@@ -9473,6 +9484,7 @@ function dcEnsureDraft(branch, date, items) {
     byItem[it.id] = {
       q: c && c.qty != null ? String(c.qty) : '',
       w: c && c.wasteQty != null ? String(c.wasteQty) : '',
+      r: c && c.receivedQty != null ? String(c.receivedQty) : '',
       n: c && c.note ? c.note : '',
     };
   });
@@ -9486,12 +9498,14 @@ function dcCaptureStep() {
   (state.dailyCountItems || []).forEach(it => {
     const q = document.getElementById('dc-q-'+it.id);
     const w = document.getElementById('dc-w-'+it.id);
+    const r = document.getElementById('dc-r-'+it.id);
     const n = document.getElementById('dc-n-'+it.id);
-    if (!q && !w && !n) return; // item not on this step
-    const cur = d.byItem[it.id] || { q:'', w:'', n:'' };
+    if (!q && !w && !r && !n) return; // item not on this step
+    const cur = d.byItem[it.id] || { q:'', w:'', r:'', n:'' };
     d.byItem[it.id] = {
       q: q ? q.value.trim() : cur.q,
       w: w ? w.value.trim() : cur.w,
+      r: r ? r.value.trim() : cur.r,
       n: n ? n.value.trim() : cur.n,
     };
   });
@@ -9502,14 +9516,15 @@ function dcStep(delta) {
   dailyCountState.step = Math.max(0, Math.min(DC_STEPS.length, next));
   render();
 }
-// Used since yesterday (yesterday − today). Positive = consumed; negative
-// = stock went up, i.e. a restock/transfer landed.
-function dcUsedChip(yQty, tNum) {
+// True consumption = yesterday + received − today. Received (mid-day
+// deliveries/transfers) is what makes this correct — without it a
+// restock makes usage look negative.
+function dcUsedChip(yQty, rcv, tNum) {
   if (yQty == null || tNum == null) return null;
-  const diff = yQty - tNum;
-  if (diff === 0) return { label: 'no change', cls: 'bg-slate-100 text-slate-500' };
-  if (diff > 0)  return { label: 'used ' + (+diff.toFixed(2)), cls: 'bg-brand-50 text-brand-700' };
-  return { label: '+' + (+(-diff).toFixed(2)) + ' in', cls: 'bg-emerald-50 text-emerald-700' };
+  const used = +( (yQty + (rcv||0) - tNum).toFixed(2) );
+  if (used === 0) return { label: 'no change', cls: 'bg-slate-100 text-slate-500' };
+  if (used > 0)  return { label: 'used ' + used, cls: 'bg-brand-50 text-brand-700' };
+  return { label: '+' + (-used) + ' unaccounted', cls: 'bg-amber-50 text-amber-700' };
 }
 // LOW/OUT flag. No per-item threshold in the schema yet, so a simple
 // defensible rule: 0 = OUT; small remainder = LOW (≤2 pcs, ≤1 kg/g).
@@ -9535,6 +9550,11 @@ function renderDailyCountMonth(items, monthRows, ym, branch) {
       const c = cell[it.id]?.[i+1];
       return `<td class="px-1.5 py-1.5 text-center tabular-nums text-slate-700 border-l border-slate-50">${c && c.qty!=null ? escapeHTML(String(c.qty)) : ''}</td>`;
     }).join('');
+    const hasReceived = Array.from({length:days}).some((_,i) => cell[it.id]?.[i+1]?.receivedQty != null);
+    const receivedTds = hasReceived ? `<tr class="bg-emerald-50/40">
+      <td class="px-3 py-1 sticky left-0 bg-emerald-50/40 text-[10px] uppercase tracking-wider text-emerald-700">↳ received</td>
+      ${Array.from({length:days}, (_,i) => { const c = cell[it.id]?.[i+1]; return `<td class="px-1.5 py-1 text-center tabular-nums text-emerald-600 border-l border-emerald-100/50">${c && c.receivedQty!=null ? escapeHTML(String(c.receivedQty)) : ''}</td>`; }).join('')}
+    </tr>` : '';
     const wasteTds = it.tracksWaste ? `<tr class="bg-rose-50/40">
       <td class="px-3 py-1 sticky left-0 bg-rose-50/40 text-[10px] uppercase tracking-wider text-rose-700">↳ wasted</td>
       ${Array.from({length:days}, (_,i) => { const c = cell[it.id]?.[i+1]; return `<td class="px-1.5 py-1 text-center tabular-nums text-rose-600 border-l border-rose-100/50">${c && c.wasteQty!=null ? escapeHTML(String(c.wasteQty)) : ''}</td>`; }).join('')}
@@ -9542,7 +9562,7 @@ function renderDailyCountMonth(items, monthRows, ym, branch) {
     return `<tr class="border-t border-slate-50">
       <td class="px-3 py-1.5 sticky left-0 bg-white text-sm text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
       ${tds}
-    </tr>${wasteTds}`;
+    </tr>${receivedTds}${wasteTds}`;
   }).join('');
   return `
     <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
@@ -9571,12 +9591,12 @@ async function saveDailyCounts() {
   const exById = {}; existing.forEach(c => { exById[c.itemId] = c; });
   const toUpsert = [], toDeleteIds = [];
   items.forEach(it => {
-    const d = draft.byItem[it.id] || { q:'', w:'', n:'' };
+    const d = draft.byItem[it.id] || { q:'', w:'', r:'', n:'' };
     const n = d.n.trim();
-    const qN = dcNum(d.q), wN = dcNum(d.w);
+    const qN = dcNum(d.q), wN = dcNum(d.w), rN = dcNum(d.r);
     // Nothing meaningful (no number, no note) → skip, so non-numeric
     // typing can't write a junk all-null row. A note still saves.
-    if (qN == null && wN == null && n === '') {
+    if (qN == null && wN == null && rN == null && n === '') {
       if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
       return;
     }
@@ -9584,6 +9604,7 @@ async function saveDailyCounts() {
       item_id: it.id, branch, count_date: date,
       qty: qN,
       waste_qty: wN,
+      received_qty: rN,
       note: n || null,
       recorded_by: me?.id || null,
       recorded_at: new Date().toISOString(),
