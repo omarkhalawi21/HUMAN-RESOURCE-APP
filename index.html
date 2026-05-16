@@ -10707,7 +10707,15 @@ function openTransferModal() {
         </div>
         <div>
           <label class="label">Quantity</label>
-          <input id="tf-qty" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+          <div class="flex gap-2">
+            <input id="tf-qty" type="number" min="0" step="0.01" class="input flex-1" placeholder="0.00" oninput="onTransferRecalc()">
+            <select id="tf-pack" class="input !w-auto" onchange="onTransferRecalc()">
+              <option value="loose" id="tf-pack-loose">loose</option>
+              <option value="250">250 g bags</option>
+              <option value="125">125 g bags</option>
+            </select>
+          </div>
+          <div id="tf-eq" class="text-[11px] text-slate-500 mt-1"></div>
         </div>
         <div>
           <label class="label">Date</label>
@@ -10725,6 +10733,7 @@ function openTransferModal() {
     const fromB  = $('#tf-from').value;
     const toB    = $('#tf-to').value;
     const qty    = parseFloat($('#tf-qty').value);
+    const pack   = $('#tf-pack').value;
     const date   = $('#tf-date').value;
     const notes  = $('#tf-notes').value.trim();
     if (!itemId)               { toast('Pick an item', 'error');             return false; }
@@ -10733,10 +10742,16 @@ function openTransferModal() {
     const it = (state.inventory||[]).find(i => i.id === itemId);
     const sourceBranch = fromB || (it?.branch || '');
     if (sourceBranch === toB)  { toast('Source and destination must differ', 'error'); return false; }
-    const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, notes });
+    // 250g/125g packs deduct the kg-equivalent from roaster stock (the
+    // ledger stays in kg so yield/weekly report are unaffected); the pack
+    // breakdown is recorded in the note like the destination already is.
+    const moveQty = pack === '250' ? qty * 0.25 : pack === '125' ? qty * 0.125 : qty;
+    const packLabel = pack === 'loose' ? '' : `${+qty} × ${pack}g`;
+    const composed = [packLabel, notes].filter(Boolean).join(' · ');
+    const m = await logTransfer(itemId, moveQty, sourceBranch, toB, { occurredAt: date, notes: composed });
     if (!m) return false;
     render();
-    toast(`Transfer logged — ${qty} → ${toB}`, 'success');
+    toast(`Transfer logged — ${packLabel || (+moveQty.toFixed(2) + ' ' + (it?.unit||'kg'))} → ${toB}`, 'success');
     return true;
   }, { saveLabel: 'Log transfer' });
   // Pre-select the from-branch from the chosen item once the modal mounts.
@@ -10750,6 +10765,26 @@ function onTransferItemChange() {
   const opt = sel.options[sel.selectedIndex];
   const b = opt?.dataset?.branch || '';
   if (b && Array.from(from.options).some(o => o.value === b)) from.value = b;
+  onTransferRecalc();
+}
+
+// Live: relabel the "loose" pack option with the item's own unit and
+// show the kg-equivalent for 250g/125g packs so the barista sees how
+// much actually leaves stock before saving.
+function onTransferRecalc() {
+  const sel = document.getElementById('tf-item');
+  const packEl = document.getElementById('tf-pack');
+  const eq = document.getElementById('tf-eq');
+  if (!sel || !packEl || !eq) return;
+  const it = (state.inventory||[]).find(i => i.id === sel.value);
+  const unit = it?.unit || 'kg';
+  const looseOpt = document.getElementById('tf-pack-loose');
+  if (looseOpt) looseOpt.textContent = `loose (${unit})`;
+  const qty = parseFloat(document.getElementById('tf-qty')?.value);
+  const pack = packEl.value;
+  if (!qty || qty <= 0 || pack === 'loose') { eq.textContent = ''; return; }
+  const kg = pack === '250' ? qty * 0.25 : qty * 0.125;
+  eq.textContent = `${+qty} × ${pack}g = ${+kg.toFixed(3)} kg deducted from stock`;
 }
 
 // Delete a movement and restore the item quantity. Item qty change is
