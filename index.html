@@ -440,6 +440,8 @@ function emptyState() {
     inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
     maintenance: [],        // [{ id, title, description, branch, location, asset, assetId, priority, status, reportedBy, assignedTo, resolution, resolvedAt, photoMime, photoSize, photoDataUrl, createdAt, updatedAt }]
     assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
+    dailyCountItems: [],    // catalog: [{ id, name, unit, category, tracksWaste, sortOrder, active }]
+    dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -868,6 +870,30 @@ function mapInventoryItemFromDb(r) {
     updatedAt: r.updated_at,
   };
 }
+function mapDailyCountItemFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    unit: r.unit || 'pcs',
+    category: r.category || 'other',
+    tracksWaste: !!r.tracks_waste,
+    sortOrder: Number(r.sort_order) || 0,
+    active: r.active !== false,
+  };
+}
+function mapDailyCountFromDb(r) {
+  return {
+    id: r.id,
+    itemId: r.item_id,
+    branch: r.branch || '',
+    countDate: r.count_date || '',
+    qty: r.qty == null ? null : Number(r.qty),
+    wasteQty: r.waste_qty == null ? null : Number(r.waste_qty),
+    note: r.note || '',
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
 function inventoryItemToDb(i) {
   return {
     name: i.name,
@@ -1050,7 +1076,7 @@ async function loadAll() {
   try {
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1083,6 +1109,10 @@ async function loadAll() {
       // Assets: SELECT is broad so the maintenance modal's asset dropdown
       // works for any role that can open a request.
       sb.from('assets').select('*').order('name'),
+      // Daily-count catalog only (small, branch-agnostic). The counts
+      // themselves are a per-branch/day time series and are loaded on
+      // demand per branch+month — never bulk-loaded here.
+      sb.from('daily_count_items').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1123,6 +1153,8 @@ async function loadAll() {
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
+    state.dailyCountItems    = (dailyCountItemsR.data || []).map(mapDailyCountItemFromDb);
+    state.dailyCountsCache   = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -1375,7 +1407,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1658,6 +1690,7 @@ function renderShell(routeContent) {
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
+    { key:'daily_count',  icon:'box',       label:'Daily count',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
@@ -9167,6 +9200,292 @@ function renderMaintenanceDashboard() {
   `;
 }
 
+/* -------------------- DAILY COUNT (cafe-floor barista sheet) -------------------- */
+const DC_CATEGORIES = {
+  milk:        'Milk & Water',
+  pastry:      'Pastries',
+  espresso:    'Espresso',
+  v60:         'V60 / Filter',
+  retail_250g: '250g Retail',
+  premium:     'Premium',
+  boxes:       'Boxes & Drip',
+  other:       'Other',
+};
+const DC_CAT_ORDER = ['milk','pastry','espresso','v60','retail_250g','premium','boxes','other'];
+
+let dailyCountState = { branch:'', date:'', view:'entry' };
+const _dcLoading = new Set();
+
+function dcCacheKey(branch, ym) { return branch + '|' + ym; }
+function dcDefaultBranch() {
+  const me = currentEmployee();
+  const b = me ? (getEmpExtras(me.id).branch || '').trim().toUpperCase() : '';
+  return SUGGESTED_BRANCHES.includes(b) ? b : SUGGESTED_BRANCHES[0];
+}
+
+// On-demand month load — the counts series grows unbounded, so it's never
+// bulk-loaded; we fetch one branch+month at a time and cache it.
+async function loadDailyCounts(branch, ym) {
+  const key = dcCacheKey(branch, ym);
+  if (state.dailyCountsCache[key] || _dcLoading.has(key)) return;
+  _dcLoading.add(key);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('daily_counts').select('*')
+    .eq('branch', branch).gte('count_date', from).lte('count_date', to);
+  _dcLoading.delete(key);
+  if (error) {
+    toast('Failed to load counts: ' + error.message, 'error');
+    // Cache an empty result so the page renders an (empty) usable grid
+    // instead of looping the loading shell + refetching on every render.
+    // Switching branch/month or reloading retries with a fresh key.
+    state.dailyCountsCache[key] = [];
+    render();
+    return;
+  }
+  state.dailyCountsCache[key] = (data || []).map(mapDailyCountFromDb);
+  render();
+}
+
+function renderDailyCount() {
+  if (!dailyCountState.branch) dailyCountState.branch = dcDefaultBranch();
+  if (!dailyCountState.date)   dailyCountState.date   = todayISO();
+  const { branch, date, view } = dailyCountState;
+  const ym  = date.slice(0, 7);
+  const key = dcCacheKey(branch, ym);
+  const canManage = hasRole('admin','head_barista');
+
+  const branchSel = `<select class="pill" onchange="dailyCountState.branch=this.value; render();">
+    ${SUGGESTED_BRANCHES.map(b => `<option value="${b}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+  </select>`;
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Daily count</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(branch)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Cafe-floor count — perishables, beans, pastries &amp; waste.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        ${branchSel}
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">
+          <button onclick="dailyCountState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Day entry</button>
+          <button onclick="dailyCountState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month grid</button>
+        </div>
+        ${canManage ? `<button onclick="openDailyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage items</button>` : ''}
+      </div>
+    </div>`;
+
+  if (!state.dailyCountsCache[key]) {
+    loadDailyCounts(branch, ym);
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)} — ${escapeHTML(ym)}…</div>`;
+  }
+
+  const items = (state.dailyCountItems || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  if (items.length === 0) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No daily-count items yet.${canManage?' Use “Manage items” to add some.':''}</div>`;
+  }
+  const monthRows = state.dailyCountsCache[key];
+
+  if (view === 'month') return header + renderDailyCountMonth(items, monthRows, ym, branch);
+
+  // ---- Day entry view ----
+  const byItem = {};
+  monthRows.filter(c => c.countDate === date).forEach(c => { byItem[c.itemId] = c; });
+  const groups = DC_CAT_ORDER
+    .map(cat => [cat, items.filter(i => (i.category||'other') === cat)])
+    .filter(([, list]) => list.length);
+
+  const dateNav = `
+    <div class="flex items-center gap-2">
+      <button onclick="dcShiftDate(-1)" class="btn btn-ghost btn-sm" title="Previous day">${icon('chevron-left','w-4 h-4')}</button>
+      <input type="date" value="${escapeHTML(date)}" max="${escapeHTML(todayISO())}" onchange="dailyCountState.date=this.value; render();" class="input !w-auto !py-2">
+      <button onclick="dcShiftDate(1)" class="btn btn-ghost btn-sm" title="Next day">${icon('chevron-right','w-4 h-4')}</button>
+    </div>`;
+
+  return `${header}
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      ${dateNav}
+      <button onclick="saveDailyCounts()" class="btn btn-primary btn-sm">${icon('check','w-4 h-4')} Save day</button>
+    </div>
+    <div class="space-y-5">
+      ${groups.map(([cat, list]) => `
+        <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+          <div class="px-5 py-3 border-b border-slate-100 text-[11px] uppercase tracking-[0.14em] text-brand-700 font-semibold">${escapeHTML(DC_CATEGORIES[cat]||cat)}</div>
+          <div class="divide-y divide-slate-50">
+            ${list.map(it => {
+              const c = byItem[it.id] || {};
+              const showNote = it.tracksWaste || (c.note && c.note.trim());
+              return `<div class="flex items-center gap-3 px-5 py-2.5">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm text-slate-800 truncate">${escapeHTML(it.name)}</div>
+                  <div class="text-[10px] uppercase tracking-wider text-slate-400">${escapeHTML(it.unit)}</div>
+                </div>
+                <input id="dc-q-${it.id}" type="number" step="any" inputmode="decimal" value="${c.qty==null?'':c.qty}" placeholder="qty" class="input !w-24 !py-1.5 text-right tabular-nums">
+                ${it.tracksWaste ? `<input id="dc-w-${it.id}" type="number" step="any" inputmode="decimal" value="${c.wasteQty==null?'':c.wasteQty}" placeholder="waste" title="Expired / wasted" class="input !w-24 !py-1.5 text-right tabular-nums bg-rose-50/40">` : ''}
+                ${showNote ? `<input id="dc-n-${it.id}" type="text" value="${escapeHTML(c.note||'')}" placeholder="note" class="input !w-32 !py-1.5 text-xs">` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+function dcShiftDate(delta) {
+  const d = new Date(dailyCountState.date + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  const next = d.toISOString().slice(0,10);
+  if (next > todayISO()) return;
+  dailyCountState.date = next;
+  render();
+}
+
+function renderDailyCountMonth(items, monthRows, ym, branch) {
+  const [y, m] = ym.split('-').map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const cell = {}; // itemId -> day -> row
+  monthRows.forEach(c => {
+    const dd = Number(c.countDate.slice(8,10));
+    (cell[c.itemId] = cell[c.itemId] || {})[dd] = c;
+  });
+  const dayHdr = Array.from({length:days}, (_,i) => `<th class="px-1.5 py-2 text-[10px] font-semibold text-slate-400 text-center">${i+1}</th>`).join('');
+  const rows = items.map(it => {
+    const tds = Array.from({length:days}, (_,i) => {
+      const c = cell[it.id]?.[i+1];
+      return `<td class="px-1.5 py-1.5 text-center tabular-nums text-slate-700 border-l border-slate-50">${c && c.qty!=null ? escapeHTML(String(c.qty)) : ''}</td>`;
+    }).join('');
+    const wasteTds = it.tracksWaste ? `<tr class="bg-rose-50/40">
+      <td class="px-3 py-1 sticky left-0 bg-rose-50/40 text-[10px] uppercase tracking-wider text-rose-700">↳ wasted</td>
+      ${Array.from({length:days}, (_,i) => { const c = cell[it.id]?.[i+1]; return `<td class="px-1.5 py-1 text-center tabular-nums text-rose-600 border-l border-rose-100/50">${c && c.wasteQty!=null ? escapeHTML(String(c.wasteQty)) : ''}</td>`; }).join('')}
+    </tr>` : '';
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-1.5 sticky left-0 bg-white text-sm text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
+      ${tds}
+    </tr>${wasteTds}`;
+  }).join('');
+  return `
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="dailyCountState.date=this.value+'-01'; render();" class="input !w-auto !py-2">
+      <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-slate-500 sticky left-0 bg-white">${escapeHTML(branch)} · ${escapeHTML(ym)}</th>
+          ${dayHdr}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function saveDailyCounts() {
+  const { branch, date } = dailyCountState;
+  const me = currentEmployee();
+  const ym = date.slice(0,7), key = dcCacheKey(branch, ym);
+  const items = (state.dailyCountItems || []).filter(i => i.active);
+  const existing = (state.dailyCountsCache[key] || []).filter(c => c.countDate === date);
+  const exById = {}; existing.forEach(c => { exById[c.itemId] = c; });
+  const toUpsert = [], toDeleteIds = [];
+  items.forEach(it => {
+    const qEl = document.getElementById('dc-q-'+it.id);
+    const wEl = document.getElementById('dc-w-'+it.id);
+    const nEl = document.getElementById('dc-n-'+it.id);
+    const q = qEl ? qEl.value.trim() : '';
+    const w = wEl ? wEl.value.trim() : '';
+    const n = nEl ? nEl.value.trim() : '';
+    if (q === '' && w === '' && n === '') {
+      if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
+      return;
+    }
+    toUpsert.push({
+      item_id: it.id, branch, count_date: date,
+      qty: q === '' ? null : Number(q),
+      waste_qty: w === '' ? null : Number(w),
+      note: n || null,
+      recorded_by: me?.id || null,
+      recorded_at: new Date().toISOString(),
+    });
+  });
+  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (toDeleteIds.length) {
+    const { error } = await sb.from('daily_counts').delete().in('id', toDeleteIds);
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  if (toUpsert.length) {
+    const { error } = await sb.from('daily_counts')
+      .upsert(toUpsert, { onConflict: 'item_id,branch,count_date' });
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  // Refresh the month cache so the grid + prefill reflect what's stored.
+  delete state.dailyCountsCache[key];
+  await loadDailyCounts(branch, ym);
+  toast('Day saved', 'success');
+}
+
+function openDailyCountItemModal(editing) {
+  const e = editing || {};
+  const unitOpt = u => `<option value="${u}" ${e.unit===u?'selected':''}>${u}</option>`;
+  const catOpt  = c => `<option value="${c}" ${(e.category||'other')===c?'selected':''}>${escapeHTML(DC_CATEGORIES[c])}</option>`;
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Item name</label>
+        <input id="dci-name" class="input" placeholder="e.g. Almond Milk" value="${escapeHTML(e.name||'')}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Unit</label><select id="dci-unit" class="input">${['pcs','g','kg'].map(unitOpt).join('')}</select></div>
+        <div><label class="label">Category</label><select id="dci-cat" class="input">${DC_CAT_ORDER.map(catOpt).join('')}</select></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Sort order</label><input id="dci-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+        <div class="flex items-end gap-4 pb-1">
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-waste" type="checkbox" ${e.tracksWaste?'checked':''}> Tracks waste</label>
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+        </div>
+      </div>
+      ${editing ? `<button onclick="deleteDailyCountItem('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this item</button>` : ''}
+    </div>`;
+  openModal(editing ? 'Edit item' : 'Add daily-count item', form, async () => {
+    const name = $('#dci-name').value.trim();
+    if (!name) { toast('Item name is required', 'error'); return false; }
+    const row = {
+      name,
+      unit: $('#dci-unit').value,
+      category: $('#dci-cat').value,
+      tracks_waste: $('#dci-waste').checked,
+      sort_order: Number($('#dci-sort').value) || 0,
+      active: $('#dci-active').checked,
+    };
+    if (editing) {
+      const { data, error } = await sb.from('daily_count_items').update(row).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapDailyCountItemFromDb(data));
+      toast('Item updated', 'success');
+    } else {
+      const { data, error } = await sb.from('daily_count_items').insert(row).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.dailyCountItems.push(mapDailyCountItemFromDb(data));
+      toast('Item added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add item' });
+}
+
+async function deleteDailyCountItem(id) {
+  if (!confirm('Delete this item and all its recorded counts? This cannot be undone.')) return;
+  const { error } = await sb.from('daily_count_items').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.dailyCountItems = state.dailyCountItems.filter(i => i.id !== id);
+  state.dailyCountsCache = {}; // counts cascade-deleted; drop stale cache
+  closeModal();
+  render();
+  toast('Item deleted', 'success');
+}
+
 /* -------------------- INVENTORY (admin or inventory) -------------------- */
 const INVENTORY_CATEGORIES = {
   beans_raw:    { label: 'Coffee — Green Beans', icon: 'cash' },
@@ -12245,6 +12564,7 @@ function render() {
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
+    case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','head_barista','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;

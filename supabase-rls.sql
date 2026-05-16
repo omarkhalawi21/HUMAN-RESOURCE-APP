@@ -1872,6 +1872,154 @@ ALTER TABLE public.receipts
   ADD COLUMN IF NOT EXISTS extracted_data jsonb;
 
 -- =============================================================
+-- 32. DAILY COUNT — item catalog (cafe-floor barista daily sheet)
+--     Distinct from inventory_items (a single current-qty model).
+--     Daily count is a per-branch, per-day time series of on-hand
+--     counts for fast-moving perishables / beans / pastries. This
+--     table is the branch-agnostic catalog of WHAT gets counted;
+--     the numbers live in daily_counts (block 33). tracks_waste =
+--     pastry-style items that also log a daily expired/wasted
+--     figure. SELECT broad (admin/head_barista/barista/operations);
+--     catalog writes admin/head_barista only.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.daily_count_items (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  unit          text not null default 'pcs',     -- pcs | g | kg
+  category      text not null default 'other',   -- milk|pastry|espresso|v60|retail_250g|premium|boxes|other
+  tracks_waste  boolean not null default false,
+  sort_order    int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS daily_count_items_sort_idx ON public.daily_count_items(sort_order);
+
+ALTER TABLE public.daily_count_items ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='daily_count_items'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "dci_select_floor_or_ops"
+  ON public.daily_count_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "dci_insert_admin_or_head_barista"
+  ON public.daily_count_items FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "dci_update_admin_or_head_barista"
+  ON public.daily_count_items FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "dci_delete_admin_or_head_barista"
+  ON public.daily_count_items FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- Seed the Rayyan daily-sheet catalog. Idempotent: only fires when
+-- the table is empty, so re-running the file never duplicates.
+INSERT INTO public.daily_count_items (name, unit, category, tracks_waste, sort_order)
+SELECT v.name, v.unit, v.category, v.tracks_waste, v.sort_order
+FROM (VALUES
+  ('Full Fat',            'pcs','milk',        false, 10),
+  ('Low Fat',             'pcs','milk',        false, 20),
+  ('Almond Milk',         'pcs','milk',        false, 30),
+  ('Free Lactose',        'pcs','milk',        false, 40),
+  ('Coconut Milk',        'pcs','milk',        false, 50),
+  ('Naqi Water',          'pcs','milk',        false, 60),
+  ('Cookies',             'pcs','pastry',      true,  70),
+  ('Crunchy',             'pcs','pastry',      true,  80),
+  ('Brownies',            'pcs','pastry',      true,  90),
+  ('Crunchy Cake',        'pcs','pastry',      true, 100),
+  ('Lemon Cake',          'pcs','pastry',      true, 110),
+  ('Tiramisu',            'pcs','pastry',      true, 120),
+  ('Marble Cake',         'pcs','pastry',      true, 130),
+  ('Colombia ESP',        'kg', 'espresso',    false,140),
+  ('Guji ESP',            'kg', 'espresso',    false,150),
+  ('V60 Manos',           'kg', 'v60',         false,160),
+  ('V60 Ethiopia',        'kg', 'v60',         false,170),
+  ('V60 Brazil',          'kg', 'v60',         false,180),
+  ('V60 Grape',           'kg', 'v60',         false,190),
+  ('V60 Panama',          'kg', 'v60',         false,200),
+  ('V60 Beni Suliman',    'kg', 'v60',         false,210),
+  ('V60 Chel-Chel',       'kg', 'v60',         false,220),
+  ('V60 Candy',           'kg', 'v60',         false,230),
+  ('Ethiopia Gadeb',      'kg', 'v60',         false,240),
+  ('C.O.D-Oromio',        'kg', 'v60',         false,250),
+  ('250g Ethiopia',       'pcs','retail_250g', false,260),
+  ('250g Brazil',         'pcs','retail_250g', false,270),
+  ('250g Narino',         'pcs','retail_250g', false,280),
+  ('250g Oromio',         'pcs','retail_250g', false,290),
+  ('250g Manos',          'pcs','retail_250g', false,300),
+  ('Premium Beni Suliman','pcs','premium',     false,310),
+  ('Premium Grape',       'pcs','premium',     false,320),
+  ('Premium Panama',      'pcs','premium',     false,330),
+  ('Premium Chel-Chel',   'pcs','premium',     false,340),
+  ('Offer Box (Offline)', 'pcs','boxes',       false,350),
+  ('Offer Box (Online)',  'pcs','boxes',       false,360),
+  ('Drip Bag (E)',        'pcs','boxes',       false,370),
+  ('Drip Bag (B)',        'pcs','boxes',       false,380),
+  ('Drip Bag (C)',        'pcs','boxes',       false,390)
+) AS v(name,unit,category,tracks_waste,sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM public.daily_count_items);
+
+-- =============================================================
+-- 33. DAILY COUNT — recorded numbers (per item, per branch, per day)
+--     One row per (item_id, branch, count_date); the page upserts
+--     on that key so re-saving a day overwrites cleanly. qty =
+--     on-hand count, waste_qty = expired/wasted that day (pastry
+--     items), note = free text ("shortage 1"). Loaded on demand
+--     per branch+month — NOT bulk-loaded (the series grows
+--     unbounded; same perf discipline as attendance/maintenance).
+--     SELECT + write admin/head_barista/barista (barista needs
+--     write — the daily count is literally their job); destructive
+--     delete stays admin/head_barista.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.daily_counts (
+  id           uuid primary key default gen_random_uuid(),
+  item_id      uuid not null references public.daily_count_items(id) ON DELETE CASCADE,
+  branch       text not null,
+  count_date   date not null,
+  qty          numeric(12,2),
+  waste_qty    numeric(12,2),
+  note         text,
+  recorded_by  uuid references public.employees(id),
+  recorded_at  timestamptz not null default now(),
+  UNIQUE (item_id, branch, count_date)
+);
+CREATE INDEX IF NOT EXISTS daily_counts_branch_date_idx ON public.daily_counts(branch, count_date);
+
+ALTER TABLE public.daily_counts ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='daily_counts'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "dc_select_floor_or_ops"
+  ON public.daily_counts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "dc_insert_floor"
+  ON public.daily_counts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "dc_update_floor"
+  ON public.daily_counts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "dc_delete_admin_or_head_barista"
+  ON public.daily_counts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
