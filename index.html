@@ -16,8 +16,14 @@
   html, body { height: 100%; }
   body {
     font-family: 'Inter', 'Cairo', system-ui, sans-serif;
-    background: #fbf7f1;
     color: #2a1f15;
+    background-color: #fbf7f1;
+    /* Uncoated-paper grain over a faint warm vignette — gives the cream
+       surface a tactile, roastery brand-book feel instead of a dead fill. */
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.038'/%3E%3C/svg%3E"),
+      radial-gradient(ellipse 130% 90% at 50% -10%, #fdf9f2 0%, #fbf7f1 46%, #f6efe2 100%);
+    background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
   }
   [dir="rtl"] body { font-family: 'Cairo', 'Inter', system-ui, sans-serif; }
@@ -145,6 +151,34 @@
 
   /* RTL adjustments */
   [dir="rtl"] .rtl-flip { transform: scaleX(-1); }
+
+  /* --- Atmosphere & depth pass ---------------------------------------
+     tailwind.css loads before this block, so these same-specificity rules
+     win and re-tone every card app-wide without a Tailwind rebuild. The
+     shipped shadows used cool slate (rgba(15,23,42)) which read grey-blue
+     on a warm palette; these are espresso-tinted (brand-900 #422813) with
+     a hairline ring so cards sit crisply on the textured paper. */
+  .shadow-card {
+    box-shadow:
+      0 0 0 1px rgba(66,40,19,0.045),
+      0 1px 2px rgba(66,40,19,0.05),
+      0 4px 12px -3px rgba(66,40,19,0.07) !important;
+  }
+  .shadow-pop, .hover\:shadow-pop:hover {
+    box-shadow:
+      0 0 0 1px rgba(66,40,19,0.055),
+      0 4px 10px -3px rgba(66,40,19,0.10),
+      0 18px 38px -10px rgba(66,40,19,0.18) !important;
+  }
+  /* Editorial top-rule + warm icon tile for dashboard stat cards. */
+  .stat-card { position: relative; }
+  .stat-card::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 2px;
+    border-radius: 16px 16px 0 0;
+    background: linear-gradient(90deg, #a87035 0%, #6e4220 55%, transparent 100%);
+    opacity: 0.7;
+  }
+  .stat-numeral { font-variant-numeric: tabular-nums lining-nums; letter-spacing: -0.01em; }
 </style>
 </head>
 <body>
@@ -2430,13 +2464,13 @@ function renderDashboard() {
 }
 function statCard(label, value, caption, dir, ico) {
   return `
-    <div class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all duration-200 hover:-translate-y-0.5">
-      <div class="flex items-center justify-between mb-3">
-        <div class="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center ring-1 ring-brand-100">${icon(ico,'w-5 h-5')}</div>
+    <div class="stat-card bg-white rounded-2xl shadow-card p-5 pt-6 hover:shadow-pop transition-all duration-200 hover:-translate-y-0.5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="w-11 h-11 rounded-xl flex items-center justify-center text-brand-700 ring-1 ring-brand-100" style="background:linear-gradient(135deg,#fbf6ef 0%,#f4e8d4 100%)">${icon(ico,'w-5 h-5')}</div>
         <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${dir==='up'?'stat-up':'stat-down'}">${escapeHTML(caption)}</span>
       </div>
-      <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">${escapeHTML(label)}</div>
-      <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${value}</div>
+      <div class="text-[10px] text-brand-700/70 uppercase tracking-[0.16em] font-semibold">${escapeHTML(label)}</div>
+      <div class="font-display text-[2.1rem] leading-[1.1] font-semibold text-slate-900 mt-1.5 stat-numeral">${value}</div>
     </div>
   `;
 }
