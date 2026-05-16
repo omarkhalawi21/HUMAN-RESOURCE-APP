@@ -1610,10 +1610,10 @@ function renderShell(routeContent) {
   const lang = state.settings.lang;
   const navItems = [
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
-    { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main' },
-    { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main' },
-    { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main' },
-    { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main' },
+    { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
+    { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
+    { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main', parent:'team' },
+    { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main', parent:'team' },
     /* People management */
     { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
@@ -1622,8 +1622,8 @@ function renderShell(routeContent) {
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
-    { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
-    { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company' },
+    { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
+    { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
@@ -1655,8 +1655,10 @@ function renderShell(routeContent) {
           // items (Maintenance + Assets, Reports + Analytics + Spend report)
           // behind one row so the sidebar stays scannable.
           const subgroupMeta = {
-            maintenance: { label: state.settings.lang==='ar' ? 'الصيانة' : 'Maintenance', icon: 'wrench' },
-            reports:     { label: state.settings.lang==='ar' ? 'التقارير' : 'Reports',    icon: 'report' },
+            team:        { label: state.settings.lang==='ar' ? 'الفريق'   : 'Team',        icon: 'users' },
+            inventory:   { label: state.settings.lang==='ar' ? 'المخزون'  : 'Inventory',   icon: 'box' },
+            maintenance: { label: state.settings.lang==='ar' ? 'الصيانة'  : 'Maintenance', icon: 'wrench' },
+            reports:     { label: state.settings.lang==='ar' ? 'التقارير' : 'Reports',     icon: 'report' },
           };
           const renderItem = n => {
             // Inline alert-count chips on certain nav items
