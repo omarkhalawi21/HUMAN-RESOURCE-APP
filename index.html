@@ -9364,7 +9364,7 @@ function dcItemCard(it, branch, date) {
   const d = dailyCountState.draft.byItem[it.id] || { q:'', w:'', n:'' };
   const yRow = dcGetSavedCount(branch, dcPrevDate(date), it.id);
   const yQty = yRow && yRow.qty != null ? Number(yRow.qty) : null;
-  const tNum = d.q.trim() === '' ? null : Number(d.q);
+  const tNum = dcNum(d.q);
   const used = dcUsedChip(yQty, tNum);
   const flag = dcFlag(it, tNum);
   return `
@@ -9379,7 +9379,7 @@ function dcItemCard(it, branch, date) {
         </div>
         <div class="text-center">
           <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Today</div>
-          <input id="dc-q-${it.id}" type="number" step="any" inputmode="decimal" value="${escapeHTML(d.q)}"
+          <input id="dc-q-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(d.q)}"
             class="input !w-24 !h-12 !text-xl !text-center tabular-nums font-semibold">
         </div>
       </div>
@@ -9389,7 +9389,7 @@ function dcItemCard(it, branch, date) {
         ${it.tracksWaste ? `
           <div class="ml-auto flex items-center gap-2">
             <span class="text-[10px] uppercase tracking-wider text-rose-500 font-semibold">Wasted</span>
-            <input id="dc-w-${it.id}" type="number" step="any" inputmode="decimal" value="${escapeHTML(d.w)}" placeholder="0"
+            <input id="dc-w-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(d.w)}" placeholder="0"
               class="input !w-16 !h-10 !text-center tabular-nums bg-rose-50/50 border-rose-200">
           </div>` : ''}
       </div>
@@ -9406,12 +9406,12 @@ function dcRenderReview(branch, date, items) {
     const d = by[it.id] || { q:'', w:'', n:'' };
     if (d.q.trim() !== '') {
       counted++;
-      const t = Number(d.q);
+      const t = dcNum(d.q);
       const f = dcFlag(it, t);
       if (f && f.kind === 'out') { out++; outList.push(it.name); }
       else if (f && f.kind === 'low') { low++; lowList.push(it.name + ' (' + t + ')'); }
     }
-    if (d.w.trim() !== '') wasted += Number(d.w) || 0;
+    wasted += dcNum(d.w) || 0;
   });
   const tile = (label, val, cls) => `
     <div class="bg-white rounded-2xl shadow-card p-4 text-center">
@@ -9441,6 +9441,15 @@ function dcRenderReview(branch, date, items) {
     </div>`;
 }
 
+// Inputs are free text (type=text — number inputs increment on scroll,
+// which silently corrupted entered counts). Parse to a finite number or
+// null; strips stray spaces / a trailing unit a barista might type.
+function dcNum(s) {
+  const v = String(s == null ? '' : s).trim();
+  if (v === '') return null;
+  const n = parseFloat(v.replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
 function dcPrevDate(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() - 1);
@@ -9563,15 +9572,18 @@ async function saveDailyCounts() {
   const toUpsert = [], toDeleteIds = [];
   items.forEach(it => {
     const d = draft.byItem[it.id] || { q:'', w:'', n:'' };
-    const q = d.q.trim(), w = d.w.trim(), n = d.n.trim();
-    if (q === '' && w === '' && n === '') {
+    const n = d.n.trim();
+    const qN = dcNum(d.q), wN = dcNum(d.w);
+    // Nothing meaningful (no number, no note) → skip, so non-numeric
+    // typing can't write a junk all-null row. A note still saves.
+    if (qN == null && wN == null && n === '') {
       if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
       return;
     }
     toUpsert.push({
       item_id: it.id, branch, count_date: date,
-      qty: q === '' ? null : Number(q),
-      waste_qty: w === '' ? null : Number(w),
+      qty: qN,
+      waste_qty: wN,
       note: n || null,
       recorded_by: me?.id || null,
       recorded_at: new Date().toISOString(),
