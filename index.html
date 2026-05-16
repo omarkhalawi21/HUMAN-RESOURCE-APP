@@ -10742,16 +10742,17 @@ function openTransferModal() {
     const it = (state.inventory||[]).find(i => i.id === itemId);
     const sourceBranch = fromB || (it?.branch || '');
     if (sourceBranch === toB)  { toast('Source and destination must differ', 'error'); return false; }
-    // 250g/125g packs deduct the kg-equivalent from roaster stock (the
-    // ledger stays in kg so yield/weekly report are unaffected); the pack
-    // breakdown is recorded in the note like the destination already is.
-    const moveQty = pack === '250' ? qty * 0.25 : pack === '125' ? qty * 0.125 : qty;
-    const packLabel = pack === 'loose' ? '' : `${+qty} × ${pack}g`;
+    // 250g/125g are counted as pieces — the quantity IS the bag count
+    // and is recorded as-is (e.g. "3 pcs × 250g"). Loose moves in the
+    // item's own unit (kg). The pack form is in the note, like the
+    // destination, so phase-2 can post the piece count to the
+    // destination branch's pcs-based daily-count item.
+    const packLabel = pack === 'loose' ? '' : `${+qty} pcs × ${pack}g`;
     const composed = [packLabel, notes].filter(Boolean).join(' · ');
-    const m = await logTransfer(itemId, moveQty, sourceBranch, toB, { occurredAt: date, notes: composed });
+    const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, notes: composed });
     if (!m) return false;
     render();
-    toast(`Transfer logged — ${packLabel || (+moveQty.toFixed(2) + ' ' + (it?.unit||'kg'))} → ${toB}`, 'success');
+    toast(`Transfer logged — ${packLabel || (+qty + ' ' + (it?.unit||'kg'))} → ${toB}`, 'success');
     return true;
   }, { saveLabel: 'Log transfer' });
   // Pre-select the from-branch from the chosen item once the modal mounts.
@@ -10783,8 +10784,7 @@ function onTransferRecalc() {
   const qty = parseFloat(document.getElementById('tf-qty')?.value);
   const pack = packEl.value;
   if (!qty || qty <= 0 || pack === 'loose') { eq.textContent = ''; return; }
-  const kg = pack === '250' ? qty * 0.25 : qty * 0.125;
-  eq.textContent = `${+qty} × ${pack}g = ${+kg.toFixed(3)} kg deducted from stock`;
+  eq.textContent = `${+qty} ${(+qty===1?'piece':'pieces')} of ${pack}g each`;
 }
 
 // Delete a movement and restore the item quantity. Item qty change is
