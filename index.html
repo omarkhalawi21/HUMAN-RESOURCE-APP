@@ -2063,9 +2063,6 @@ function renderDashboard() {
         </div>`;
     })() : ''}
 
-    <!-- Inventory snapshot (read-only) -->
-    ${admin ? inventorySnapshotHTML() : ''}
-
     <!-- Daily-count snapshot (read-only, admin) -->
     ${admin ? dailyCountSnapshotHTML() : ''}
 
