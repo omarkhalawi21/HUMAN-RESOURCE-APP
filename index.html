@@ -9286,6 +9286,7 @@ function renderDailyCount() {
         <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">
           <button onclick="dailyCountState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Count</button>
           <button onclick="dailyCountState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month grid</button>
+          <button onclick="dailyCountState.view='summary'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='summary'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Summary</button>
         </div>
         ${canManage ? `<button onclick="openDailyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage items</button>` : ''}
       </div>
@@ -9307,7 +9308,8 @@ function renderDailyCount() {
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No daily-count items yet.${canManage?' Use “Manage items” to add some.':''}</div>`;
   }
 
-  if (view === 'month') return header + renderDailyCountMonth(items, state.dailyCountsCache[key], ym, branch);
+  if (view === 'month')   return header + renderDailyCountMonth(items, state.dailyCountsCache[key], ym, branch);
+  if (view === 'summary') return header + renderDailyCountSummary(items, state.dailyCountsCache[key], ym, branch);
 
   // ---- Guided step-through ----
   dcEnsureDraft(branch, date, items);
@@ -9584,6 +9586,95 @@ function renderDailyCountMonth(items, monthRows, ym, branch) {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+// Month-end roll-up for one item from its recorded rows. Consumed nets
+// waste out so it lines up with Foodics "sold" quantities:
+//   consumed = opening + received − wasted − closing
+// Opening = the first count *this month* (prior-month carry-over is a
+// phase-2 concern); needs both opening & closing to compute.
+function dcItemSummary(it, rows) {
+  const r = rows.filter(c => c.itemId === it.id)
+                .sort((a,b) => a.countDate.localeCompare(b.countDate));
+  const counted  = r.filter(c => c.qty != null);
+  const opening  = counted.length ? Number(counted[0].qty) : null;
+  const closing  = counted.length ? Number(counted[counted.length-1].qty) : null;
+  const received = r.reduce((s,c) => s + (Number(c.receivedQty)||0), 0);
+  const wasted   = r.reduce((s,c) => s + (Number(c.wasteQty)||0), 0);
+  const consumed = (opening != null && closing != null)
+    ? opening + received - wasted - closing : null;
+  return { opening, closing, received, wasted, consumed, days: counted.length };
+}
+
+function renderDailyCountSummary(items, monthRows, ym, branch) {
+  const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
+  const groups = DC_CAT_ORDER
+    .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
+    .filter(([, l]) => l.length);
+  const tbl = (cat, list) => `
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto mb-4">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+            <th class="px-3 py-2 text-left sticky left-0 bg-white">${escapeHTML(DC_CATEGORIES[cat]||cat)}</th>
+            <th class="px-2 py-2 text-right">Opening</th>
+            <th class="px-2 py-2 text-right text-emerald-600">Received</th>
+            <th class="px-2 py-2 text-right text-rose-600">Wasted</th>
+            <th class="px-2 py-2 text-right">Closing</th>
+            <th class="px-2 py-2 text-right text-brand-700">Consumed</th>
+            <th class="px-2 py-2 text-right">Days</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(it => {
+            const s = dcItemSummary(it, monthRows);
+            return `<tr class="border-t border-slate-50">
+              <td class="px-3 py-2 sticky left-0 bg-white text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
+              <td class="px-2 py-2 text-right tabular-nums text-slate-500">${n2(s.opening)}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-emerald-700">${s.received?n2(s.received):'—'}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-rose-600">${s.wasted?n2(s.wasted):'—'}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-slate-500">${n2(s.closing)}</td>
+              <td class="px-2 py-2 text-right tabular-nums font-semibold text-slate-900">${n2(s.consumed)}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-slate-400">${s.days||''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  return `
+    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="dailyCountState.date=this.value+'-01'; render();" class="input !w-auto !py-2">
+      <div class="flex items-center gap-2">
+        <button onclick="exportDailyCountSummaryCSV('${escapeHTML(branch)}','${escapeHTML(ym)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+      </div>
+    </div>
+    <div class="bg-brand-50/60 border border-brand-100 rounded-xl px-4 py-3 mb-4 text-xs text-brand-800">
+      <strong>Consumed</strong> = Opening + Received − Wasted − Closing. Opening is the first count recorded this month.
+      Compare <strong>Consumed</strong> against your Foodics sales for ${escapeHTML(ym)} to spot variance.
+    </div>
+    ${groups.map(([cat,list]) => tbl(cat,list)).join('')}`;
+}
+
+function exportDailyCountSummaryCSV(branch, ym) {
+  const rows = state.dailyCountsCache[dcCacheKey(branch, ym)] || [];
+  const items = (state.dailyCountItems || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const out = [['Branch','Month','Category','Item','Unit','Opening','Received','Wasted','Closing','Consumed','Days counted']];
+  items.forEach(it => {
+    const s = dcItemSummary(it, rows);
+    out.push([branch, ym, DC_CATEGORIES[it.category]||it.category, it.name, it.unit,
+      s.opening==null?'':s.opening, s.received, s.wasted,
+      s.closing==null?'':s.closing, s.consumed==null?'':s.consumed, s.days]);
+  });
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `daily-count-${branch.toLowerCase()}-${ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Summary exported', 'success');
 }
 
 async function saveDailyCounts() {
