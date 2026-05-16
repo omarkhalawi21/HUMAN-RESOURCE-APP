@@ -7571,7 +7571,34 @@ function downloadArchiveDoc(id) {
   a.rel = 'noopener noreferrer';
   a.click();
 }
-function previewArchiveDoc(id) {
+// base64 data URL → ArrayBuffer (for the SheetJS / mammoth parsers).
+function dataUrlToArrayBuffer(dataUrl) {
+  const b64 = String(dataUrl).split(',')[1] || '';
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+// Shared styled shell for the rich (text / sheet / docx) preview windows.
+function archivePreviewShell(title, bodyHtml) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title>
+  <style>
+    body{margin:0;background:#f8fafc;font-family:system-ui,-apple-system,sans-serif;color:#1e293b;padding:32px 16px}
+    .wrap{max-width:1000px;margin:0 auto;background:white;border-radius:12px;padding:28px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+    h1{margin:0 0 16px;font-size:18px;font-weight:600;word-break:break-word}
+    pre{white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.6;background:#f1f5f9;border-radius:8px;padding:16px;margin:0;color:#334155}
+    table{border-collapse:collapse;width:100%;font-size:12px;margin:0 0 24px;overflow-x:auto;display:block}
+    table td,table th{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;vertical-align:top}
+    table tr:first-child td{background:#f8fafc;font-weight:600}
+    .sheet-name{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#64748b;margin:24px 0 8px}
+    .docx{font-size:14px;line-height:1.7}
+    .docx img{max-width:100%}
+    .docx h1,.docx h2,.docx h3{margin:18px 0 8px}
+  </style></head><body><div class="wrap"><h1>${escapeHTML(title)}</h1>${bodyHtml}</div></body></html>`;
+}
+
+async function previewArchiveDoc(id) {
   const d = (state.archive||[]).find(x => x.id===id);
   if (!d) return;
   const safeUrl = safeArchiveDataUrl(d);
@@ -7579,23 +7606,63 @@ function previewArchiveDoc(id) {
   const mime    = (d.mime||'').toLowerCase();
   const isImage = mime.startsWith('image/');
   const isPdf   = mime.includes('pdf');
-  // Browsers can't render Office docs (Word / Excel / PowerPoint) inline.
-  // Rather than open a popup with a useless "preview not available" page,
-  // route the click to the download path so the user gets the actual file.
-  if (!isImage && !isPdf) {
+  const isText  = mime === 'text/plain';
+  const isCsv   = mime === 'text/csv';
+  const isSheet = mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+               || mime === 'application/vnd.ms-excel';
+  const isDocx  = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  // Open the window synchronously (inside the click) so the popup blocker
+  // doesn't kill it during the async parse below.
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
+
+  if (isImage || isPdf) {
+    // safeUrl is base64 (HTML/attribute-safe), still escaped for defense in depth.
+    win.document.write(isImage
+      ? `<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safeUrl)}" style="max-width:100%;max-height:100vh"></body>`
+      : `<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${escapeHTML(safeUrl)}" type="application/pdf" style="width:100vw;height:100vh"></body>`);
+    win.document.close();
+    return;
+  }
+
+  if (!isText && !isCsv && !isSheet && !isDocx) {
+    // Legacy .doc and anything else with no client-side renderer: download.
+    win.close();
     downloadArchiveDoc(id);
     toast("Browser can't preview this file type — downloading instead.", 'info');
     return;
   }
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  // safeUrl is a base64 data URL — base64 charset is HTML/attribute-safe,
-  // but we still pass it through escapeHTML for defense in depth.
-  win.document.write(isImage
-    ? `<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safeUrl)}" style="max-width:100%;max-height:100vh"></body>`
-    : `<title>${escapeHTML(d.name)}</title><body style="margin:0"><embed src="${escapeHTML(safeUrl)}" type="application/pdf" style="width:100vw;height:100vh"></body>`);
+
+  win.document.write(`<title>${escapeHTML(d.name)}</title><body style="font-family:system-ui;margin:0;padding:40px;color:#64748b;background:#f8fafc">Loading preview…</body>`);
   win.document.close();
+  try {
+    let body;
+    if (isText) {
+      const txt = new TextDecoder().decode(dataUrlToArrayBuffer(safeUrl));
+      body = `<pre>${escapeHTML(txt)}</pre>`;
+    } else if (isSheet || isCsv) {
+      const XLSX = await loadSheetJS();
+      const wb = XLSX.read(dataUrlToArrayBuffer(safeUrl), { type: 'array' });
+      // SheetJS HTML-escapes cell content, so sheet_to_html output is safe to inject.
+      body = wb.SheetNames.map(name =>
+        `<div class="sheet-name">${escapeHTML(name)}</div>${XLSX.utils.sheet_to_html(wb.Sheets[name])}`
+      ).join('');
+    } else {
+      const mammoth = await loadMammoth();
+      const res = await mammoth.convertToHtml({ arrayBuffer: dataUrlToArrayBuffer(safeUrl) });
+      body = `<div class="docx">${res.value || '<em>Empty document.</em>'}</div>`;
+    }
+    win.document.open();
+    win.document.write(archivePreviewShell(d.name, body));
+    win.document.close();
+  } catch (e) {
+    console.error('Archive preview failed:', e);
+    try { win.close(); } catch(_) {}
+    downloadArchiveDoc(id);
+    toast('Preview failed — downloaded the file instead.', 'info');
+  }
 }
 async function deleteArchiveDoc(id) {
   if (!confirm('Delete this document permanently?')) return;
@@ -11089,6 +11156,38 @@ function loadPdfJs() {
     document.head.appendChild(s);
   });
   return _pdfjsLoadingPromise;
+}
+
+// Lazy-load SheetJS — used to render Excel/CSV archive docs as HTML tables
+// inline (browsers can't preview Office files natively, and the docs are
+// base64 in the DB so the MS/Google online viewers can't reach them).
+let _sheetjsLoadingPromise = null;
+function loadSheetJS() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (_sheetjsLoadingPromise) return _sheetjsLoadingPromise;
+  _sheetjsLoadingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error('XLSX missing after load'));
+    s.onerror = () => { _sheetjsLoadingPromise = null; reject(new Error('Failed to load spreadsheet engine (offline?)')); };
+    document.head.appendChild(s);
+  });
+  return _sheetjsLoadingPromise;
+}
+
+// Lazy-load mammoth.js — converts .docx to HTML for inline Word preview.
+let _mammothLoadingPromise = null;
+function loadMammoth() {
+  if (window.mammoth) return Promise.resolve(window.mammoth);
+  if (_mammothLoadingPromise) return _mammothLoadingPromise;
+  _mammothLoadingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js';
+    s.onload = () => window.mammoth ? resolve(window.mammoth) : reject(new Error('mammoth missing after load'));
+    s.onerror = () => { _mammothLoadingPromise = null; reject(new Error('Failed to load Word engine (offline?)')); };
+    document.head.appendChild(s);
+  });
+  return _mammothLoadingPromise;
 }
 
 // Renders the first page of a PDF (passed as a data URL) to a JPEG data URL
