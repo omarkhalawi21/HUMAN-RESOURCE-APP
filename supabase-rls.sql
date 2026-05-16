@@ -2031,6 +2031,82 @@ ALTER TABLE public.daily_counts
   ADD COLUMN IF NOT EXISTS received_qty numeric(12,2);
 
 -- =============================================================
+-- 35. ROASTER → DAILY COUNT mapping (dc_map)
+--     Per roaster bean: which daily-count item each pack form
+--     becomes when transferred to a cafe. jsonb keyed by pack:
+--       { "loose": <dc_item_uuid>, "250": <uuid>, "125": <uuid> }
+--     Any key may be absent/null (that pack just doesn't auto-post).
+--     No RLS change — existing inventory_items policies cover it.
+-- =============================================================
+ALTER TABLE public.inventory_items
+  ADD COLUMN IF NOT EXISTS dc_map jsonb;
+
+-- =============================================================
+-- 36. INCOMING TRANSFERS (receiver-confirms model)
+--     A roaster dispatch creates a pending row for the destination
+--     branch. The branch confirms it during their daily count —
+--     qty pre-filled from dispatched_qty but editable; confirming
+--     writes received_qty into daily_counts and stamps this row.
+--     dispatched vs confirmed surfaces in-transit variance.
+--     Quantities are in the target dc item's unit (pcs for
+--     250g/125g packs, kg for loose). status: pending|confirmed|
+--     rejected. SELECT broad (floor + ops); insert by whoever logs
+--     roaster transfers (admin/head_barista); confirm/update by the
+--     receiving floor (admin/head_barista/barista); delete admin/
+--     head_barista.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.incoming_transfers (
+  id                uuid primary key default gen_random_uuid(),
+  dc_item_id        uuid not null references public.daily_count_items(id) ON DELETE CASCADE,
+  to_branch         text not null,
+  from_branch       text,
+  transfer_date     date not null,
+  pack              text not null,            -- loose | 250 | 125
+  dispatched_qty    numeric(12,2) not null,
+  status            text not null default 'pending',  -- pending | confirmed | rejected
+  confirmed_qty     numeric(12,2),
+  source_item_id    uuid references public.inventory_items(id) ON DELETE SET NULL,
+  source_movement_id uuid references public.inventory_movements(id) ON DELETE SET NULL,
+  created_by        uuid references public.employees(id),
+  created_at        timestamptz not null default now(),
+  confirmed_by      uuid references public.employees(id),
+  confirmed_at      timestamptz
+);
+CREATE INDEX IF NOT EXISTS incoming_transfers_branch_status_idx
+  ON public.incoming_transfers(to_branch, status);
+CREATE INDEX IF NOT EXISTS incoming_transfers_date_idx
+  ON public.incoming_transfers(transfer_date);
+
+ALTER TABLE public.incoming_transfers ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='incoming_transfers'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "it_select_floor_or_ops"
+  ON public.incoming_transfers FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations','roaster']));
+CREATE POLICY "it_insert_transfer_loggers"
+  ON public.incoming_transfers FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','roaster']));
+-- Floor can only act on a row while it's still pending — once
+-- confirmed/rejected it's immutable to them (no post-hoc qty edits
+-- or re-confirms). Admins clean up via the delete policy.
+CREATE POLICY "it_update_floor"
+  ON public.incoming_transfers FOR UPDATE TO authenticated
+  USING (status = 'pending' AND public.has_role(ARRAY['admin','head_barista','barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "it_delete_admin_or_head_barista"
+  ON public.incoming_transfers FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
