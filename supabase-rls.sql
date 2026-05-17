@@ -2651,6 +2651,58 @@ CREATE POLICY "bs_delete_admin_or_bakery"
   USING (public.has_role(ARRAY['admin','bakery']));
 
 -- =============================================================
+-- 48. BAKERY INGREDIENT PURCHASES — weekly + monthly buying
+--     One row per (ingredient_id, ym) = that ingredient's Week 1-4
+--     purchased quantities plus a separate monthly-purchase figure
+--     (the paper "MONTHLY STOCK SHEET"; monthly ≠ sum of weeks, so
+--     it's its own column). Reuses the bakery_ingredients catalog
+--     (block 46). Month-scoped, loaded on demand per ym — NOT
+--     bulk-loaded. SELECT + write admin/bakery; SELECT also
+--     operations; delete admin/bakery. (Per-branch ingredient
+--     transfers are intentionally not modelled — out of scope.)
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.bakery_ingredient_purchases (
+  id            uuid primary key default gen_random_uuid(),
+  ingredient_id uuid not null references public.bakery_ingredients(id) ON DELETE CASCADE,
+  ym            text not null,                 -- 'YYYY-MM'
+  w1            numeric(12,2),
+  w2            numeric(12,2),
+  w3            numeric(12,2),
+  w4            numeric(12,2),
+  monthly_purchase numeric(12,2),
+  recorded_by   uuid references public.employees(id),
+  recorded_at   timestamptz not null default now(),
+  UNIQUE (ingredient_id, ym)
+);
+CREATE INDEX IF NOT EXISTS bakery_ingredient_purchases_ym_idx ON public.bakery_ingredient_purchases(ym);
+
+ALTER TABLE public.bakery_ingredient_purchases ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='bakery_ingredient_purchases'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "bpur_select_floor_or_ops"
+  ON public.bakery_ingredient_purchases FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','bakery']));
+CREATE POLICY "bpur_insert_admin_or_bakery"
+  ON public.bakery_ingredient_purchases FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bpur_update_admin_or_bakery"
+  ON public.bakery_ingredient_purchases FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']))
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bpur_delete_admin_or_bakery"
+  ON public.bakery_ingredient_purchases FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
