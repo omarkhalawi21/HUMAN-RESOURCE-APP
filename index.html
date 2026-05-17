@@ -904,6 +904,7 @@ function mapDailyCountItemFromDb(r) {
     category: r.category || 'other',
     tracksWaste: !!r.tracks_waste,
     sortOrder: Number(r.sort_order) || 0,
+    lowAt: r.low_at == null ? null : Number(r.low_at),
     active: r.active !== false,
   };
 }
@@ -928,6 +929,7 @@ function mapWeeklyCountItemFromDb(r) {
     unit: r.unit || 'pcs',
     category: r.category || 'other',
     sortOrder: Number(r.sort_order) || 0,
+    lowAt: r.low_at == null ? null : Number(r.low_at),
     active: r.active !== false,
   };
 }
@@ -9719,12 +9721,14 @@ function dcUsedChip(yQty, rcv, tNum) {
   if (used > 0)  return { label: 'used ' + used, cls: 'bg-brand-50 text-brand-700' };
   return { label: '+' + (-used) + ' unaccounted', cls: 'bg-amber-50 text-amber-700' };
 }
-// LOW/OUT flag. No per-item threshold in the schema yet, so a simple
-// defensible rule: 0 = OUT; small remainder = LOW (≤2 pcs, ≤1 kg/g).
+// LOW/OUT flag. OUT is universal (0 = out). LOW uses the item's
+// configured reorder point; when unset, falls back to the old
+// unit-based default (≤2 pcs, ≤1 kg/g) so un-configured items don't
+// regress.
 function dcFlag(it, tNum) {
   if (tNum == null) return null;
   if (tNum <= 0) return { kind:'out', label:'OUT', cls:'bg-rose-100 text-rose-700' };
-  const lowAt = (it.unit === 'pcs') ? 2 : 1;
+  const lowAt = it.lowAt != null ? it.lowAt : ((it.unit === 'pcs') ? 2 : 1);
   if (tNum <= lowAt) return { kind:'low', label:'LOW', cls:'bg-amber-100 text-amber-700' };
   return null;
 }
@@ -9927,10 +9931,11 @@ function openDailyCountItemModal(editing) {
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="label">Sort order</label><input id="dci-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
-        <div class="flex items-end gap-4 pb-1">
-          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-waste" type="checkbox" ${e.tracksWaste?'checked':''}> Tracks waste</label>
-          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
-        </div>
+        <div><label class="label">Reorder at (low)</label><input id="dci-low" type="number" step="0.01" class="input" placeholder="default" value="${e.lowAt!=null?e.lowAt:''}"></div>
+      </div>
+      <div class="flex items-center gap-4 pb-1">
+        <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-waste" type="checkbox" ${e.tracksWaste?'checked':''}> Tracks waste</label>
+        <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
       </div>
       ${editing ? `<button onclick="deleteDailyCountItem('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this item</button>` : ''}
     </div>`;
@@ -9943,6 +9948,7 @@ function openDailyCountItemModal(editing) {
       category: $('#dci-cat').value,
       tracks_waste: $('#dci-waste').checked,
       sort_order: Number($('#dci-sort').value) || 0,
+      low_at: dcNum($('#dci-low').value),
       active: $('#dci-active').checked,
     };
     if (editing) {
@@ -10099,11 +10105,12 @@ function wcUsedChip(prevAvail, purchased, avail) {
   if (used > 0)  return { label: 'used ' + used, cls: 'bg-brand-50 text-brand-700' };
   return { label: '+' + (-used) + ' unaccounted', cls: 'bg-amber-50 text-amber-700' };
 }
-// LOW/OUT flag — same defensible universal rule as daily count.
+// LOW/OUT flag — same model as daily count: universal OUT, per-item
+// reorder point for LOW with the unit-based default as fallback.
 function wcFlag(it, avail) {
   if (avail == null) return null;
   if (avail <= 0) return { kind:'out', label:'OUT', cls:'bg-rose-100 text-rose-700' };
-  const lowAt = (it.unit === 'pcs') ? 2 : 1;
+  const lowAt = it.lowAt != null ? it.lowAt : ((it.unit === 'pcs') ? 2 : 1);
   if (avail <= lowAt) return { kind:'low', label:'LOW', cls:'bg-amber-100 text-amber-700' };
   return null;
 }
@@ -10409,9 +10416,10 @@ function openWeeklyCountItemModal(editing) {
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="label">Sort order</label><input id="wci-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
-        <div class="flex items-end pb-1">
-          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="wci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
-        </div>
+        <div><label class="label">Reorder at (low)</label><input id="wci-low" type="number" step="0.01" class="input" placeholder="default" value="${e.lowAt!=null?e.lowAt:''}"></div>
+      </div>
+      <div class="flex items-center pb-1">
+        <label class="flex items-center gap-2 text-sm text-slate-700"><input id="wci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
       </div>
       ${editing ? `<button onclick="deleteWeeklyCountItem('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this item</button>` : ''}
     </div>`;
@@ -10423,6 +10431,7 @@ function openWeeklyCountItemModal(editing) {
       unit: $('#wci-unit').value,
       category: $('#wci-cat').value,
       sort_order: Number($('#wci-sort').value) || 0,
+      low_at: dcNum($('#wci-low').value),
       active: $('#wci-active').checked,
     };
     if (editing) {

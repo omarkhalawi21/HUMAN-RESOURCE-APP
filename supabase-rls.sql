@@ -2390,6 +2390,21 @@ CREATE POLICY "ec_delete_admin_or_head_barista"
   USING (public.has_role(ARRAY['admin','head_barista']));
 
 -- =============================================================
+-- 42. PER-ITEM REORDER THRESHOLD (low_at)
+--     Replaces the crude universal LOW rule (≤2 pcs / ≤1 kg-g) in
+--     Daily Count and Weekly Count with a configurable per-item
+--     reorder point. NULL = fall back to the old unit-based default
+--     (so un-configured / seeded items keep their current behaviour
+--     — no backfill, no regression). OUT stays universal at qty ≤ 0
+--     (zero stock is always out; not configurable). No RLS change —
+--     existing *_count_items policies cover the new column.
+-- =============================================================
+ALTER TABLE public.daily_count_items
+  ADD COLUMN IF NOT EXISTS low_at numeric(12,2);
+ALTER TABLE public.weekly_count_items
+  ADD COLUMN IF NOT EXISTS low_at numeric(12,2);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
