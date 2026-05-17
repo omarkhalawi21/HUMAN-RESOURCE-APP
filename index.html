@@ -442,6 +442,8 @@ function emptyState() {
     assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
     dailyCountItems: [],    // catalog: [{ id, name, unit, category, tracksWaste, sortOrder, active }]
     dailyCountsToday: [],   // bounded: all branches' counts for today only (admin dashboard snapshot)
+    alertWeeklyCounts: [],  // bounded: recent weekly counts, all branches (cross-branch alerts card)
+    alertExpiryChecks: [],  // bounded: recent expiry checks, all branches (cross-branch alerts card)
     incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
@@ -1148,8 +1150,13 @@ async function loadAll() {
   isLoadingData = true;
   try {
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
+    // Cross-branch alerts card: short week lookbacks (latest per
+    // item/branch is derived in JS). Bounded — weeks × 3 branches ×
+    // small catalogs. Daily alerts reuse dailyCountsToday.
+    const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
+    const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1200,6 +1207,10 @@ async function loadAll() {
       // Expiry-checklist catalog only (small, branch-agnostic). The
       // expiry_checks series is per-branch/week, loaded on demand.
       sb.from('expiry_check_items').select('*').order('sort_order'),
+      // Cross-branch alerts: recent weekly counts + expiry checks
+      // across all branches, bounded by the cutoffs above.
+      sb.from('weekly_counts').select('*').gte('week_start', alertWeeklyCutoff),
+      sb.from('expiry_checks').select('*').gte('week_start', alertExpiryCutoff),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1242,6 +1253,8 @@ async function loadAll() {
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.dailyCountItems    = (dailyCountItemsR.data || []).map(mapDailyCountItemFromDb);
     state.dailyCountsToday   = (dailyCountsTodayR.data || []).map(mapDailyCountFromDb);
+    state.alertWeeklyCounts  = (alertWeeklyR.data || []).map(mapWeeklyCountFromDb);
+    state.alertExpiryChecks  = (alertExpiryR.data || []).map(mapExpiryCheckFromDb);
     state.incomingTransfers  = (incomingTransfersR.data || []).map(mapIncomingTransferFromDb);
     state.dailyCountsCache   = {};
     state.weeklyCountItems   = (weeklyCountItemsR.data || []).map(mapWeeklyCountItemFromDb);
@@ -2150,6 +2163,9 @@ function renderDashboard() {
           </div>
         </div>`;
     })() : ''}
+
+    <!-- Cross-branch alerts (read-only, admin) -->
+    ${admin ? crossBranchAlertsHTML() : ''}
 
     <!-- Daily-count snapshot (read-only, admin) -->
     ${admin ? dailyCountSnapshotHTML() : ''}
@@ -8356,6 +8372,9 @@ function renderOperationsDashboard() {
       </div>
     </div>
 
+    <!-- Cross-branch alerts (read-only) -->
+    ${crossBranchAlertsHTML()}
+
     <!-- Inventory snapshot (read-only) -->
     ${inventorySnapshotHTML()}
 
@@ -10945,6 +10964,95 @@ function dailyCountSnapshotHTML() {
         <a href="#/daily_count" class="text-sm text-brand-700 hover:underline">Open &rarr;</a>
       </div>
       ${rows}
+    </div>`;
+}
+
+// Keep only the most recent row per (itemId, branch) by weekStart.
+function alertLatestByItemBranch(rows) {
+  const m = {};
+  rows.forEach(r => {
+    const k = r.itemId + '|' + r.branch;
+    if (!m[k] || r.weekStart > m[k].weekStart) m[k] = r;
+  });
+  return Object.values(m);
+}
+
+// Consolidated cross-branch "needs attention" card: OUT/LOW from
+// Daily Count (today) + Weekly Count (latest recorded week) and
+// EXPIRED / EXPIRES SOON from the Expiry Checklist (latest recorded
+// week). Reads the bounded alert loads — no per-branch fetch.
+// Returns '' when there is no count/checklist catalog at all
+// (mirrors dailyCountSnapshotHTML).
+function crossBranchAlertsHTML() {
+  const dItems = state.dailyCountItems || [];
+  const wItems = state.weeklyCountItems || [];
+  const eItems = state.expiryCheckItems || [];
+  if (!dItems.length && !wItems.length && !eItems.length) return '';
+  const dById = {}; dItems.forEach(i => { dById[i.id] = i; });
+  const wById = {}; wItems.forEach(i => { wById[i.id] = i; });
+  const eById = {}; eItems.forEach(i => { eById[i.id] = i; });
+
+  const out = [], low = [], expired = [], soon = [];
+  (state.dailyCountsToday || []).forEach(c => {
+    const it = dById[c.itemId];
+    if (!it || c.qty == null) return;
+    const f = dcFlag(it, Number(c.qty));
+    if (f && f.kind === 'out') out.push({ name: it.name, branch: c.branch, q: Number(c.qty) });
+    else if (f && f.kind === 'low') low.push({ name: it.name, branch: c.branch, q: Number(c.qty) });
+  });
+  alertLatestByItemBranch(state.alertWeeklyCounts || []).forEach(c => {
+    const it = wById[c.itemId];
+    if (!it || c.availableQty == null) return;
+    const f = wcFlag(it, Number(c.availableQty));
+    if (f && f.kind === 'out') out.push({ name: it.name, branch: c.branch, q: Number(c.availableQty) });
+    else if (f && f.kind === 'low') low.push({ name: it.name, branch: c.branch, q: Number(c.availableQty) });
+  });
+  alertLatestByItemBranch(state.alertExpiryChecks || []).forEach(c => {
+    const it = eById[c.itemId];
+    if (!it || !c.expiryDate) return;
+    const s = ecStatus(c.expiryDate);
+    if (s.kind === 'expired') expired.push({ name: it.name, branch: c.branch, d: c.expiryDate });
+    else if (s.kind === 'soon') soon.push({ name: it.name, branch: c.branch, d: c.expiryDate });
+  });
+
+  const total = out.length + low.length + expired.length + soon.length;
+  const byBranchName = (a, b) => (a.branch + a.name).localeCompare(b.branch + b.name);
+  const CAP = 15;
+  const section = (title, list, cls, href, fmtDetail) => {
+    if (!list.length) return '';
+    list.sort(byBranchName);
+    const shown = list.slice(0, CAP);
+    const chips = shown.map(x => `<span class="text-[12px] px-2 py-1 rounded-lg ${cls}">${escapeHTML(x.name)} <span class="opacity-60">·</span> ${escapeHTML(x.branch)}${fmtDetail(x)}</span>`).join(' ');
+    const more = list.length > CAP ? `<span class="text-[12px] text-slate-400 self-center">+${list.length - CAP} more</span>` : '';
+    return `
+      <div class="pt-3 border-t border-slate-50 first:border-t-0 first:pt-0">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-[11px] uppercase tracking-wider font-semibold text-slate-500">${escapeHTML(title)} <span class="text-slate-400">(${list.length})</span></div>
+          <a href="${href}" class="text-[12px] text-brand-700 hover:underline">Open &rarr;</a>
+        </div>
+        <div class="flex flex-wrap gap-1.5">${chips} ${more}</div>
+      </div>`;
+  };
+
+  const body = total === 0
+    ? `<div class="flex items-center gap-2 text-sm text-emerald-700 py-2">${icon('check','w-4 h-4')} All clear — nothing out, low, or expiring across branches.</div>`
+    : [
+        section('Out of stock',  out,     'bg-rose-100 text-rose-700',   '#/daily_count',  x => ` <span class="opacity-60">·</span> ${x.q}`),
+        section('Running low',   low,     'bg-amber-100 text-amber-700', '#/daily_count',  x => ` <span class="opacity-60">·</span> ${x.q}`),
+        section('Expired',       expired, 'bg-rose-100 text-rose-700',   '#/expiry_check', x => ` <span class="opacity-60">·</span> ${escapeHTML(fmtDate(x.d))}`),
+        section('Expiring soon', soon,    'bg-amber-100 text-amber-700', '#/expiry_check', x => ` <span class="opacity-60">·</span> ${escapeHTML(fmtDate(x.d))}`),
+      ].join('');
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-2">${icon('warning','w-3.5 h-3.5')} Needs attention</div>
+          <div class="font-display text-lg font-semibold text-slate-900">${total === 0 ? 'All branches clear' : total + ' item' + (total===1?'':'s') + ' across branches'}</div>
+        </div>
+      </div>
+      <div class="space-y-0">${body}</div>
+      ${total > 0 ? `<div class="text-[11px] text-slate-400 mt-3">Daily counts shown are today's; weekly &amp; expiry show each item's latest recorded check.</div>` : ''}
     </div>`;
 }
 
