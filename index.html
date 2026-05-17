@@ -6950,7 +6950,6 @@ function printWarningLetter(id) {
   const w = (state.warnings||[]).find(x => x.id===id);
   if (!w) return;
   const e = getEmployee(w.employeeId);
-  const issuer = getEmployee(w.issuedBy);
   const ex = getEmpExtras(e.id);
   const nationalId = ex.iqama?.number || '—';
   const sevAction  = { verbal:'Verbal Warning', written:'Written Warning', final:'Final Written Warning' }[w.severity] || 'Warning';
@@ -6976,7 +6975,7 @@ function printWarningLetter(id) {
     <p class="doc-closing">We emphasize the importance of adhering to workplace conduct and general discipline. Please note that repeating such violations may lead to stricter administrative actions.</p>
     <div class="doc-sign">
       <div class="sign-row">Employee Signature:</div>
-      <div class="sign-row">Direct Manager Signature:${issuer ? ' &nbsp; <span style="font-weight:400;color:#6b7280;font-size:13px">(' + escapeHTML((issuer.firstName + ' ' + (issuer.lastName||'')).trim()) + ')</span>' : ''}</div>
+      <div class="sign-row">Direct Manager Signature:</div>
     </div>
     ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
     <div class="doc-footer">Document reference WL-${escapeHTML(w.id.slice(-6).toUpperCase())} &middot; Confidential personnel record</div>
