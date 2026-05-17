@@ -2532,6 +2532,125 @@ CREATE POLICY "bt_delete_admin_or_bakery"
   USING (public.has_role(ARRAY['admin','bakery']));
 
 -- =============================================================
+-- 46. BAKERY INGREDIENTS — raw-ingredient catalog
+--     The central bakery's raw ingredients (flour, sugar, butter,
+--     chocolate, eggs…). Branch-agnostic catalog; the daily used
+--     quantities live in bakery_stock (block 47). SELECT broad
+--     (admin/operations/bakery); writes admin/bakery only.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.bakery_ingredients (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  sort_order    int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS bakery_ingredients_sort_idx ON public.bakery_ingredients(sort_order);
+
+ALTER TABLE public.bakery_ingredients ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='bakery_ingredients'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "bi_select_floor_or_ops"
+  ON public.bakery_ingredients FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','bakery']));
+CREATE POLICY "bi_insert_admin_or_bakery"
+  ON public.bakery_ingredients FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bi_update_admin_or_bakery"
+  ON public.bakery_ingredients FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']))
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bi_delete_admin_or_bakery"
+  ON public.bakery_ingredients FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']));
+
+-- Seed the bakery ingredient catalog. Idempotent: only fires when
+-- the table is empty, so re-running never duplicates.
+INSERT INTO public.bakery_ingredients (name, sort_order)
+SELECT v.name, v.sort_order
+FROM (VALUES
+  ('Eggs',            10),
+  ('Choc-Chips',      20),
+  ('Choco Chip Dark', 30),
+  ('Butter',          40),
+  ('Cheese',          50),
+  ('Vanilla Essence', 60),
+  ('Lemon',           70),
+  ('Coco Powder',     80),
+  ('Flour',           90),
+  ('Sugar',          100),
+  ('Icing Sugar',    110),
+  ('Brown Sugar',    120),
+  ('Corn Starch',    130),
+  ('Baking Powder',  140),
+  ('Baking Soda',    150),
+  ('Lady Finger',    160),
+  ('Condensed Milk', 170),
+  ('Oil',            180),
+  ('Whipping Cream', 190),
+  ('Blueberry Filling', 200),
+  ('Herco Flakes',   210),
+  ('Bananas',        220)
+) AS v(name,sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM public.bakery_ingredients);
+
+-- =============================================================
+-- 47. BAKERY STOCK — daily raw-ingredient usage
+--     One row per (ingredient_id, stock_date) = how much of that
+--     ingredient was used at the bakery that day (no branch — the
+--     bakery is one production site). The page upserts on that key;
+--     the month grid shows ingredient × day with a monthly TOTAL
+--     column (mirrors the paper "DAILY STOCK SHEET"). Loaded on
+--     demand per month — NOT bulk-loaded. SELECT + write admin/
+--     bakery; SELECT also operations; delete admin/bakery.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.bakery_stock (
+  id            uuid primary key default gen_random_uuid(),
+  ingredient_id uuid not null references public.bakery_ingredients(id) ON DELETE CASCADE,
+  stock_date    date not null,
+  used_qty      numeric(12,2),
+  recorded_by   uuid references public.employees(id),
+  recorded_at   timestamptz not null default now(),
+  UNIQUE (ingredient_id, stock_date)
+);
+CREATE INDEX IF NOT EXISTS bakery_stock_date_idx ON public.bakery_stock(stock_date);
+
+ALTER TABLE public.bakery_stock ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='bakery_stock'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "bs_select_floor_or_ops"
+  ON public.bakery_stock FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','bakery']));
+CREATE POLICY "bs_insert_admin_or_bakery"
+  ON public.bakery_stock FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bs_update_admin_or_bakery"
+  ON public.bakery_stock FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']))
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bs_delete_admin_or_bakery"
+  ON public.bakery_stock FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
