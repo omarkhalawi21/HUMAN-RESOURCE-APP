@@ -2123,6 +2123,160 @@ CREATE POLICY "it_update_admin_or_head_barista"
   WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
 
 -- =============================================================
+-- 38. WEEKLY COUNT — item catalog (storeroom consumables sheet)
+--     Parallel to daily_count_items (block 32) but a weekly
+--     cadence and a different catalog: cups/lids, coffee bags,
+--     cleaning, paper goods, brew gear, retail boxes — the
+--     "WEEKLY INVENTORY" tab of the branch sheet. No waste column
+--     (the weekly sheet only tracks on-hand + purchase/transfer).
+--     SELECT broad (admin/head_barista/barista/operations);
+--     catalog writes admin/head_barista only.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.weekly_count_items (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  unit          text not null default 'pcs',     -- pcs | g | kg
+  category      text not null default 'other',   -- cups_lids|coffee_bags|pantry|paper|cleaning|hygiene|brew_gear|retail|other
+  sort_order    int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS weekly_count_items_sort_idx ON public.weekly_count_items(sort_order);
+
+ALTER TABLE public.weekly_count_items ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='weekly_count_items'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "wci_select_floor_or_ops"
+  ON public.weekly_count_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "wci_insert_admin_or_head_barista"
+  ON public.weekly_count_items FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "wci_update_admin_or_head_barista"
+  ON public.weekly_count_items FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "wci_delete_admin_or_head_barista"
+  ON public.weekly_count_items FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- Seed the RAYYAN weekly-inventory catalog. Idempotent: only
+-- fires when the table is empty, so re-running never duplicates.
+INSERT INTO public.weekly_count_items (name, unit, category, sort_order)
+SELECT v.name, v.unit, v.category, v.sort_order
+FROM (VALUES
+  ('7oz Cups',          'pcs','cups_lids',    10),
+  ('9oz Cups',          'pcs','cups_lids',    20),
+  ('12oz Cups',         'pcs','cups_lids',    30),
+  ('Plastic Cups',      'pcs','cups_lids',    40),
+  ('7oz Lids',          'pcs','cups_lids',    50),
+  ('9oz Lids',          'pcs','cups_lids',    60),
+  ('12oz Lids',         'pcs','cups_lids',    70),
+  ('Red Lids',          'pcs','cups_lids',    80),
+  ('2 Cup Holder',      'pcs','cups_lids',    90),
+  ('4 Cup Holder',      'pcs','cups_lids',   100),
+  ('125g Bag',          'pcs','coffee_bags', 110),
+  ('250g Bag',          'pcs','coffee_bags', 120),
+  ('2.5kg Bag',         'pcs','coffee_bags', 130),
+  ('36 Inch Bag',       'pcs','coffee_bags', 140),
+  ('Matcha Powder',     'g',  'pantry',      150),
+  ('Sugar',             'kg', 'pantry',      160),
+  ('Maple Syrup',       'pcs','pantry',      170),
+  ('Choco Powder',      'g',  'pantry',      180),
+  ('Choco Chips White', 'g',  'pantry',      190),
+  ('Napkins',           'pcs','paper',       200),
+  ('Tissue Roll',       'pcs','paper',       210),
+  ('Mada Roll',         'pcs','paper',       220),
+  ('Cashier Roll',      'pcs','paper',       230),
+  ('Barista Wipes',     'pcs','cleaning',    240),
+  ('Blue Micro Fibre',  'pcs','cleaning',    250),
+  ('Naqi Water',        'pcs','cleaning',    260),
+  ('80 Gallon Bag',     'pcs','cleaning',    270),
+  ('30 Gallon Bag',     'pcs','cleaning',    280),
+  ('Gloves (L)',        'pcs','hygiene',     290),
+  ('Gloves (M)',        'pcs','hygiene',     300),
+  ('Facemask',          'pcs','hygiene',     310),
+  ('Ideio Kettle',      'pcs','brew_gear',   320),
+  ('V60 Filter',        'pcs','brew_gear',   330),
+  ('C.O.D Filters',     'pcs','brew_gear',   340),
+  ('C.O.D Box',         'pcs','brew_gear',   350),
+  ('Straws',            'pcs','brew_gear',   360),
+  ('Wooden Stirrers',   'pcs','brew_gear',   370),
+  ('Blue Cafec',        'pcs','brew_gear',   380),
+  ('Cafec Powder',      'pcs','brew_gear',   390),
+  ('Aeropress',         'pcs','brew_gear',   400),
+  ('Stickers',          'pcs','retail',      410),
+  ('Offer Box',         'pcs','retail',      420),
+  ('Carton',            'pcs','retail',      430),
+  ('Drip Box (E)',      'pcs','retail',      440),
+  ('Drip Box (C)',      'pcs','retail',      450),
+  ('Drip Box (B)',      'pcs','retail',      460),
+  ('Envelope',          'pcs','retail',      470)
+) AS v(name,unit,category,sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM public.weekly_count_items);
+
+-- =============================================================
+-- 39. WEEKLY COUNT — recorded numbers (per item, per branch, per week)
+--     One row per (item_id, branch, week_start); week_start is the
+--     Monday of that week. available_qty = on-hand at count time,
+--     purchased_qty = what was bought/transferred in during the
+--     week (the sheet's "PURCHASE/TRANSFER" column). The page
+--     upserts on that key. Consumed = opening + purchased −
+--     closing, derived in the UI. Loaded on demand per branch+
+--     month — NOT bulk-loaded (the series grows unbounded; same
+--     perf discipline as daily_counts/attendance). SELECT + write
+--     admin/head_barista/barista; delete admin/head_barista.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.weekly_counts (
+  id            uuid primary key default gen_random_uuid(),
+  item_id       uuid not null references public.weekly_count_items(id) ON DELETE CASCADE,
+  branch        text not null,
+  week_start    date not null,
+  available_qty numeric(12,2),
+  purchased_qty numeric(12,2),
+  note          text,
+  recorded_by   uuid references public.employees(id),
+  recorded_at   timestamptz not null default now(),
+  UNIQUE (item_id, branch, week_start)
+);
+CREATE INDEX IF NOT EXISTS weekly_counts_branch_week_idx ON public.weekly_counts(branch, week_start);
+
+ALTER TABLE public.weekly_counts ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='weekly_counts'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "wc_select_floor_or_ops"
+  ON public.weekly_counts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "wc_insert_floor"
+  ON public.weekly_counts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "wc_update_floor"
+  ON public.weekly_counts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "wc_delete_admin_or_head_barista"
+  ON public.weekly_counts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

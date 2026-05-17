@@ -444,6 +444,8 @@ function emptyState() {
     dailyCountsToday: [],   // bounded: all branches' counts for today only (admin dashboard snapshot)
     incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
+    weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
+    weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -917,6 +919,29 @@ function mapDailyCountFromDb(r) {
     recordedAt: r.recorded_at,
   };
 }
+function mapWeeklyCountItemFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    unit: r.unit || 'pcs',
+    category: r.category || 'other',
+    sortOrder: Number(r.sort_order) || 0,
+    active: r.active !== false,
+  };
+}
+function mapWeeklyCountFromDb(r) {
+  return {
+    id: r.id,
+    itemId: r.item_id,
+    branch: r.branch || '',
+    weekStart: r.week_start || '',
+    availableQty: r.available_qty == null ? null : Number(r.available_qty),
+    purchasedQty: r.purchased_qty == null ? null : Number(r.purchased_qty),
+    note: r.note || '',
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
 function inventoryItemToDb(i) {
   return {
     name: i.name,
@@ -1100,7 +1125,7 @@ async function loadAll() {
   try {
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1144,6 +1169,10 @@ async function loadAll() {
       // Pending incoming transfers across all branches — bounded
       // (only unconfirmed rows; confirmed/rejected fall out of scope).
       sb.from('incoming_transfers').select('*').eq('status', 'pending'),
+      // Weekly-count catalog only (small, branch-agnostic). The
+      // weekly_counts series is per-branch/week and loaded on demand
+      // per branch+month — never bulk-loaded here.
+      sb.from('weekly_count_items').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1188,6 +1217,8 @@ async function loadAll() {
     state.dailyCountsToday   = (dailyCountsTodayR.data || []).map(mapDailyCountFromDb);
     state.incomingTransfers  = (incomingTransfersR.data || []).map(mapIncomingTransferFromDb);
     state.dailyCountsCache   = {};
+    state.weeklyCountItems   = (weeklyCountItemsR.data || []).map(mapWeeklyCountItemFromDb);
+    state.weeklyCountsCache  = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -1440,7 +1471,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1724,6 +1755,7 @@ function renderShell(routeContent) {
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'daily_count',  icon:'box',       label:'Daily count',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
+    { key:'weekly_count', icon:'box',       label:'Weekly count',    show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
@@ -9912,6 +9944,486 @@ async function deleteDailyCountItem(id) {
   toast('Item deleted', 'success');
 }
 
+/* ==================== WEEKLY CONSUMABLES COUNT ====================
+   Parallel to Daily Count but a weekly cadence and a storeroom
+   catalog (cups/lids, coffee bags, cleaning, paper, brew gear,
+   retail). Single scrollable page grouped by category, one Save.
+   week_start = the Monday of the counted week. Consumed = last
+   week's available + purchased − this week's available.
+   ----------------------------------------------------------------- */
+const WC_CATEGORIES = {
+  cups_lids:   'Cups & Lids',
+  coffee_bags: 'Coffee Bags',
+  pantry:      'Pantry — Powders & Syrups',
+  paper:       'Paper Goods',
+  cleaning:    'Cleaning',
+  hygiene:     'Hygiene',
+  brew_gear:   'Brew Gear & Filters',
+  retail:      'Retail & Boxes',
+  other:       'Other',
+};
+const WC_CAT_ORDER = ['cups_lids','coffee_bags','pantry','paper','cleaning','hygiene','brew_gear','retail','other'];
+
+let weeklyCountState = { branch:'', week:'', view:'entry', draft:null };
+const _wcLoading = new Set();
+
+function wcCacheKey(branch, ym) { return branch + '|' + ym; }
+// All week math runs in UTC: mixing a local-midnight Date with a UTC
+// toISOString() shifts the day by one at UTC+N (the app's users are
+// UTC+3), which would desync stored week_start vs. the grid columns.
+function wcMonday(dateStr) {
+  const [y,m,dd] = dateStr.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m-1, dd));
+  const back = (d.getUTCDay() + 6) % 7; // Sun=0→6, Mon=1→0, … Sat=6→5
+  d.setUTCDate(d.getUTCDate() - back);
+  return d.toISOString().slice(0,10);
+}
+function wcAddDays(dateStr, n) {
+  const [y,m,dd] = dateStr.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m-1, dd));
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0,10);
+}
+function wcPrevWeek(weekStart) { return wcAddDays(weekStart, -7); }
+function wcThisMonday() { return wcMonday(todayISO()); }
+function wcWeekLabel(weekStart) {
+  return fmtDate(weekStart) + ' – ' + fmtDate(wcAddDays(weekStart, 6));
+}
+// Calendar Mondays whose date falls within ym (YYYY-MM).
+function wcWeeksInMonth(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m-1, 1));
+  while (d.getUTCDay() !== 1) d.setUTCDate(d.getUTCDate() + 1);
+  const out = [];
+  while (d.getUTCMonth() === m-1) {
+    out.push(d.toISOString().slice(0,10));
+    d.setUTCDate(d.getUTCDate() + 7);
+  }
+  return out;
+}
+
+// On-demand month load — the weekly series grows unbounded, so it's
+// never bulk-loaded; we fetch one branch+month at a time and cache.
+async function loadWeeklyCounts(branch, ym) {
+  const key = wcCacheKey(branch, ym);
+  if (state.weeklyCountsCache[key] || _wcLoading.has(key)) return;
+  _wcLoading.add(key);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('weekly_counts').select('*')
+    .eq('branch', branch).gte('week_start', from).lte('week_start', to);
+  _wcLoading.delete(key);
+  if (error) {
+    toast('Failed to load weekly counts: ' + error.message, 'error');
+    state.weeklyCountsCache[key] = [];
+    render();
+    return;
+  }
+  state.weeklyCountsCache[key] = (data || []).map(mapWeeklyCountFromDb);
+  render();
+}
+
+function wcGetSaved(branch, weekStart, itemId) {
+  const arr = state.weeklyCountsCache[wcCacheKey(branch, weekStart.slice(0,7))];
+  if (!arr) return null;
+  return arr.find(c => c.itemId === itemId && c.weekStart === weekStart) || null;
+}
+// Seed the draft from whatever's already saved for this exact week
+// so the user edits real values, not blanks.
+function wcEnsureDraft(branch, week, items) {
+  const k = branch + '|' + week;
+  if (weeklyCountState.draft && weeklyCountState.draft.key === k) return;
+  const byItem = {};
+  items.forEach(it => {
+    const c = wcGetSaved(branch, week, it.id);
+    byItem[it.id] = {
+      a: c && c.availableQty != null ? String(c.availableQty) : '',
+      p: c && c.purchasedQty != null ? String(c.purchasedQty) : '',
+      n: c && c.note ? c.note : '',
+    };
+  });
+  weeklyCountState.draft = { key: k, byItem };
+}
+// Fold every visible input back into the draft (single page — all
+// items are on screen at once) so Save / view switches never lose typing.
+function wcCaptureInputs() {
+  const d = weeklyCountState.draft;
+  if (!d) return;
+  (state.weeklyCountItems || []).forEach(it => {
+    const a = document.getElementById('wc-a-'+it.id);
+    const p = document.getElementById('wc-p-'+it.id);
+    const n = document.getElementById('wc-n-'+it.id);
+    if (!a && !p && !n) return;
+    const cur = d.byItem[it.id] || { a:'', p:'', n:'' };
+    d.byItem[it.id] = {
+      a: a ? a.value.trim() : cur.a,
+      p: p ? p.value.trim() : cur.p,
+      n: n ? n.value.trim() : cur.n,
+    };
+  });
+}
+// True consumption = last week + purchased − this week.
+function wcUsedChip(prevAvail, purchased, avail) {
+  if (prevAvail == null || avail == null) return null;
+  const used = +((prevAvail + (purchased||0) - avail).toFixed(2));
+  if (used === 0) return { label: 'no change', cls: 'bg-slate-100 text-slate-500' };
+  if (used > 0)  return { label: 'used ' + used, cls: 'bg-brand-50 text-brand-700' };
+  return { label: '+' + (-used) + ' unaccounted', cls: 'bg-amber-50 text-amber-700' };
+}
+// LOW/OUT flag — same defensible universal rule as daily count.
+function wcFlag(it, avail) {
+  if (avail == null) return null;
+  if (avail <= 0) return { kind:'out', label:'OUT', cls:'bg-rose-100 text-rose-700' };
+  const lowAt = (it.unit === 'pcs') ? 2 : 1;
+  if (avail <= lowAt) return { kind:'low', label:'LOW', cls:'bg-amber-100 text-amber-700' };
+  return null;
+}
+
+function renderWeeklyCount() {
+  if (!weeklyCountState.branch) weeklyCountState.branch = dcDefaultBranch();
+  if (!weeklyCountState.week)   weeklyCountState.week   = wcThisMonday();
+  const { branch, week, view } = weeklyCountState;
+  const ym  = week.slice(0, 7);
+  const key = wcCacheKey(branch, ym);
+  const canManage = hasRole('admin','head_barista');
+
+  const branchSel = `<select class="pill" onchange="wcCaptureInputs(); weeklyCountState.branch=this.value; weeklyCountState.draft=null; render();">
+    ${SUGGESTED_BRANCHES.map(b => `<option value="${b}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+  </select>`;
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Weekly count</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(branch)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Consumables on hand · what was purchased · what got used this week.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        ${branchSel}
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">
+          <button onclick="weeklyCountState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Count</button>
+          <button onclick="wcCaptureInputs(); weeklyCountState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month grid</button>
+          <button onclick="wcCaptureInputs(); weeklyCountState.view='summary'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='summary'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Summary</button>
+        </div>
+        ${canManage ? `<button onclick="openWeeklyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage items</button>` : ''}
+      </div>
+    </div>`;
+
+  // Need the selected month plus the previous week's month (for the
+  // last-week→this-week delta when a week straddles a month boundary).
+  const prevW = wcPrevWeek(week);
+  const needKeys = [ym, prevW.slice(0,7)];
+  const missing = needKeys.some(m => !state.weeklyCountsCache[wcCacheKey(branch, m)]);
+  if (missing) {
+    needKeys.forEach(m => loadWeeklyCounts(branch, m));
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)}…</div>`;
+  }
+
+  const items = (state.weeklyCountItems || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  if (items.length === 0) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No weekly-count items yet.${canManage?' Use “Manage items” to add some.':''}</div>`;
+  }
+
+  if (view === 'month')   return header + renderWeeklyCountMonth(items, state.weeklyCountsCache[key], ym, branch);
+  if (view === 'summary') return header + renderWeeklyCountSummary(items, state.weeklyCountsCache[key], ym, branch);
+
+  // ---- Single-page grouped entry ----
+  wcEnsureDraft(branch, week, items);
+  const groups = WC_CAT_ORDER
+    .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
+    .filter(([, l]) => l.length);
+
+  const weekBar = `
+    <div class="flex items-center justify-between gap-3 mb-5 flex-wrap">
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Week of</span>
+        <input type="date" value="${escapeHTML(week)}" max="${escapeHTML(todayISO())}"
+          onchange="weeklyCountState.week=wcMonday(this.value); weeklyCountState.draft=null; render();"
+          class="input !w-auto !py-2">
+        <span class="text-xs text-slate-500">${escapeHTML(wcWeekLabel(week))}</span>
+      </label>
+    </div>`;
+
+  const body = groups.map(([cat, list]) => `
+    <div class="mb-6">
+      <div class="text-[11px] uppercase tracking-[0.16em] text-brand-700 font-semibold mb-3">${escapeHTML(WC_CATEGORIES[cat]||cat)}</div>
+      <div class="space-y-2.5">
+        ${list.map(it => wcItemCard(it, branch, week)).join('')}
+      </div>
+    </div>`).join('');
+
+  const navBar = `
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+      <div class="text-xs text-slate-500">${escapeHTML(branch)} · week of ${escapeHTML(fmtDate(week))}</div>
+      <button onclick="saveWeeklyCounts()" class="btn btn-primary">${icon('check','w-4 h-4')} Save week</button>
+    </div>`;
+
+  return `${header}<div class="max-w-2xl mx-auto">${weekBar}${body}${navBar}</div>`;
+}
+
+function wcItemCard(it, branch, week) {
+  const d = weeklyCountState.draft.byItem[it.id] || { a:'', p:'', n:'' };
+  const pRow = wcGetSaved(branch, wcPrevWeek(week), it.id);
+  const pAvail = pRow && pRow.availableQty != null ? Number(pRow.availableQty) : null;
+  const aNum = dcNum(d.a);
+  const pur  = dcNum(d.p) || 0;
+  const used = wcUsedChip(pAvail, pur, aNum);
+  const flag = wcFlag(it, aNum);
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      <div class="flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="text-[15px] font-medium text-slate-900 truncate">${escapeHTML(it.name)}</div>
+          <div class="text-[11px] text-slate-400 mt-0.5">
+            Last week <span class="font-semibold text-slate-600 tabular-nums">${pAvail==null?'—':escapeHTML(String(pAvail))}</span>
+            <span class="text-slate-300">·</span> ${escapeHTML(it.unit)}
+          </div>
+        </div>
+        <div class="text-center">
+          <div class="text-[10px] uppercase tracking-wider text-emerald-600 mb-1">Purchased</div>
+          <input id="wc-p-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(d.p)}" placeholder="0"
+            class="input !w-16 !h-12 !text-center tabular-nums bg-emerald-50/50 border-emerald-200">
+        </div>
+        <div class="text-slate-300 text-lg pt-4">→</div>
+        <div class="text-center">
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1">On hand</div>
+          <input id="wc-a-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(d.a)}"
+            class="input !w-20 !h-12 !text-xl !text-center tabular-nums font-semibold">
+        </div>
+      </div>
+      <div class="flex items-center gap-2 mt-3 flex-wrap">
+        ${pur > 0 ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700">+${pur} purchased</span>` : ''}
+        ${used ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full ${used.cls}">${used.label}</span>` : ''}
+        ${flag ? `<span class="text-[11px] font-semibold px-2 py-1 rounded-full ${flag.cls}">${flag.label}</span>` : ''}
+      </div>
+      <input id="wc-n-${it.id}" type="text" value="${escapeHTML(d.n)}" placeholder="note (optional)"
+        class="input !py-2 !text-xs mt-2 w-full">
+    </div>`;
+}
+
+function renderWeeklyCountMonth(items, monthRows, ym, branch) {
+  const weeks = wcWeeksInMonth(ym);
+  const cell = {}; // itemId -> weekStart -> row
+  monthRows.forEach(c => {
+    (cell[c.itemId] = cell[c.itemId] || {})[c.weekStart] = c;
+  });
+  const wkHdr = weeks.map(w => `<th class="px-2 py-2 text-[10px] font-semibold text-slate-400 text-center whitespace-nowrap">${escapeHTML(fmtDate(w))}</th>`).join('');
+  const rows = items.map(it => {
+    const tds = weeks.map(w => {
+      const c = cell[it.id]?.[w];
+      return `<td class="px-2 py-1.5 text-center tabular-nums text-slate-700 border-l border-slate-50">${c && c.availableQty!=null ? escapeHTML(String(c.availableQty)) : ''}</td>`;
+    }).join('');
+    const hasPur = weeks.some(w => cell[it.id]?.[w]?.purchasedQty != null);
+    const purTds = hasPur ? `<tr class="bg-emerald-50/40">
+      <td class="px-3 py-1 sticky left-0 bg-emerald-50/40 text-[10px] uppercase tracking-wider text-emerald-700">↳ purchased</td>
+      ${weeks.map(w => { const c = cell[it.id]?.[w]; return `<td class="px-2 py-1 text-center tabular-nums text-emerald-600 border-l border-emerald-100/50">${c && c.purchasedQty!=null ? escapeHTML(String(c.purchasedQty)) : ''}</td>`; }).join('')}
+    </tr>` : '';
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-1.5 sticky left-0 bg-white text-sm text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
+      ${tds}
+    </tr>${purTds}`;
+  }).join('');
+  return `
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="weeklyCountState.week=wcMonday(this.value+'-01'); render();" class="input !w-auto !py-2">
+      <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-slate-500 sticky left-0 bg-white">${escapeHTML(branch)} · ${escapeHTML(ym)}</th>
+          ${wkHdr}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// Month roll-up for one item: opening = first available recorded
+// that month, closing = last; consumed = opening + purchased − closing.
+function wcItemSummary(it, rows) {
+  const r = rows.filter(c => c.itemId === it.id)
+                .sort((a,b) => a.weekStart.localeCompare(b.weekStart));
+  const counted   = r.filter(c => c.availableQty != null);
+  const opening   = counted.length ? Number(counted[0].availableQty) : null;
+  const closing   = counted.length ? Number(counted[counted.length-1].availableQty) : null;
+  const purchased = r.reduce((s,c) => s + (Number(c.purchasedQty)||0), 0);
+  const consumed  = (opening != null && closing != null)
+    ? opening + purchased - closing : null;
+  return { opening, closing, purchased, consumed, weeks: counted.length };
+}
+
+function renderWeeklyCountSummary(items, monthRows, ym, branch) {
+  const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
+  const groups = WC_CAT_ORDER
+    .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
+    .filter(([, l]) => l.length);
+  const tbl = (cat, list) => `
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto mb-4">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+            <th class="px-3 py-2 text-left sticky left-0 bg-white">${escapeHTML(WC_CATEGORIES[cat]||cat)}</th>
+            <th class="px-2 py-2 text-right">Opening</th>
+            <th class="px-2 py-2 text-right text-emerald-600">Purchased</th>
+            <th class="px-2 py-2 text-right">Closing</th>
+            <th class="px-2 py-2 text-right text-brand-700">Consumed</th>
+            <th class="px-2 py-2 text-right">Weeks</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(it => {
+            const s = wcItemSummary(it, monthRows);
+            return `<tr class="border-t border-slate-50">
+              <td class="px-3 py-2 sticky left-0 bg-white text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
+              <td class="px-2 py-2 text-right tabular-nums text-slate-500">${n2(s.opening)}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-emerald-700">${s.purchased?n2(s.purchased):'—'}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-slate-500">${n2(s.closing)}</td>
+              <td class="px-2 py-2 text-right tabular-nums font-semibold text-slate-900">${n2(s.consumed)}</td>
+              <td class="px-2 py-2 text-right tabular-nums text-slate-400">${s.weeks||''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  return `
+    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="weeklyCountState.week=wcMonday(this.value+'-01'); render();" class="input !w-auto !py-2">
+      <div class="flex items-center gap-2">
+        <button onclick="exportWeeklyCountSummaryCSV('${escapeHTML(branch)}','${escapeHTML(ym)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+      </div>
+    </div>
+    <div class="bg-brand-50/60 border border-brand-100 rounded-xl px-4 py-3 mb-4 text-xs text-brand-800">
+      <strong>Consumed</strong> = Opening + Purchased − Closing. Opening is the first weekly count recorded this month.
+    </div>
+    ${groups.map(([cat,list]) => tbl(cat,list)).join('')}`;
+}
+
+function exportWeeklyCountSummaryCSV(branch, ym) {
+  const rows = state.weeklyCountsCache[wcCacheKey(branch, ym)] || [];
+  const items = (state.weeklyCountItems || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const out = [['Branch','Month','Category','Item','Unit','Opening','Purchased','Closing','Consumed','Weeks counted']];
+  items.forEach(it => {
+    const s = wcItemSummary(it, rows);
+    out.push([branch, ym, WC_CATEGORIES[it.category]||it.category, it.name, it.unit,
+      s.opening==null?'':s.opening, s.purchased,
+      s.closing==null?'':s.closing, s.consumed==null?'':s.consumed, s.weeks]);
+  });
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `weekly-count-${branch.toLowerCase()}-${ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Summary exported', 'success');
+}
+
+async function saveWeeklyCounts() {
+  wcCaptureInputs();
+  const { branch, week, draft } = weeklyCountState;
+  if (!draft) { toast('Nothing to save.', 'info'); return; }
+  const me = currentEmployee();
+  const ym = week.slice(0,7), key = wcCacheKey(branch, ym);
+  const items = (state.weeklyCountItems || []).filter(i => i.active);
+  const existing = (state.weeklyCountsCache[key] || []).filter(c => c.weekStart === week);
+  const exById = {}; existing.forEach(c => { exById[c.itemId] = c; });
+  const toUpsert = [], toDeleteIds = [];
+  items.forEach(it => {
+    const d = draft.byItem[it.id] || { a:'', p:'', n:'' };
+    const n = d.n.trim();
+    const aN = dcNum(d.a), pN = dcNum(d.p);
+    if (aN == null && pN == null && n === '') {
+      if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
+      return;
+    }
+    toUpsert.push({
+      item_id: it.id, branch, week_start: week,
+      available_qty: aN,
+      purchased_qty: pN,
+      note: n || null,
+      recorded_by: me?.id || null,
+      recorded_at: new Date().toISOString(),
+    });
+  });
+  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (toDeleteIds.length) {
+    const { error } = await sb.from('weekly_counts').delete().in('id', toDeleteIds);
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  if (toUpsert.length) {
+    const { error } = await sb.from('weekly_counts')
+      .upsert(toUpsert, { onConflict: 'item_id,branch,week_start' });
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  delete state.weeklyCountsCache[key];
+  weeklyCountState.draft = null;
+  await loadWeeklyCounts(branch, ym);
+  toast('Week saved', 'success');
+}
+
+function openWeeklyCountItemModal(editing) {
+  const e = editing || {};
+  const unitOpt = u => `<option value="${u}" ${e.unit===u?'selected':''}>${u}</option>`;
+  const catOpt  = c => `<option value="${c}" ${(e.category||'other')===c?'selected':''}>${escapeHTML(WC_CATEGORIES[c])}</option>`;
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Item name</label>
+        <input id="wci-name" class="input" placeholder="e.g. 9oz Cups" value="${escapeHTML(e.name||'')}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Unit</label><select id="wci-unit" class="input">${['pcs','g','kg'].map(unitOpt).join('')}</select></div>
+        <div><label class="label">Category</label><select id="wci-cat" class="input">${WC_CAT_ORDER.map(catOpt).join('')}</select></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Sort order</label><input id="wci-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+        <div class="flex items-end pb-1">
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="wci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+        </div>
+      </div>
+      ${editing ? `<button onclick="deleteWeeklyCountItem('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this item</button>` : ''}
+    </div>`;
+  openModal(editing ? 'Edit item' : 'Add weekly-count item', form, async () => {
+    const name = $('#wci-name').value.trim();
+    if (!name) { toast('Item name is required', 'error'); return false; }
+    const row = {
+      name,
+      unit: $('#wci-unit').value,
+      category: $('#wci-cat').value,
+      sort_order: Number($('#wci-sort').value) || 0,
+      active: $('#wci-active').checked,
+    };
+    if (editing) {
+      const { data, error } = await sb.from('weekly_count_items').update(row).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapWeeklyCountItemFromDb(data));
+      toast('Item updated', 'success');
+    } else {
+      const { data, error } = await sb.from('weekly_count_items').insert(row).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.weeklyCountItems.push(mapWeeklyCountItemFromDb(data));
+      toast('Item added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add item' });
+}
+
+async function deleteWeeklyCountItem(id) {
+  if (!confirm('Delete this item and all its recorded counts? This cannot be undone.')) return;
+  const { error } = await sb.from('weekly_count_items').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.weeklyCountItems = state.weeklyCountItems.filter(i => i.id !== id);
+  state.weeklyCountsCache = {}; // counts cascade-deleted; drop stale cache
+  closeModal();
+  render();
+  toast('Item deleted', 'success');
+}
+
 /* -------------------- INVENTORY (admin or inventory) -------------------- */
 const INVENTORY_CATEGORIES = {
   beans_raw:    { label: 'Coffee — Green Beans', icon: 'cash' },
@@ -13161,6 +13673,7 @@ function render() {
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
+    case 'weekly_count': content = hasRole('admin','head_barista','barista') ? renderWeeklyCount() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
