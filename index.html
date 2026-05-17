@@ -446,6 +446,8 @@ function emptyState() {
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
+    expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
+    expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -942,6 +944,26 @@ function mapWeeklyCountFromDb(r) {
     recordedAt: r.recorded_at,
   };
 }
+function mapExpiryCheckItemFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    sortOrder: Number(r.sort_order) || 0,
+    active: r.active !== false,
+  };
+}
+function mapExpiryCheckFromDb(r) {
+  return {
+    id: r.id,
+    itemId: r.item_id,
+    branch: r.branch || '',
+    weekStart: r.week_start || '',
+    expiryDate: r.expiry_date || null,
+    note: r.note || '',
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
 function inventoryItemToDb(i) {
   return {
     name: i.name,
@@ -1125,7 +1147,7 @@ async function loadAll() {
   try {
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1173,6 +1195,9 @@ async function loadAll() {
       // weekly_counts series is per-branch/week and loaded on demand
       // per branch+month — never bulk-loaded here.
       sb.from('weekly_count_items').select('*').order('sort_order'),
+      // Expiry-checklist catalog only (small, branch-agnostic). The
+      // expiry_checks series is per-branch/week, loaded on demand.
+      sb.from('expiry_check_items').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1219,6 +1244,8 @@ async function loadAll() {
     state.dailyCountsCache   = {};
     state.weeklyCountItems   = (weeklyCountItemsR.data || []).map(mapWeeklyCountItemFromDb);
     state.weeklyCountsCache  = {};
+    state.expiryCheckItems   = (expiryCheckItemsR.data || []).map(mapExpiryCheckItemFromDb);
+    state.expiryChecksCache  = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -1471,7 +1498,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1756,6 +1783,7 @@ function renderShell(routeContent) {
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'daily_count',  icon:'box',       label:'Daily count',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'weekly_count', icon:'box',       label:'Weekly count',    show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
+    { key:'expiry_check', icon:'calendar',  label:'Expiry checklist',show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
@@ -10424,6 +10452,326 @@ async function deleteWeeklyCountItem(id) {
   toast('Item deleted', 'success');
 }
 
+/* ==================== EXPIRY CHECKLIST ====================
+   The "EXPIRED ITEMS CHECKLIST" sheet tab: each week, log the
+   printed expiry date on each stocked perishable so staff pull it
+   before it's served. Weekly cadence — reuses the wc* week model
+   (wcMonday/wcAddDays/wcWeeksInMonth/wcWeekLabel). Tracks a date,
+   not a quantity; the page derives EXPIRED / SOON status.
+   --------------------------------------------------------------- */
+const EC_SOON_DAYS = 14; // "expires soon" window — single-number dial
+
+let expiryCheckState = { branch:'', week:'', view:'entry', draft:null };
+const _ecLoading = new Set();
+
+function ecCacheKey(branch, ym) { return branch + '|' + ym; }
+
+async function loadExpiryChecks(branch, ym) {
+  const key = ecCacheKey(branch, ym);
+  if (state.expiryChecksCache[key] || _ecLoading.has(key)) return;
+  _ecLoading.add(key);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('expiry_checks').select('*')
+    .eq('branch', branch).gte('week_start', from).lte('week_start', to);
+  _ecLoading.delete(key);
+  if (error) {
+    toast('Failed to load expiry checks: ' + error.message, 'error');
+    state.expiryChecksCache[key] = [];
+    render();
+    return;
+  }
+  state.expiryChecksCache[key] = (data || []).map(mapExpiryCheckFromDb);
+  render();
+}
+
+function ecGetSaved(branch, weekStart, itemId) {
+  const arr = state.expiryChecksCache[ecCacheKey(branch, weekStart.slice(0,7))];
+  if (!arr) return null;
+  return arr.find(c => c.itemId === itemId && c.weekStart === weekStart) || null;
+}
+function ecEnsureDraft(branch, week, items) {
+  const k = branch + '|' + week;
+  if (expiryCheckState.draft && expiryCheckState.draft.key === k) return;
+  const byItem = {};
+  items.forEach(it => {
+    const c = ecGetSaved(branch, week, it.id);
+    byItem[it.id] = {
+      d: c && c.expiryDate ? c.expiryDate : '',
+      n: c && c.note ? c.note : '',
+    };
+  });
+  expiryCheckState.draft = { key: k, byItem };
+}
+function ecCaptureInputs() {
+  const d = expiryCheckState.draft;
+  if (!d) return;
+  (state.expiryCheckItems || []).forEach(it => {
+    const dt = document.getElementById('ec-d-'+it.id);
+    const nt = document.getElementById('ec-n-'+it.id);
+    if (!dt && !nt) return;
+    const cur = d.byItem[it.id] || { d:'', n:'' };
+    d.byItem[it.id] = {
+      d: dt ? dt.value.trim() : cur.d,
+      n: nt ? nt.value.trim() : cur.n,
+    };
+  });
+}
+// ISO date strings compare lexicographically, so no Date parsing
+// needed. null/'' → not checked.
+function ecStatus(expiryStr) {
+  if (!expiryStr) return { kind:'none', label:'not checked', cls:'bg-slate-100 text-slate-500' };
+  const today = todayISO();
+  if (expiryStr < today) return { kind:'expired', label:'EXPIRED', cls:'bg-rose-100 text-rose-700' };
+  const soonEdge = wcAddDays(today, EC_SOON_DAYS);
+  if (expiryStr <= soonEdge) {
+    const days = daysUntil(expiryStr);
+    return { kind:'soon', label:'EXPIRES SOON · ' + (days===0?'today':'in '+days+'d'), cls:'bg-amber-100 text-amber-700' };
+  }
+  return { kind:'ok', label:'OK · ' + fmtDate(expiryStr), cls:'bg-emerald-50 text-emerald-700' };
+}
+
+function renderExpiryCheck() {
+  if (!expiryCheckState.branch) expiryCheckState.branch = dcDefaultBranch();
+  if (!expiryCheckState.week)   expiryCheckState.week   = wcThisMonday();
+  const { branch, week, view } = expiryCheckState;
+  const ym  = week.slice(0, 7);
+  const key = ecCacheKey(branch, ym);
+  const canManage = hasRole('admin','head_barista');
+
+  const branchSel = `<select class="pill" onchange="ecCaptureInputs(); expiryCheckState.branch=this.value; expiryCheckState.draft=null; render();">
+    ${SUGGESTED_BRANCHES.map(b => `<option value="${b}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+  </select>`;
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Expiry checklist</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(branch)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Log the printed expiry date on each perishable · pull what's expired or expiring soon.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        ${branchSel}
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">
+          <button onclick="expiryCheckState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Check</button>
+          <button onclick="ecCaptureInputs(); expiryCheckState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month grid</button>
+        </div>
+        ${canManage ? `<button onclick="openExpiryCheckItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage items</button>` : ''}
+      </div>
+    </div>`;
+
+  if (!state.expiryChecksCache[key]) {
+    loadExpiryChecks(branch, ym);
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)}…</div>`;
+  }
+
+  const items = (state.expiryCheckItems || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  if (items.length === 0) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No expiry-checklist items yet.${canManage?' Use “Manage items” to add some.':''}</div>`;
+  }
+
+  if (view === 'month') return header + renderExpiryCheckMonth(items, state.expiryChecksCache[key], ym, branch);
+
+  // ---- Single-page weekly checklist ----
+  ecEnsureDraft(branch, week, items);
+  const weekBar = `
+    <div class="flex items-center justify-between gap-3 mb-5 flex-wrap">
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Week of</span>
+        <input type="date" value="${escapeHTML(week)}" max="${escapeHTML(todayISO())}"
+          onchange="expiryCheckState.week=wcMonday(this.value); expiryCheckState.draft=null; render();"
+          class="input !w-auto !py-2">
+        <span class="text-xs text-slate-500">${escapeHTML(wcWeekLabel(week))}</span>
+      </label>
+    </div>`;
+  const body = `<div class="space-y-2.5">${items.map(it => ecItemCard(it)).join('')}</div>`;
+  const navBar = `
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+      <div class="text-xs text-slate-500">${escapeHTML(branch)} · week of ${escapeHTML(fmtDate(week))}</div>
+      <button onclick="saveExpiryChecks()" class="btn btn-primary">${icon('check','w-4 h-4')} Save checklist</button>
+    </div>`;
+  return `${header}<div class="max-w-2xl mx-auto">${weekBar}${body}${navBar}</div>`;
+}
+
+function ecItemCard(it) {
+  const d = expiryCheckState.draft.byItem[it.id] || { d:'', n:'' };
+  const st = ecStatus(d.d);
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="flex-1 min-w-0">
+          <div class="text-[15px] font-medium text-slate-900 truncate">${escapeHTML(it.name)}</div>
+          <div class="mt-1"><span class="text-[11px] font-semibold px-2 py-1 rounded-full ${st.cls}">${escapeHTML(st.label)}</span></div>
+        </div>
+        <div class="text-center">
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Expiry on unit</div>
+          <input id="ec-d-${it.id}" type="date" value="${escapeHTML(d.d)}"
+            onchange="ecCaptureInputs(); render();"
+            class="input !w-auto !h-12 !text-center tabular-nums">
+        </div>
+      </div>
+      <input id="ec-n-${it.id}" type="text" value="${escapeHTML(d.n)}" placeholder="note (optional) — e.g. pulled 2 units"
+        class="input !py-2 !text-xs mt-2 w-full">
+    </div>`;
+}
+
+function renderExpiryCheckMonth(items, monthRows, ym, branch) {
+  const weeks = wcWeeksInMonth(ym);
+  const cell = {}; // itemId -> weekStart -> row
+  monthRows.forEach(c => {
+    (cell[c.itemId] = cell[c.itemId] || {})[c.weekStart] = c;
+  });
+  const wkHdr = weeks.map(w => `<th class="px-2 py-2 text-[10px] font-semibold text-slate-400 text-center whitespace-nowrap">${escapeHTML(fmtDate(w))}</th>`).join('');
+  const rows = items.map(it => {
+    const tds = weeks.map(w => {
+      const c = cell[it.id]?.[w];
+      const st = ecStatus(c ? c.expiryDate : '');
+      const txt = c && c.expiryDate ? fmtDate(c.expiryDate) : '';
+      return `<td class="px-2 py-1.5 text-center tabular-nums border-l border-slate-50"><span class="${st.kind==='none'?'text-slate-300':'inline-block px-1.5 py-0.5 rounded '+st.cls}">${escapeHTML(txt||'—')}</span></td>`;
+    }).join('');
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-1.5 sticky left-0 bg-white text-sm text-slate-800 whitespace-nowrap">${escapeHTML(it.name)}</td>
+      ${tds}
+    </tr>`;
+  }).join('');
+  return `
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="expiryCheckState.week=wcMonday(this.value+'-01'); render();" class="input !w-auto !py-2">
+      <div class="flex items-center gap-2">
+        <button onclick="exportExpiryCheckCSV('${escapeHTML(branch)}','${escapeHTML(ym)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+      </div>
+    </div>
+    <div class="bg-brand-50/60 border border-brand-100 rounded-xl px-4 py-3 mb-4 text-xs text-brand-800">
+      Cells are coloured by status: <span class="px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">expired</span>
+      <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">expires within ${EC_SOON_DAYS}d</span>
+      <span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">ok</span>. Dash = not checked.
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-slate-500 sticky left-0 bg-white">${escapeHTML(branch)} · ${escapeHTML(ym)}</th>
+          ${wkHdr}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function exportExpiryCheckCSV(branch, ym) {
+  const rows = state.expiryChecksCache[ecCacheKey(branch, ym)] || [];
+  const weeks = wcWeeksInMonth(ym);
+  const items = (state.expiryCheckItems || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const cell = {};
+  rows.forEach(c => { (cell[c.itemId] = cell[c.itemId] || {})[c.weekStart] = c; });
+  const out = [['Branch','Month','Item', ...weeks.map(w => 'Week of ' + w)]];
+  items.forEach(it => {
+    out.push([branch, ym, it.name, ...weeks.map(w => cell[it.id]?.[w]?.expiryDate || '')]);
+  });
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `expiry-checklist-${branch.toLowerCase()}-${ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Checklist exported', 'success');
+}
+
+async function saveExpiryChecks() {
+  ecCaptureInputs();
+  const { branch, week, draft } = expiryCheckState;
+  if (!draft) { toast('Nothing to save.', 'info'); return; }
+  const me = currentEmployee();
+  const ym = week.slice(0,7), key = ecCacheKey(branch, ym);
+  const items = (state.expiryCheckItems || []).filter(i => i.active);
+  const existing = (state.expiryChecksCache[key] || []).filter(c => c.weekStart === week);
+  const exById = {}; existing.forEach(c => { exById[c.itemId] = c; });
+  const toUpsert = [], toDeleteIds = [];
+  items.forEach(it => {
+    const dr = draft.byItem[it.id] || { d:'', n:'' };
+    const dt = dr.d.trim(), n = dr.n.trim();
+    if (dt === '' && n === '') {
+      if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
+      return;
+    }
+    toUpsert.push({
+      item_id: it.id, branch, week_start: week,
+      expiry_date: dt || null,
+      note: n || null,
+      recorded_by: me?.id || null,
+      recorded_at: new Date().toISOString(),
+    });
+  });
+  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (toDeleteIds.length) {
+    const { error } = await sb.from('expiry_checks').delete().in('id', toDeleteIds);
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  if (toUpsert.length) {
+    const { error } = await sb.from('expiry_checks')
+      .upsert(toUpsert, { onConflict: 'item_id,branch,week_start' });
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  delete state.expiryChecksCache[key];
+  expiryCheckState.draft = null;
+  await loadExpiryChecks(branch, ym);
+  toast('Checklist saved', 'success');
+}
+
+function openExpiryCheckItemModal(editing) {
+  const e = editing || {};
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Item name</label>
+        <input id="eci-name" class="input" placeholder="e.g. Full Fat" value="${escapeHTML(e.name||'')}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Sort order</label><input id="eci-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+        <div class="flex items-end pb-1">
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="eci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+        </div>
+      </div>
+      ${editing ? `<button onclick="deleteExpiryCheckItem('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this item</button>` : ''}
+    </div>`;
+  openModal(editing ? 'Edit item' : 'Add expiry-checklist item', form, async () => {
+    const name = $('#eci-name').value.trim();
+    if (!name) { toast('Item name is required', 'error'); return false; }
+    const row = {
+      name,
+      sort_order: Number($('#eci-sort').value) || 0,
+      active: $('#eci-active').checked,
+    };
+    if (editing) {
+      const { data, error } = await sb.from('expiry_check_items').update(row).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapExpiryCheckItemFromDb(data));
+      toast('Item updated', 'success');
+    } else {
+      const { data, error } = await sb.from('expiry_check_items').insert(row).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.expiryCheckItems.push(mapExpiryCheckItemFromDb(data));
+      toast('Item added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add item' });
+}
+
+async function deleteExpiryCheckItem(id) {
+  if (!confirm('Delete this item and all its recorded checks? This cannot be undone.')) return;
+  const { error } = await sb.from('expiry_check_items').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.expiryCheckItems = state.expiryCheckItems.filter(i => i.id !== id);
+  state.expiryChecksCache = {}; // checks cascade-deleted; drop stale cache
+  closeModal();
+  render();
+  toast('Item deleted', 'success');
+}
+
 /* -------------------- INVENTORY (admin or inventory) -------------------- */
 const INVENTORY_CATEGORIES = {
   beans_raw:    { label: 'Coffee — Green Beans', icon: 'cash' },
@@ -13674,6 +14022,7 @@ function render() {
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
     case 'weekly_count': content = hasRole('admin','head_barista','barista') ? renderWeeklyCount() : renderRoleDashboard(); break;
+    case 'expiry_check': content = hasRole('admin','head_barista','barista') ? renderExpiryCheck() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
