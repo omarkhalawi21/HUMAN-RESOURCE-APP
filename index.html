@@ -10966,7 +10966,43 @@ async function deleteInventoryMovement(movementId) {
   if (!m) return;
   const it = (state.inventory||[]).find(x => x.id === m.itemId);
   if (!it) return;
-  if (!confirm(`Delete this ${(MOVEMENT_TYPES[m.type]||MOVEMENT_TYPES.other).label.toLowerCase()} of ${m.qtyDelta>0?'+':''}${m.qtyDelta} ${it.unit||'units'} on ${fmtDate(m.occurredAt||'')}?\n\nThe item quantity will be restored.`)) return;
+
+  // If this transfer auto-posted into a branch's daily count, find the
+  // link BEFORE deleting — the source_movement_id FK nulls ON DELETE.
+  let linked = null;
+  if (m.type === 'transfer') {
+    const { data } = await sb.from('incoming_transfers').select('*')
+      .eq('source_movement_id', movementId).limit(1).maybeSingle();
+    if (data) linked = mapIncomingTransferFromDb(data);
+  }
+  let reverseNote = '';
+  if (linked && linked.status === 'confirmed') {
+    const dci = (state.dailyCountItems||[]).find(d => d.id === linked.dcItemId);
+    reverseNote = `\n\nAlso reverses ${linked.confirmedQty} from ${linked.toBranch}'s daily count (${dci?.name||'item'}) on ${fmtDate(linked.transferDate)}.`;
+  } else if (linked && linked.status === 'pending') {
+    reverseNote = `\n\nThe pending incoming at ${linked.toBranch} will be cancelled.`;
+  }
+  if (!confirm(`Delete this ${(MOVEMENT_TYPES[m.type]||MOVEMENT_TYPES.other).label.toLowerCase()} of ${m.qtyDelta>0?'+':''}${m.qtyDelta} ${it.unit||'units'} on ${fmtDate(m.occurredAt||'')}?\n\nThe item quantity will be restored.${reverseNote}`)) return;
+
+  // Reverse the daily-count side first (before the movement row is gone).
+  if (linked && linked.status === 'confirmed') {
+    const { data: ex } = await sb.from('daily_counts').select('*')
+      .eq('item_id', linked.dcItemId).eq('branch', linked.toBranch)
+      .eq('count_date', linked.transferDate).maybeSingle();
+    if (ex) {
+      const newReceived = Math.max(0, (ex.received_qty != null ? Number(ex.received_qty) : 0) - linked.confirmedQty);
+      const up = await sb.from('daily_counts').update({ received_qty: newReceived }).eq('id', ex.id);
+      if (up.error) { toast('Reversal failed: ' + up.error.message, 'error'); return; }
+    }
+    const rv = await sb.from('incoming_transfers').update({ status: 'reversed' }).eq('id', linked.id);
+    if (rv.error) { toast('Reversal flag failed: ' + rv.error.message, 'error'); return; }
+    delete state.dailyCountsCache[dcCacheKey(linked.toBranch, linked.transferDate.slice(0,7))];
+  } else if (linked && linked.status === 'pending') {
+    const rj = await sb.from('incoming_transfers').update({ status: 'rejected' }).eq('id', linked.id);
+    if (rj.error) { toast('Could not cancel the pending incoming: ' + rj.error.message, 'error'); return; }
+    state.incomingTransfers = (state.incomingTransfers||[]).filter(x => x.id !== linked.id);
+  }
+
   const restoredQty = Math.max(0, Number(it.quantity) - Number(m.qtyDelta));
 
   const mDel = await sb.from('inventory_movements').delete().eq('id', movementId);

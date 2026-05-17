@@ -2107,6 +2107,22 @@ CREATE POLICY "it_delete_admin_or_head_barista"
   USING (public.has_role(ARRAY['admin','head_barista']));
 
 -- =============================================================
+-- 37. INCOMING TRANSFERS — elevated reversal (Phase 2.1)
+--     admin/head_barista may update an incoming_transfers row in
+--     ANY status (not just pending), so deleting the source roaster
+--     transfer can flip a confirmed row → 'reversed' and a pending
+--     one → 'rejected'. The pending-only it_update_floor policy
+--     stays for the normal barista confirm/reject flow; RLS is
+--     permissive (OR) so both coexist. ('reversed' is just another
+--     text value — no CHECK constraint on status.)
+-- =============================================================
+DROP POLICY IF EXISTS "it_update_admin_or_head_barista" ON public.incoming_transfers;
+CREATE POLICY "it_update_admin_or_head_barista"
+  ON public.incoming_transfers FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
