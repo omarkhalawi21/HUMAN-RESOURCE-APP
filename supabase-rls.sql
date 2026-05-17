@@ -2426,6 +2426,112 @@ ALTER TABLE public.employees
   ));
 
 -- =============================================================
+-- 44. BAKERY PRODUCTS — finished-goods catalog
+--     The central bakery's finished products (cookies, brownies,
+--     cakes) transferred daily to the branches. Branch-agnostic
+--     catalog; the daily per-branch quantities live in
+--     bakery_transfers (block 45). SELECT broad (admin/operations/
+--     bakery); catalog writes admin/bakery only.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.bakery_products (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  sort_order    int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS bakery_products_sort_idx ON public.bakery_products(sort_order);
+
+ALTER TABLE public.bakery_products ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='bakery_products'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "bp_select_floor_or_ops"
+  ON public.bakery_products FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','bakery']));
+CREATE POLICY "bp_insert_admin_or_bakery"
+  ON public.bakery_products FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bp_update_admin_or_bakery"
+  ON public.bakery_products FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']))
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bp_delete_admin_or_bakery"
+  ON public.bakery_products FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']));
+
+-- Seed the bakery product catalog. Idempotent: only fires when the
+-- table is empty, so re-running never duplicates.
+INSERT INTO public.bakery_products (name, sort_order)
+SELECT v.name, v.sort_order
+FROM (VALUES
+  ('Crunchy',       10),
+  ('Cookies',       20),
+  ('Brownies',      30),
+  ('Crunchy Cake',  40),
+  ('Lemon Cake',    50),
+  ('Tiramisu',      60),
+  ('Marble Cake',   70)
+) AS v(name,sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM public.bakery_products);
+
+-- =============================================================
+-- 45. BAKERY TRANSFERS — daily finished-goods to branches
+--     One row per (product_id, branch, transfer_date) = how many
+--     of that product went to that branch that day. The page
+--     upserts on that key; the monthly view sums per branch +
+--     a grand total (mirrors the paper "MONTHLY TOTAL"). Loaded
+--     on demand per month (all branches) — NOT bulk-loaded.
+--     SELECT + write admin/bakery; SELECT also operations; delete
+--     admin/bakery.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.bakery_transfers (
+  id            uuid primary key default gen_random_uuid(),
+  product_id    uuid not null references public.bakery_products(id) ON DELETE CASCADE,
+  branch        text not null,
+  transfer_date date not null,
+  qty           numeric(12,2),
+  recorded_by   uuid references public.employees(id),
+  recorded_at   timestamptz not null default now(),
+  UNIQUE (product_id, branch, transfer_date)
+);
+CREATE INDEX IF NOT EXISTS bakery_transfers_date_idx ON public.bakery_transfers(transfer_date);
+
+ALTER TABLE public.bakery_transfers ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='bakery_transfers'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "bt_select_floor_or_ops"
+  ON public.bakery_transfers FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','bakery']));
+CREATE POLICY "bt_insert_admin_or_bakery"
+  ON public.bakery_transfers FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bt_update_admin_or_bakery"
+  ON public.bakery_transfers FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']))
+  WITH CHECK (public.has_role(ARRAY['admin','bakery']));
+CREATE POLICY "bt_delete_admin_or_bakery"
+  ON public.bakery_transfers FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','bakery']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

@@ -450,6 +450,8 @@ function emptyState() {
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
+    bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
+    bakeryTransfersCache: {}, // on-demand per YYYY-MM (all branches): { "2026-05": [{ id, productId, branch, transferDate, qty }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -969,6 +971,25 @@ function mapExpiryCheckFromDb(r) {
     recordedAt: r.recorded_at,
   };
 }
+function mapBakeryProductFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    sortOrder: Number(r.sort_order) || 0,
+    active: r.active !== false,
+  };
+}
+function mapBakeryTransferFromDb(r) {
+  return {
+    id: r.id,
+    productId: r.product_id,
+    branch: r.branch || '',
+    transferDate: r.transfer_date || '',
+    qty: r.qty == null ? null : Number(r.qty),
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
 function inventoryItemToDb(i) {
   return {
     name: i.name,
@@ -1157,7 +1178,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1212,6 +1233,9 @@ async function loadAll() {
       // across all branches, bounded by the cutoffs above.
       sb.from('weekly_counts').select('*').gte('week_start', alertWeeklyCutoff),
       sb.from('expiry_checks').select('*').gte('week_start', alertExpiryCutoff),
+      // Bakery product catalog only (small, branch-agnostic). The
+      // bakery_transfers series is per-day/branch, loaded on demand.
+      sb.from('bakery_products').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1262,6 +1286,8 @@ async function loadAll() {
     state.weeklyCountsCache  = {};
     state.expiryCheckItems   = (expiryCheckItemsR.data || []).map(mapExpiryCheckItemFromDb);
     state.expiryChecksCache  = {};
+    state.bakeryProducts     = (bakeryProductsR.data || []).map(mapBakeryProductFromDb);
+    state.bakeryTransfersCache = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -1515,7 +1541,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1802,6 +1828,7 @@ function renderShell(routeContent) {
     { key:'weekly_count', icon:'box',       label:'Weekly count',    show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'expiry_check', icon:'calendar',  label:'Expiry checklist',show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
+    { key:'bakery_transfers', icon:'box',   label:'Bakery',          show:hasRole('admin','bakery','operations'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
@@ -9327,7 +9354,8 @@ function renderBakeryDashboard() {
   const me = currentEmployee();
   if (!me) return renderDashboard();
   const branches = SUGGESTED_BRANCHES.slice();
-  const products = ['Crunchy','Cookies','Brownies','Crunchy Cake','Lemon Cake','Tiramisu','Marble Cake'];
+  const products = (state.bakeryProducts || []).filter(p => p.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder).map(p => p.name);
 
   const statCard = (label, value, sub, tone) => `
     <div class="bg-white rounded-2xl shadow-card p-4">
@@ -9362,13 +9390,17 @@ function renderBakeryDashboard() {
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
       ${statCard('Branches served', branches.length, branches.join(' · '), 'text-slate-900')}
       ${statCard('Finished products', products.length, 'tracked recipes', 'text-slate-900')}
-      ${statCard('Transfer orders today', '&mdash;', 'logging coming soon', 'text-slate-300')}
+      ${statCard('Transfer log', 'Live', 'log today’s deliveries', 'text-emerald-600')}
       ${statCard('Raw ingredients', '&mdash;', 'stock sheet coming soon', 'text-slate-300')}
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-      ${soon('Daily transfer orders', 'Per branch, per day',
-        `Logs how many of each item go to ${branches.map(escapeHTML).join(', ')} each day, with monthly totals &mdash; ${products.map(escapeHTML).join(', ')}. This tool is coming soon.`)}
+      <div class="bg-white rounded-2xl shadow-card p-5 flex flex-col">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Daily transfer orders</div>
+        <div class="font-display text-lg font-semibold text-slate-900">Per branch, per day</div>
+        <p class="text-sm text-slate-600 mt-2 flex-1">Log how many of each item go to ${branches.map(escapeHTML).join(', ')} each day${products.length?' &mdash; '+products.map(escapeHTML).join(', '):''}. The month view sums per branch with a grand total.</p>
+        <button onclick="location.hash='#/bakery_transfers'" class="btn btn-primary btn-sm mt-4 self-start">${icon('box','w-4 h-4')} Open transfers</button>
+      </div>
       ${soon('Raw stock &amp; purchases', 'Ingredients & buying',
         `Daily ingredient stock plus weekly and monthly purchases (flour, sugar, butter, chocolate, eggs&hellip;). This tool is coming soon.`)}
     </div>`;
@@ -10886,6 +10918,296 @@ async function deleteExpiryCheckItem(id) {
   closeModal();
   render();
   toast('Item deleted', 'success');
+}
+
+/* ==================== BAKERY TRANSFERS ====================
+   The central bakery's daily finished-goods log: per date, how many
+   of each product went to each branch. Entry is a branch × product
+   grid for one day; the month view sums per branch + a grand total
+   (mirrors the paper "MONTHLY TOTAL"). Transfers are loaded on
+   demand per month (all branches), never bulk-loaded. ------------- */
+let bakeryTransfersState = { date:'', view:'entry', draft:null };
+const _btLoading = new Set();
+
+async function loadBakeryTransfers(ym) {
+  if (state.bakeryTransfersCache[ym] || _btLoading.has(ym)) return;
+  _btLoading.add(ym);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('bakery_transfers').select('*')
+    .gte('transfer_date', from).lte('transfer_date', to);
+  _btLoading.delete(ym);
+  if (error) {
+    toast('Failed to load bakery transfers: ' + error.message, 'error');
+    state.bakeryTransfersCache[ym] = [];
+    render();
+    return;
+  }
+  state.bakeryTransfersCache[ym] = (data || []).map(mapBakeryTransferFromDb);
+  render();
+}
+
+function btGetSaved(date, productId, branch) {
+  const arr = state.bakeryTransfersCache[date.slice(0,7)];
+  if (!arr) return null;
+  return arr.find(t => t.transferDate === date && t.productId === productId && t.branch === branch) || null;
+}
+function btEnsureDraft(date, products, branches) {
+  if (bakeryTransfersState.draft && bakeryTransfersState.draft.key === date) return;
+  const byCell = {};
+  branches.forEach(b => products.forEach(p => {
+    const t = btGetSaved(date, p.id, b);
+    byCell[b + '|' + p.id] = t && t.qty != null ? String(t.qty) : '';
+  }));
+  bakeryTransfersState.draft = { key: date, byCell };
+}
+function btCaptureInputs() {
+  const d = bakeryTransfersState.draft;
+  if (!d) return;
+  const branches = SUGGESTED_BRANCHES;
+  (state.bakeryProducts || []).forEach(p => branches.forEach(b => {
+    const el = document.getElementById('bt-' + b + '-' + p.id);
+    if (el) d.byCell[b + '|' + p.id] = el.value.trim();
+  }));
+}
+
+function renderBakeryTransfers() {
+  if (!bakeryTransfersState.date) bakeryTransfersState.date = todayISO();
+  const { date, view } = bakeryTransfersState;
+  const ym = date.slice(0, 7);
+  const canManage = hasRole('admin','bakery');
+  const branches = SUGGESTED_BRANCHES.slice();
+
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Bakery</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Transfers</h2>
+        <div class="text-xs text-slate-500 mt-1">Finished goods sent to each branch, per day · monthly totals.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">
+          <button onclick="bakeryTransfersState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Log</button>
+          <button onclick="btCaptureInputs(); bakeryTransfersState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month total</button>
+        </div>
+        ${canManage ? `<button onclick="openBakeryProductModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage products</button>` : ''}
+      </div>
+    </div>`;
+
+  if (!state.bakeryTransfersCache[ym]) {
+    loadBakeryTransfers(ym);
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading…</div>`;
+  }
+
+  const products = (state.bakeryProducts || []).filter(p => p.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  if (products.length === 0) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No bakery products yet.${canManage?' Use “Manage products” to add some.':''}</div>`;
+  }
+
+  if (view === 'month') return header + renderBakeryTransfersMonth(products, state.bakeryTransfersCache[ym], ym, branches);
+
+  // ---- Daily branch × product grid ----
+  btEnsureDraft(date, products, branches);
+  const d = bakeryTransfersState.draft.byCell;
+  const headCols = products.map(p => `<th class="px-2 py-2 text-[11px] font-semibold text-slate-500 text-center whitespace-nowrap">${escapeHTML(p.name)}</th>`).join('');
+  const rows = branches.map(b => `
+    <tr class="border-t border-slate-50">
+      <td class="px-3 py-2 text-sm font-medium text-slate-800 sticky left-0 bg-white whitespace-nowrap">${escapeHTML(b)}</td>
+      ${products.map(p => `<td class="px-2 py-1.5 text-center border-l border-slate-50">
+        <input id="bt-${b}-${p.id}" type="text" inputmode="decimal" autocomplete="off"
+          value="${escapeHTML(d[b + '|' + p.id] || '')}" placeholder="0"
+          class="input !w-16 !h-10 !text-center tabular-nums">
+      </td>`).join('')}
+    </tr>`).join('');
+
+  const dateBar = `
+    <div class="flex items-center justify-between gap-3 mb-5 flex-wrap">
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Date</span>
+        <input type="date" value="${escapeHTML(date)}" max="${escapeHTML(todayISO())}"
+          onchange="btCaptureInputs(); bakeryTransfersState.date=this.value; bakeryTransfersState.draft=null; render();"
+          class="input !w-auto !py-2">
+        <span class="text-xs text-slate-500">${escapeHTML(fmtDate(date))}</span>
+      </label>
+    </div>`;
+  const navBar = `
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+      <div class="text-xs text-slate-500">${escapeHTML(fmtDate(date))}</div>
+      <button onclick="saveBakeryTransfers()" class="btn btn-primary">${icon('check','w-4 h-4')} Save day</button>
+    </div>`;
+  return `${header}<div class="max-w-3xl mx-auto">${dateBar}
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-slate-500 sticky left-0 bg-white">Branch</th>
+          ${headCols}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>${navBar}</div>`;
+}
+
+function btMonthTotals(rows, branches) {
+  // branch -> productId -> sum
+  const t = {};
+  branches.forEach(b => { t[b] = {}; });
+  rows.forEach(r => {
+    if (r.qty == null) return;
+    if (!t[r.branch]) t[r.branch] = {};
+    t[r.branch][r.productId] = (t[r.branch][r.productId] || 0) + Number(r.qty);
+  });
+  return t;
+}
+
+function renderBakeryTransfersMonth(products, monthRows, ym, branches) {
+  const totals = btMonthTotals(monthRows, branches);
+  const n2 = v => v ? String(+Number(v).toFixed(2)) : '—';
+  const grand = {};
+  const head = products.map(p => `<th class="px-2 py-2 text-[11px] font-semibold text-slate-500 text-center whitespace-nowrap">${escapeHTML(p.name)}</th>`).join('');
+  const body = branches.map(b => {
+    const tds = products.map(p => {
+      const v = totals[b]?.[p.id] || 0;
+      grand[p.id] = (grand[p.id] || 0) + v;
+      return `<td class="px-2 py-2 text-center tabular-nums text-slate-700 border-l border-slate-50">${n2(v)}</td>`;
+    }).join('');
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-2 text-sm font-medium text-slate-800 sticky left-0 bg-white">${escapeHTML(b)}</td>${tds}</tr>`;
+  }).join('');
+  const grandRow = `<tr class="border-t-2 border-brand-200 bg-brand-50/50 font-semibold">
+    <td class="px-3 py-2 text-sm text-brand-800 sticky left-0 bg-brand-50/50">TOTAL</td>
+    ${products.map(p => `<td class="px-2 py-2 text-center tabular-nums text-brand-800 border-l border-brand-100/50">${n2(grand[p.id]||0)}</td>`).join('')}
+  </tr>`;
+  return `
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="bakeryTransfersState.date=this.value+'-01'; render();" class="input !w-auto !py-2">
+      <div class="flex items-center gap-2">
+        <button onclick="exportBakeryTransfersCSV('${escapeHTML(ym)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-slate-500 sticky left-0 bg-white">${escapeHTML(ym)}</th>
+          ${head}
+        </tr></thead>
+        <tbody>${body}${grandRow}</tbody>
+      </table>
+    </div>`;
+}
+
+function exportBakeryTransfersCSV(ym) {
+  const rows = state.bakeryTransfersCache[ym] || [];
+  const products = (state.bakeryProducts || []).filter(p => p.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const branches = SUGGESTED_BRANCHES.slice();
+  const totals = btMonthTotals(rows, branches);
+  const out = [['Month','Branch', ...products.map(p => p.name)]];
+  const grand = {};
+  branches.forEach(b => {
+    out.push([ym, b, ...products.map(p => {
+      const v = totals[b]?.[p.id] || 0;
+      grand[p.id] = (grand[p.id] || 0) + v;
+      return v;
+    })]);
+  });
+  out.push([ym, 'TOTAL', ...products.map(p => grand[p.id] || 0)]);
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `bakery-transfers-${ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Transfers exported', 'success');
+}
+
+async function saveBakeryTransfers() {
+  btCaptureInputs();
+  const { date, draft } = bakeryTransfersState;
+  if (!draft) { toast('Nothing to save.', 'info'); return; }
+  const me = currentEmployee();
+  const ym = date.slice(0,7);
+  const products = (state.bakeryProducts || []).filter(p => p.active);
+  const branches = SUGGESTED_BRANCHES;
+  const existing = (state.bakeryTransfersCache[ym] || []).filter(t => t.transferDate === date);
+  const exByCell = {}; existing.forEach(t => { exByCell[t.branch + '|' + t.productId] = t; });
+  const toUpsert = [], toDeleteIds = [];
+  branches.forEach(b => products.forEach(p => {
+    const key = b + '|' + p.id;
+    const qN = dcNum(draft.byCell[key]);
+    if (qN == null) {
+      if (exByCell[key]) toDeleteIds.push(exByCell[key].id);
+      return;
+    }
+    toUpsert.push({
+      product_id: p.id, branch: b, transfer_date: date,
+      qty: qN, recorded_by: me?.id || null, recorded_at: new Date().toISOString(),
+    });
+  }));
+  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (toDeleteIds.length) {
+    const { error } = await sb.from('bakery_transfers').delete().in('id', toDeleteIds);
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  if (toUpsert.length) {
+    const { error } = await sb.from('bakery_transfers')
+      .upsert(toUpsert, { onConflict: 'product_id,branch,transfer_date' });
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  delete state.bakeryTransfersCache[ym];
+  bakeryTransfersState.draft = null;
+  await loadBakeryTransfers(ym);
+  toast('Day saved', 'success');
+}
+
+function openBakeryProductModal(editing) {
+  const e = editing || {};
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Product name</label>
+        <input id="bp-name" class="input" placeholder="e.g. Brownies" value="${escapeHTML(e.name||'')}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Sort order</label><input id="bp-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+        <div class="flex items-end pb-1">
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="bp-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+        </div>
+      </div>
+      ${editing ? `<button onclick="deleteBakeryProduct('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this product</button>` : ''}
+    </div>`;
+  openModal(editing ? 'Edit product' : 'Add bakery product', form, async () => {
+    const name = $('#bp-name').value.trim();
+    if (!name) { toast('Product name is required', 'error'); return false; }
+    const row = { name, sort_order: Number($('#bp-sort').value) || 0, active: $('#bp-active').checked };
+    if (editing) {
+      const { data, error } = await sb.from('bakery_products').update(row).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapBakeryProductFromDb(data));
+      toast('Product updated', 'success');
+    } else {
+      const { data, error } = await sb.from('bakery_products').insert(row).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.bakeryProducts.push(mapBakeryProductFromDb(data));
+      toast('Product added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add product' });
+}
+
+async function deleteBakeryProduct(id) {
+  if (!confirm('Delete this product and all its recorded transfers? This cannot be undone.')) return;
+  const { error } = await sb.from('bakery_products').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.bakeryProducts = state.bakeryProducts.filter(p => p.id !== id);
+  state.bakeryTransfersCache = {}; // transfers cascade-deleted; drop stale cache
+  closeModal();
+  render();
+  toast('Product deleted', 'success');
 }
 
 /* -------------------- INVENTORY (admin or inventory) -------------------- */
@@ -14228,6 +14550,7 @@ function render() {
     case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
     case 'weekly_count': content = hasRole('admin','head_barista','barista') ? renderWeeklyCount() : renderRoleDashboard(); break;
     case 'expiry_check': content = hasRole('admin','head_barista','barista') ? renderExpiryCheck() : renderRoleDashboard(); break;
+    case 'bakery_transfers': content = hasRole('admin','bakery','operations') ? renderBakeryTransfers() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
