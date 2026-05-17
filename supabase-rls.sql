@@ -2277,6 +2277,119 @@ CREATE POLICY "wc_delete_admin_or_head_barista"
   USING (public.has_role(ARRAY['admin','head_barista']));
 
 -- =============================================================
+-- 40. EXPIRY CHECKLIST — item catalog (perishables checked weekly)
+--     The "EXPIRED ITEMS CHECKLIST" tab of the branch sheet: a
+--     small fixed list of perishables whose printed expiry date is
+--     logged each week so staff pull stock before it's served.
+--     Distinct from daily/weekly count (those track quantity; this
+--     tracks the date stamped on the unit). Flat list (~11 items),
+--     no category. SELECT broad (admin/head_barista/barista/
+--     operations); catalog writes admin/head_barista only.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.expiry_check_items (
+  id            uuid primary key default gen_random_uuid(),
+  name          text not null,
+  sort_order    int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS expiry_check_items_sort_idx ON public.expiry_check_items(sort_order);
+
+ALTER TABLE public.expiry_check_items ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='expiry_check_items'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "eci_select_floor_or_ops"
+  ON public.expiry_check_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "eci_insert_admin_or_head_barista"
+  ON public.expiry_check_items FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "eci_update_admin_or_head_barista"
+  ON public.expiry_check_items FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "eci_delete_admin_or_head_barista"
+  ON public.expiry_check_items FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- Seed the RAYYAN expiry-checklist catalog. Idempotent: only fires
+-- when the table is empty, so re-running never duplicates.
+INSERT INTO public.expiry_check_items (name, sort_order)
+SELECT v.name, v.sort_order
+FROM (VALUES
+  ('Full Fat',          10),
+  ('Low Fat',           20),
+  ('Free Lactose',      30),
+  ('Coconut Milk',      40),
+  ('Almond Milk',       50),
+  ('Maple Syrup',       60),
+  ('Choco Chips',       70),
+  ('Chocolate Powder',  80),
+  ('Chocolate Flakes',  90),
+  ('Matcha Powder',    100),
+  ('Chocolate Bar',    110)
+) AS v(name,sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM public.expiry_check_items);
+
+-- =============================================================
+-- 41. EXPIRY CHECKLIST — recorded checks (per item, branch, week)
+--     One row per (item_id, branch, week_start); week_start is the
+--     Monday of the checked week (same week model as weekly_counts).
+--     expiry_date = the date printed on the stocked unit that week
+--     (nullable: a row with only a note, or cleared, is allowed).
+--     The page derives EXPIRED / EXPIRES SOON status from it.
+--     Loaded on demand per branch+month — NOT bulk-loaded. SELECT +
+--     write admin/head_barista/barista; delete admin/head_barista.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.expiry_checks (
+  id            uuid primary key default gen_random_uuid(),
+  item_id       uuid not null references public.expiry_check_items(id) ON DELETE CASCADE,
+  branch        text not null,
+  week_start    date not null,
+  expiry_date   date,
+  note          text,
+  recorded_by   uuid references public.employees(id),
+  recorded_at   timestamptz not null default now(),
+  UNIQUE (item_id, branch, week_start)
+);
+CREATE INDEX IF NOT EXISTS expiry_checks_branch_week_idx ON public.expiry_checks(branch, week_start);
+
+ALTER TABLE public.expiry_checks ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='expiry_checks'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "ec_select_floor_or_ops"
+  ON public.expiry_checks FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "ec_insert_floor"
+  ON public.expiry_checks FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "ec_update_floor"
+  ON public.expiry_checks FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "ec_delete_admin_or_head_barista"
+  ON public.expiry_checks FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
