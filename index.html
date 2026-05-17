@@ -1724,7 +1724,7 @@ function renderShell(routeContent) {
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'daily_count',  icon:'box',       label:'Daily count',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
-    { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','head_barista','roaster'), group:'company' },
+    { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
@@ -13161,7 +13161,7 @@ function render() {
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
-    case 'roaster':      content = hasRole('admin','head_barista','roaster') ? renderRoaster() : renderRoleDashboard(); break;
+    case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
