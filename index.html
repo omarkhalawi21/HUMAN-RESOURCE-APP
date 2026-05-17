@@ -454,6 +454,7 @@ function emptyState() {
     bakeryTransfersCache: {}, // on-demand per YYYY-MM (all branches): { "2026-05": [{ id, productId, branch, transferDate, qty }] }
     bakeryIngredients: [],  // catalog: [{ id, name, sortOrder, active }]
     bakeryStockCache: {},   // on-demand per YYYY-MM: { "2026-05": [{ id, ingredientId, stockDate, usedQty }] }
+    bakeryPurchasesCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, ingredientId, ym, w1, w2, w3, w4, monthlyPurchase }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -1006,6 +1007,18 @@ function mapBakeryStockFromDb(r) {
     ingredientId: r.ingredient_id,
     stockDate: r.stock_date || '',
     usedQty: r.used_qty == null ? null : Number(r.used_qty),
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
+function mapBakeryPurchaseFromDb(r) {
+  const n = v => v == null ? null : Number(v);
+  return {
+    id: r.id,
+    ingredientId: r.ingredient_id,
+    ym: r.ym || '',
+    w1: n(r.w1), w2: n(r.w2), w3: n(r.w3), w4: n(r.w4),
+    monthlyPurchase: n(r.monthly_purchase),
     recordedBy: r.recorded_by,
     recordedAt: r.recorded_at,
   };
@@ -1566,7 +1579,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1855,6 +1868,7 @@ function renderShell(routeContent) {
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
     { key:'bakery_transfers', icon:'box',   label:'Transfers',       show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
     { key:'bakery_stock', icon:'box',       label:'Stock',           show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
+    { key:'bakery_purchases', icon:'box',   label:'Purchases',       show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
@@ -11492,10 +11506,196 @@ async function deleteBakeryIngredient(id) {
   const { error } = await sb.from('bakery_ingredients').delete().eq('id', id);
   if (error) { toast(error.message, 'error'); return; }
   state.bakeryIngredients = state.bakeryIngredients.filter(i => i.id !== id);
-  state.bakeryStockCache = {}; // usage cascade-deleted; drop stale cache
+  state.bakeryStockCache = {};     // usage cascade-deleted; drop stale cache
+  state.bakeryPurchasesCache = {}; // purchases cascade-deleted too
   closeModal();
   render();
   toast('Ingredient deleted', 'success');
+}
+
+/* ==================== BAKERY PURCHASES ====================
+   The bakery's monthly ingredient buying (the paper "MONTHLY STOCK
+   SHEET"): per ingredient per month, Week 1-4 purchased plus a
+   separate monthly-purchase figure (monthly ≠ sum of weeks). Reuses
+   the bakery_ingredients catalog. Month-scoped, loaded on demand
+   per ym, never bulk-loaded. -------------------- */
+let bakeryPurchasesState = { ym:'', draft:null };
+const _bpurLoading = new Set();
+
+async function loadBakeryPurchases(ym) {
+  if (state.bakeryPurchasesCache[ym] || _bpurLoading.has(ym)) return;
+  _bpurLoading.add(ym);
+  const { data, error } = await sb.from('bakery_ingredient_purchases').select('*').eq('ym', ym);
+  _bpurLoading.delete(ym);
+  if (error) {
+    toast('Failed to load bakery purchases: ' + error.message, 'error');
+    state.bakeryPurchasesCache[ym] = [];
+    render();
+    return;
+  }
+  state.bakeryPurchasesCache[ym] = (data || []).map(mapBakeryPurchaseFromDb);
+  render();
+}
+
+function bpurGetSaved(ym, ingredientId) {
+  const arr = state.bakeryPurchasesCache[ym];
+  if (!arr) return null;
+  return arr.find(p => p.ingredientId === ingredientId) || null;
+}
+function bpurEnsureDraft(ym, ingredients) {
+  if (bakeryPurchasesState.draft && bakeryPurchasesState.draft.key === ym) return;
+  const byItem = {};
+  ingredients.forEach(it => {
+    const p = bpurGetSaved(ym, it.id);
+    const s = v => v == null ? '' : String(v);
+    byItem[it.id] = p
+      ? { w1:s(p.w1), w2:s(p.w2), w3:s(p.w3), w4:s(p.w4), m:s(p.monthlyPurchase) }
+      : { w1:'', w2:'', w3:'', w4:'', m:'' };
+  });
+  bakeryPurchasesState.draft = { key: ym, byItem };
+}
+function bpurCaptureInputs() {
+  const d = bakeryPurchasesState.draft;
+  if (!d) return;
+  (state.bakeryIngredients || []).forEach(it => {
+    const cur = d.byItem[it.id] || { w1:'', w2:'', w3:'', w4:'', m:'' };
+    ['w1','w2','w3','w4','m'].forEach(f => {
+      const el = document.getElementById('bpur-' + it.id + '-' + f);
+      if (el) cur[f] = el.value.trim();
+    });
+    d.byItem[it.id] = cur;
+  });
+}
+
+function renderBakeryPurchases() {
+  if (!bakeryPurchasesState.ym) bakeryPurchasesState.ym = todayISO().slice(0,7);
+  const ym = bakeryPurchasesState.ym;
+  const canManage = hasRole('admin','bakery');
+
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Bakery</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Purchases</h2>
+        <div class="text-xs text-slate-500 mt-1">Ingredient buying — weekly amounts and the monthly total, per month.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}"
+          onchange="bpurCaptureInputs(); bakeryPurchasesState.ym=this.value; bakeryPurchasesState.draft=null; render();"
+          class="input !w-auto !py-2">
+        <button onclick="exportBakeryPurchasesCSV('${escapeHTML(ym)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+        ${canManage ? `<button onclick="openBakeryIngredientModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage ingredients</button>` : ''}
+      </div>
+    </div>`;
+
+  if (!state.bakeryPurchasesCache[ym]) {
+    loadBakeryPurchases(ym);
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading…</div>`;
+  }
+
+  const ingredients = (state.bakeryIngredients || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  if (ingredients.length === 0) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No bakery ingredients yet.${canManage?' Use “Manage ingredients” to add some.':''}</div>`;
+  }
+
+  bpurEnsureDraft(ym, ingredients);
+  const d = bakeryPurchasesState.draft.byItem;
+  const cellInput = (id, f, val) => `<input id="bpur-${id}-${f}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(val||'')}" placeholder="0" class="input !w-16 !h-10 !text-center tabular-nums">`;
+  const rows = ingredients.map(it => {
+    const c = d[it.id] || { w1:'', w2:'', w3:'', w4:'', m:'' };
+    const wt = (dcNum(c.w1)||0) + (dcNum(c.w2)||0) + (dcNum(c.w3)||0) + (dcNum(c.w4)||0);
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-2 text-sm font-medium text-slate-800 sticky left-0 bg-white whitespace-nowrap">${escapeHTML(it.name)}</td>
+      <td class="px-2 py-1.5 text-center border-l border-slate-50">${cellInput(it.id,'w1',c.w1)}</td>
+      <td class="px-2 py-1.5 text-center">${cellInput(it.id,'w2',c.w2)}</td>
+      <td class="px-2 py-1.5 text-center">${cellInput(it.id,'w3',c.w3)}</td>
+      <td class="px-2 py-1.5 text-center">${cellInput(it.id,'w4',c.w4)}</td>
+      <td class="px-2 py-1.5 text-center tabular-nums text-slate-500 border-l border-slate-50">${wt ? +wt.toFixed(2) : ''}</td>
+      <td class="px-2 py-1.5 text-center border-l border-slate-50">${cellInput(it.id,'m',c.m)}</td>
+    </tr>`;
+  }).join('');
+  const navBar = `
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+      <div class="text-xs text-slate-500">${escapeHTML(ym)}</div>
+      <button onclick="saveBakeryPurchases()" class="btn btn-primary">${icon('check','w-4 h-4')} Save month</button>
+    </div>`;
+  return `${header}<div class="max-w-3xl mx-auto">
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-500">
+          <th class="px-3 py-2 text-left sticky left-0 bg-white">${escapeHTML(ym)}</th>
+          <th class="px-2 py-2 text-center border-l border-slate-50">W1</th>
+          <th class="px-2 py-2 text-center">W2</th>
+          <th class="px-2 py-2 text-center">W3</th>
+          <th class="px-2 py-2 text-center">W4</th>
+          <th class="px-2 py-2 text-center border-l border-slate-50">Wk total</th>
+          <th class="px-2 py-2 text-center border-l border-slate-50 text-brand-700">Monthly</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>${navBar}</div>`;
+}
+
+function exportBakeryPurchasesCSV(ym) {
+  const ingredients = (state.bakeryIngredients || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const byIng = {};
+  (state.bakeryPurchasesCache[ym] || []).forEach(p => { byIng[p.ingredientId] = p; });
+  const out = [['Month','Ingredient','Week 1','Week 2','Week 3','Week 4','Weekly total','Monthly purchase']];
+  ingredients.forEach(it => {
+    const p = byIng[it.id] || {};
+    const v = x => x == null ? '' : x;
+    const wt = (Number(p.w1)||0)+(Number(p.w2)||0)+(Number(p.w3)||0)+(Number(p.w4)||0);
+    out.push([ym, it.name, v(p.w1), v(p.w2), v(p.w3), v(p.w4), wt || 0, v(p.monthlyPurchase)]);
+  });
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `bakery-purchases-${ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Purchases exported', 'success');
+}
+
+async function saveBakeryPurchases() {
+  bpurCaptureInputs();
+  const { ym, draft } = bakeryPurchasesState;
+  if (!draft) { toast('Nothing to save.', 'info'); return; }
+  const me = currentEmployee();
+  const ingredients = (state.bakeryIngredients || []).filter(i => i.active);
+  const existing = state.bakeryPurchasesCache[ym] || [];
+  const exById = {}; existing.forEach(p => { exById[p.ingredientId] = p; });
+  const toUpsert = [], toDeleteIds = [];
+  ingredients.forEach(it => {
+    const c = draft.byItem[it.id] || { w1:'', w2:'', w3:'', w4:'', m:'' };
+    const w1 = dcNum(c.w1), w2 = dcNum(c.w2), w3 = dcNum(c.w3), w4 = dcNum(c.w4), m = dcNum(c.m);
+    if (w1==null && w2==null && w3==null && w4==null && m==null) {
+      if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
+      return;
+    }
+    toUpsert.push({
+      ingredient_id: it.id, ym,
+      w1, w2, w3, w4, monthly_purchase: m,
+      recorded_by: me?.id || null, recorded_at: new Date().toISOString(),
+    });
+  });
+  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (toDeleteIds.length) {
+    const { error } = await sb.from('bakery_ingredient_purchases').delete().in('id', toDeleteIds);
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  if (toUpsert.length) {
+    const { error } = await sb.from('bakery_ingredient_purchases')
+      .upsert(toUpsert, { onConflict: 'ingredient_id,ym' });
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  delete state.bakeryPurchasesCache[ym];
+  bakeryPurchasesState.draft = null;
+  await loadBakeryPurchases(ym);
+  toast('Month saved', 'success');
 }
 
 /* -------------------- INVENTORY (admin or inventory) -------------------- */
@@ -14840,6 +15040,7 @@ function render() {
     case 'expiry_check': content = hasRole('admin','head_barista','barista') ? renderExpiryCheck() : renderRoleDashboard(); break;
     case 'bakery_transfers': content = hasRole('admin','bakery','operations') ? renderBakeryTransfers() : renderRoleDashboard(); break;
     case 'bakery_stock': content = hasRole('admin','bakery','operations') ? renderBakeryStock() : renderRoleDashboard(); break;
+    case 'bakery_purchases': content = hasRole('admin','bakery','operations') ? renderBakeryPurchases() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
