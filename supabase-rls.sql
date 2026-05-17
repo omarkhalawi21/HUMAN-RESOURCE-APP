@@ -2405,6 +2405,27 @@ ALTER TABLE public.weekly_count_items
   ADD COLUMN IF NOT EXISTS low_at numeric(12,2);
 
 -- =============================================================
+-- 43. BAKERY ROLE
+--    Adds the 'bakery' system role for the central-bakery team that
+--    produces finished goods (cookies, brownies, cakes) and tracks
+--    raw-ingredient stock. They log daily per-branch transfer orders
+--    and a stock/purchases sheet (those tables land in a later block
+--    once the workflow is finalised). For now this just makes the
+--    role assignable; the bakery user gets a dedicated dashboard.
+-- =============================================================
+
+-- Re-issue the system_role CHECK constraint with 'bakery' added.
+-- (Latest re-issue wins when the idempotent file runs top-to-bottom.)
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista','roaster',
+    'accounting','maintenance','bakery','employee'
+  ));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

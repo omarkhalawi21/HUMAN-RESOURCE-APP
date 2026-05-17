@@ -627,7 +627,7 @@ const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH'];
 // label shown on the profile; system_role is the strict permission).
 const SUGGESTED_DEPARTMENTS = [
   'Barista', 'Head Barista', 'Cashier', 'Roaster', 'Operations',
-  'HR', 'Accounting', 'Maintenance',
+  'HR', 'Accounting', 'Maintenance', 'Bakery',
 ];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
@@ -684,6 +684,7 @@ const ROLES = {
   roaster:      { label: 'Roaster' },
   barista:      { label: 'Barista' },
   maintenance:  { label: 'Maintenance' },
+  bakery:       { label: 'Bakery' },
   employee:     { label: 'Employee' },
 };
 function roleLabel(key) { return ROLES[key]?.label || (key||'Employee'); }
@@ -1467,6 +1468,7 @@ function findRoleMismatches() {
     'head_barista': 'head_barista',
     'roaster':      'roaster',
     'maintenance':  'maintenance',
+    'bakery':       'bakery',
   };
   const out = [];
   for (const e of (state.employees || [])) {
@@ -8141,6 +8143,7 @@ function renderRoleDashboard() {
   if (role === 'accounting')   return renderAccountingDashboard();
   if (role === 'operations')   return renderOperationsDashboard();
   if (role === 'maintenance')  return renderMaintenanceDashboard();
+  if (role === 'bakery')       return renderBakeryDashboard();
   if (role === 'head_barista') return renderHeadBaristaDashboard();
   if (role === 'roaster')      return renderRoasterDashboard();
   // Personal-view roles share one focused employee dashboard.
@@ -9312,6 +9315,63 @@ function renderMaintenanceDashboard() {
       </div>
     </div>
   `;
+}
+
+/* -------------------- BAKERY DASHBOARD --------------------
+   The central bakery produces finished goods (cookies, brownies,
+   cakes) and tracks raw-ingredient stock. Mirrors the maintenance
+   role-dashboard shape. The transfer-order + stock tables/feature
+   land in a later change once the workflow is finalised, so the
+   data sections show "coming soon" until then. -------------------- */
+function renderBakeryDashboard() {
+  const me = currentEmployee();
+  if (!me) return renderDashboard();
+  const branches = SUGGESTED_BRANCHES.slice();
+  const products = ['Crunchy','Cookies','Brownies','Crunchy Cake','Lemon Cake','Tiramisu','Marble Cake'];
+
+  const statCard = (label, value, sub, tone) => `
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(label)}</div>
+      <div class="font-display text-2xl font-semibold ${tone||'text-slate-900'} mt-1">${value}</div>
+      <div class="text-xs text-slate-500 mt-1">${escapeHTML(sub)}</div>
+    </div>`;
+  const soon = (title, lead, body) => `
+    <div class="bg-white rounded-2xl shadow-card p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(title)}</div>
+          <div class="font-display text-lg font-semibold text-slate-900">${escapeHTML(lead)}</div>
+        </div>
+      </div>
+      <div class="text-center py-6">
+        <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-700 flex items-center justify-center mb-2">${icon('box','w-6 h-6')}</div>
+        <div class="text-sm text-slate-600 max-w-sm mx-auto">${body}</div>
+      </div>
+    </div>`;
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Bakery</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
+        <p class="text-slate-500 mt-1 text-sm max-w-md">Finished-goods transfers to the branches and raw-ingredient stock. The logging tools are being set up &mdash; bear with us.</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      ${statCard('Branches served', branches.length, branches.join(' · '), 'text-slate-900')}
+      ${statCard('Finished products', products.length, 'tracked recipes', 'text-slate-900')}
+      ${statCard('Transfer orders today', '&mdash;', 'logging coming soon', 'text-slate-300')}
+      ${statCard('Raw ingredients', '&mdash;', 'stock sheet coming soon', 'text-slate-300')}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      ${soon('Daily transfer orders', 'Per branch, per day',
+        `Logs how many of each item go to ${branches.map(escapeHTML).join(', ')} each day, with monthly totals &mdash; ${products.map(escapeHTML).join(', ')}. This tool is coming soon.`)}
+      ${soon('Raw stock &amp; purchases', 'Ingredients & buying',
+        `Daily ingredient stock plus weekly and monthly purchases (flour, sugar, butter, chocolate, eggs&hellip;). This tool is coming soon.`)}
+    </div>`;
 }
 
 /* -------------------- DAILY COUNT (cafe-floor barista sheet) -------------------- */
