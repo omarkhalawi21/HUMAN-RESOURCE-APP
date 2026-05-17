@@ -9399,10 +9399,11 @@ function renderDailyCount() {
       </div>
     </div>`;
 
-  // Need the selected month plus the previous day's month (for the
-  // yesterday→today delta when counting on the 1st).
+  // Need the selected month, the previous day's month (yesterday→today
+  // delta on the 1st), and the prior calendar month (Summary opening
+  // carries over from last month's closing).
   const prev = dcPrevDate(date);
-  const needKeys = [ym, prev.slice(0,7)];
+  const needKeys = [...new Set([ym, prev.slice(0,7), prevYm(ym)])];
   const missing = needKeys.some(m => !state.dailyCountsCache[dcCacheKey(branch, m)]);
   if (missing) {
     needKeys.forEach(m => loadDailyCounts(branch, m));
@@ -9796,16 +9797,34 @@ function renderDailyCountMonth(items, monthRows, ym, branch) {
     </div>`;
 }
 
+// Previous calendar month of a "YYYY-MM" string. Pure string math.
+function prevYm(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+}
+// Last counted value for an item in a set of rows (chronological max
+// by date key). Used for prior-month closing carry-over.
+function lastCounted(rows, itemId, dateKey, valKey) {
+  const r = (rows || []).filter(c => c.itemId === itemId && c[valKey] != null);
+  if (!r.length) return null;
+  r.sort((a, b) => a[dateKey].localeCompare(b[dateKey]));
+  return Number(r[r.length - 1][valKey]);
+}
+
 // Month-end roll-up for one item from its recorded rows. Consumed nets
 // waste out so it lines up with Foodics "sold" quantities:
 //   consumed = opening + received − wasted − closing
-// Opening = the first count *this month* (prior-month carry-over is a
-// phase-2 concern); needs both opening & closing to compute.
-function dcItemSummary(it, rows) {
+// Opening carries over from last month's final count (passed in
+// prevRows); falls back to the first count this month when there's no
+// prior-month data (e.g. first month of use). Needs both opening &
+// closing to compute consumed.
+function dcItemSummary(it, rows, prevRows) {
   const r = rows.filter(c => c.itemId === it.id)
                 .sort((a,b) => a.countDate.localeCompare(b.countDate));
   const counted  = r.filter(c => c.qty != null);
-  const opening  = counted.length ? Number(counted[0].qty) : null;
+  const carry    = lastCounted(prevRows, it.id, 'countDate', 'qty');
+  const opening  = carry != null ? carry
+                  : (counted.length ? Number(counted[0].qty) : null);
   const closing  = counted.length ? Number(counted[counted.length-1].qty) : null;
   const received = r.reduce((s,c) => s + (Number(c.receivedQty)||0), 0);
   const wasted   = r.reduce((s,c) => s + (Number(c.wasteQty)||0), 0);
@@ -9815,6 +9834,7 @@ function dcItemSummary(it, rows) {
 }
 
 function renderDailyCountSummary(items, monthRows, ym, branch) {
+  const prevRows = state.dailyCountsCache[dcCacheKey(branch, prevYm(ym))] || [];
   const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
   const groups = DC_CAT_ORDER
     .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
@@ -9835,7 +9855,7 @@ function renderDailyCountSummary(items, monthRows, ym, branch) {
         </thead>
         <tbody>
           ${list.map(it => {
-            const s = dcItemSummary(it, monthRows);
+            const s = dcItemSummary(it, monthRows, prevRows);
             return `<tr class="border-t border-slate-50">
               <td class="px-3 py-2 sticky left-0 bg-white text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
               <td class="px-2 py-2 text-right tabular-nums text-slate-500">${n2(s.opening)}</td>
@@ -9858,7 +9878,7 @@ function renderDailyCountSummary(items, monthRows, ym, branch) {
       </div>
     </div>
     <div class="bg-brand-50/60 border border-brand-100 rounded-xl px-4 py-3 mb-4 text-xs text-brand-800">
-      <strong>Consumed</strong> = Opening + Received − Wasted − Closing. Opening is the first count recorded this month.
+      <strong>Consumed</strong> = Opening + Received − Wasted − Closing. Opening carries over from last month's closing count (or the first count this month if there's no prior data).
       Compare <strong>Consumed</strong> against your Foodics sales for ${escapeHTML(ym)} to spot variance.
     </div>
     ${groups.map(([cat,list]) => tbl(cat,list)).join('')}`;
@@ -9866,11 +9886,12 @@ function renderDailyCountSummary(items, monthRows, ym, branch) {
 
 function exportDailyCountSummaryCSV(branch, ym) {
   const rows = state.dailyCountsCache[dcCacheKey(branch, ym)] || [];
+  const prevRows = state.dailyCountsCache[dcCacheKey(branch, prevYm(ym))] || [];
   const items = (state.dailyCountItems || []).filter(i => i.active)
     .sort((a,b) => a.sortOrder - b.sortOrder);
   const out = [['Branch','Month','Category','Item','Unit','Opening','Received','Wasted','Closing','Consumed','Days counted']];
   items.forEach(it => {
-    const s = dcItemSummary(it, rows);
+    const s = dcItemSummary(it, rows, prevRows);
     out.push([branch, ym, DC_CATEGORIES[it.category]||it.category, it.name, it.unit,
       s.opening==null?'':s.opening, s.received, s.wasted,
       s.closing==null?'':s.closing, s.consumed==null?'':s.consumed, s.days]);
@@ -10163,10 +10184,11 @@ function renderWeeklyCount() {
       </div>
     </div>`;
 
-  // Need the selected month plus the previous week's month (for the
-  // last-week→this-week delta when a week straddles a month boundary).
+  // Need the selected month, the previous week's month (last→this week
+  // delta across a month boundary), and the prior calendar month
+  // (Summary opening carries over from last month's closing).
   const prevW = wcPrevWeek(week);
-  const needKeys = [ym, prevW.slice(0,7)];
+  const needKeys = [...new Set([ym, prevW.slice(0,7), prevYm(ym)])];
   const missing = needKeys.some(m => !state.weeklyCountsCache[wcCacheKey(branch, m)]);
   if (missing) {
     needKeys.forEach(m => loadWeeklyCounts(branch, m));
@@ -10294,13 +10316,17 @@ function renderWeeklyCountMonth(items, monthRows, ym, branch) {
     </div>`;
 }
 
-// Month roll-up for one item: opening = first available recorded
-// that month, closing = last; consumed = opening + purchased − closing.
-function wcItemSummary(it, rows) {
+// Month roll-up for one item. Opening carries over from last month's
+// final available count (prevRows); falls back to the first count this
+// month when there's no prior-month data. consumed = opening +
+// purchased − closing.
+function wcItemSummary(it, rows, prevRows) {
   const r = rows.filter(c => c.itemId === it.id)
                 .sort((a,b) => a.weekStart.localeCompare(b.weekStart));
   const counted   = r.filter(c => c.availableQty != null);
-  const opening   = counted.length ? Number(counted[0].availableQty) : null;
+  const carry     = lastCounted(prevRows, it.id, 'weekStart', 'availableQty');
+  const opening   = carry != null ? carry
+                   : (counted.length ? Number(counted[0].availableQty) : null);
   const closing   = counted.length ? Number(counted[counted.length-1].availableQty) : null;
   const purchased = r.reduce((s,c) => s + (Number(c.purchasedQty)||0), 0);
   const consumed  = (opening != null && closing != null)
@@ -10309,6 +10335,7 @@ function wcItemSummary(it, rows) {
 }
 
 function renderWeeklyCountSummary(items, monthRows, ym, branch) {
+  const prevRows = state.weeklyCountsCache[wcCacheKey(branch, prevYm(ym))] || [];
   const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
   const groups = WC_CAT_ORDER
     .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
@@ -10328,7 +10355,7 @@ function renderWeeklyCountSummary(items, monthRows, ym, branch) {
         </thead>
         <tbody>
           ${list.map(it => {
-            const s = wcItemSummary(it, monthRows);
+            const s = wcItemSummary(it, monthRows, prevRows);
             return `<tr class="border-t border-slate-50">
               <td class="px-3 py-2 sticky left-0 bg-white text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
               <td class="px-2 py-2 text-right tabular-nums text-slate-500">${n2(s.opening)}</td>
@@ -10350,18 +10377,19 @@ function renderWeeklyCountSummary(items, monthRows, ym, branch) {
       </div>
     </div>
     <div class="bg-brand-50/60 border border-brand-100 rounded-xl px-4 py-3 mb-4 text-xs text-brand-800">
-      <strong>Consumed</strong> = Opening + Purchased − Closing. Opening is the first weekly count recorded this month.
+      <strong>Consumed</strong> = Opening + Purchased − Closing. Opening carries over from last month's closing count (or the first count this month if there's no prior data).
     </div>
     ${groups.map(([cat,list]) => tbl(cat,list)).join('')}`;
 }
 
 function exportWeeklyCountSummaryCSV(branch, ym) {
   const rows = state.weeklyCountsCache[wcCacheKey(branch, ym)] || [];
+  const prevRows = state.weeklyCountsCache[wcCacheKey(branch, prevYm(ym))] || [];
   const items = (state.weeklyCountItems || []).filter(i => i.active)
     .sort((a,b) => a.sortOrder - b.sortOrder);
   const out = [['Branch','Month','Category','Item','Unit','Opening','Purchased','Closing','Consumed','Weeks counted']];
   items.forEach(it => {
-    const s = wcItemSummary(it, rows);
+    const s = wcItemSummary(it, rows, prevRows);
     out.push([branch, ym, WC_CATEGORIES[it.category]||it.category, it.name, it.unit,
       s.opening==null?'':s.opening, s.purchased,
       s.closing==null?'':s.closing, s.consumed==null?'':s.consumed, s.weeks]);
