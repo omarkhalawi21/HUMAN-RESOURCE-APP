@@ -452,6 +452,8 @@ function emptyState() {
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
     bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
     bakeryTransfersCache: {}, // on-demand per YYYY-MM (all branches): { "2026-05": [{ id, productId, branch, transferDate, qty }] }
+    bakeryIngredients: [],  // catalog: [{ id, name, sortOrder, active }]
+    bakeryStockCache: {},   // on-demand per YYYY-MM: { "2026-05": [{ id, ingredientId, stockDate, usedQty }] }
     empExtras: {},      // by employeeId: { shiftStart, shiftEnd, offDays:[0..6], iqama:{number,expiry}, baladiya:{number,expiry} }
     companyStamp: '',   // base64 data URL of the official company stamp (PNG/JPG with transparency ideally)
     viewAsRole: null,   // admin-only "View as role" preview; in-memory only, cleared on reload/logout
@@ -990,6 +992,24 @@ function mapBakeryTransferFromDb(r) {
     recordedAt: r.recorded_at,
   };
 }
+function mapBakeryIngredientFromDb(r) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    sortOrder: Number(r.sort_order) || 0,
+    active: r.active !== false,
+  };
+}
+function mapBakeryStockFromDb(r) {
+  return {
+    id: r.id,
+    ingredientId: r.ingredient_id,
+    stockDate: r.stock_date || '',
+    usedQty: r.used_qty == null ? null : Number(r.used_qty),
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
 function inventoryItemToDb(i) {
   return {
     name: i.name,
@@ -1178,7 +1198,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1236,6 +1256,9 @@ async function loadAll() {
       // Bakery product catalog only (small, branch-agnostic). The
       // bakery_transfers series is per-day/branch, loaded on demand.
       sb.from('bakery_products').select('*').order('sort_order'),
+      // Bakery ingredient catalog only (small, branch-agnostic). The
+      // bakery_stock series is per-day, loaded on demand per month.
+      sb.from('bakery_ingredients').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1288,6 +1311,8 @@ async function loadAll() {
     state.expiryChecksCache  = {};
     state.bakeryProducts     = (bakeryProductsR.data || []).map(mapBakeryProductFromDb);
     state.bakeryTransfersCache = {};
+    state.bakeryIngredients  = (bakeryIngredientsR.data || []).map(mapBakeryIngredientFromDb);
+    state.bakeryStockCache   = {};
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -1541,7 +1566,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1828,7 +1853,8 @@ function renderShell(routeContent) {
     { key:'weekly_count', icon:'box',       label:'Weekly count',    show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'expiry_check', icon:'calendar',  label:'Expiry checklist',show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
-    { key:'bakery_transfers', icon:'box',   label:'Bakery',          show:hasRole('admin','bakery','operations'), group:'company' },
+    { key:'bakery_transfers', icon:'box',   label:'Transfers',       show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
+    { key:'bakery_stock', icon:'box',       label:'Stock',           show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
@@ -1862,6 +1888,7 @@ function renderShell(routeContent) {
             team:        { label: state.settings.lang==='ar' ? 'الفريق'   : 'Team',        icon: 'users' },
             inventory:   { label: state.settings.lang==='ar' ? 'المخزون'  : 'Inventory',   icon: 'box' },
             maintenance: { label: state.settings.lang==='ar' ? 'الصيانة'  : 'Maintenance', icon: 'wrench' },
+            bakery:      { label: state.settings.lang==='ar' ? 'المخبز'   : 'Bakery',      icon: 'box' },
             reports:     { label: state.settings.lang==='ar' ? 'التقارير' : 'Reports',     icon: 'report' },
           };
           const renderItem = n => {
@@ -9363,19 +9390,6 @@ function renderBakeryDashboard() {
       <div class="font-display text-2xl font-semibold ${tone||'text-slate-900'} mt-1">${value}</div>
       <div class="text-xs text-slate-500 mt-1">${escapeHTML(sub)}</div>
     </div>`;
-  const soon = (title, lead, body) => `
-    <div class="bg-white rounded-2xl shadow-card p-5">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(title)}</div>
-          <div class="font-display text-lg font-semibold text-slate-900">${escapeHTML(lead)}</div>
-        </div>
-      </div>
-      <div class="text-center py-6">
-        <div class="w-12 h-12 mx-auto rounded-full bg-brand-50 text-brand-700 flex items-center justify-center mb-2">${icon('box','w-6 h-6')}</div>
-        <div class="text-sm text-slate-600 max-w-sm mx-auto">${body}</div>
-      </div>
-    </div>`;
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
@@ -9383,7 +9397,7 @@ function renderBakeryDashboard() {
       <div class="relative">
         <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Bakery</div>
         <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
-        <p class="text-slate-500 mt-1 text-sm max-w-md">Finished-goods transfers to the branches and raw-ingredient stock. The logging tools are being set up &mdash; bear with us.</p>
+        <p class="text-slate-500 mt-1 text-sm max-w-md">Log finished-goods transfers to the branches and daily raw-ingredient stock &mdash; both tools are below.</p>
       </div>
     </div>
 
@@ -9391,7 +9405,7 @@ function renderBakeryDashboard() {
       ${statCard('Branches served', branches.length, branches.join(' · '), 'text-slate-900')}
       ${statCard('Finished products', products.length, 'tracked recipes', 'text-slate-900')}
       ${statCard('Transfer log', 'Live', 'log today’s deliveries', 'text-emerald-600')}
-      ${statCard('Raw ingredients', '&mdash;', 'stock sheet coming soon', 'text-slate-300')}
+      ${statCard('Raw ingredients', (state.bakeryIngredients||[]).filter(i=>i.active).length, 'daily stock sheet', 'text-slate-900')}
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -9401,8 +9415,12 @@ function renderBakeryDashboard() {
         <p class="text-sm text-slate-600 mt-2 flex-1">Log how many of each item go to ${branches.map(escapeHTML).join(', ')} each day${products.length?' &mdash; '+products.map(escapeHTML).join(', '):''}. The month view sums per branch with a grand total.</p>
         <button onclick="location.hash='#/bakery_transfers'" class="btn btn-primary btn-sm mt-4 self-start">${icon('box','w-4 h-4')} Open transfers</button>
       </div>
-      ${soon('Raw stock &amp; purchases', 'Ingredients & buying',
-        `Daily ingredient stock plus weekly and monthly purchases (flour, sugar, butter, chocolate, eggs&hellip;). This tool is coming soon.`)}
+      <div class="bg-white rounded-2xl shadow-card p-5 flex flex-col">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Raw stock</div>
+        <div class="font-display text-lg font-semibold text-slate-900">Ingredient usage</div>
+        <p class="text-sm text-slate-600 mt-2 flex-1">Log how much of each raw ingredient (flour, sugar, butter, chocolate, eggs&hellip;) is used each day. The month view is ingredient &times; day with a monthly total.</p>
+        <button onclick="location.hash='#/bakery_stock'" class="btn btn-primary btn-sm mt-4 self-start">${icon('box','w-4 h-4')} Open stock</button>
+      </div>
     </div>`;
 }
 
@@ -11208,6 +11226,276 @@ async function deleteBakeryProduct(id) {
   closeModal();
   render();
   toast('Product deleted', 'success');
+}
+
+/* ==================== BAKERY STOCK ====================
+   The bakery's daily raw-ingredient usage (the paper "DAILY STOCK
+   SHEET"): per date, how much of each ingredient was used. No
+   branch — the bakery is one production site. Entry is a single
+   ingredient list per day; the month view is ingredient × day with
+   a monthly TOTAL column. On-demand per month, never bulk-loaded.
+   (The monthly purchases/branch-transfer sub-sheet is a later
+   change once its exact columns are confirmed.) -------------------- */
+let bakeryStockState = { date:'', view:'entry', draft:null };
+const _bsLoading = new Set();
+
+async function loadBakeryStock(ym) {
+  if (state.bakeryStockCache[ym] || _bsLoading.has(ym)) return;
+  _bsLoading.add(ym);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('bakery_stock').select('*')
+    .gte('stock_date', from).lte('stock_date', to);
+  _bsLoading.delete(ym);
+  if (error) {
+    toast('Failed to load bakery stock: ' + error.message, 'error');
+    state.bakeryStockCache[ym] = [];
+    render();
+    return;
+  }
+  state.bakeryStockCache[ym] = (data || []).map(mapBakeryStockFromDb);
+  render();
+}
+
+function bsGetSaved(date, ingredientId) {
+  const arr = state.bakeryStockCache[date.slice(0,7)];
+  if (!arr) return null;
+  return arr.find(s => s.stockDate === date && s.ingredientId === ingredientId) || null;
+}
+function bsEnsureDraft(date, ingredients) {
+  if (bakeryStockState.draft && bakeryStockState.draft.key === date) return;
+  const byItem = {};
+  ingredients.forEach(it => {
+    const s = bsGetSaved(date, it.id);
+    byItem[it.id] = s && s.usedQty != null ? String(s.usedQty) : '';
+  });
+  bakeryStockState.draft = { key: date, byItem };
+}
+function bsCaptureInputs() {
+  const d = bakeryStockState.draft;
+  if (!d) return;
+  (state.bakeryIngredients || []).forEach(it => {
+    const el = document.getElementById('bs-' + it.id);
+    if (el) d.byItem[it.id] = el.value.trim();
+  });
+}
+
+function renderBakeryStock() {
+  if (!bakeryStockState.date) bakeryStockState.date = todayISO();
+  const { date, view } = bakeryStockState;
+  const ym = date.slice(0, 7);
+  const canManage = hasRole('admin','bakery');
+
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Bakery</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Stock</h2>
+        <div class="text-xs text-slate-500 mt-1">Raw-ingredient usage at the bakery, per day · monthly totals.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">
+          <button onclick="bakeryStockState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Log</button>
+          <button onclick="bsCaptureInputs(); bakeryStockState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month total</button>
+        </div>
+        ${canManage ? `<button onclick="openBakeryIngredientModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage ingredients</button>` : ''}
+      </div>
+    </div>`;
+
+  if (!state.bakeryStockCache[ym]) {
+    loadBakeryStock(ym);
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading…</div>`;
+  }
+
+  const ingredients = (state.bakeryIngredients || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  if (ingredients.length === 0) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No bakery ingredients yet.${canManage?' Use “Manage ingredients” to add some.':''}</div>`;
+  }
+
+  if (view === 'month') return header + renderBakeryStockMonth(ingredients, state.bakeryStockCache[ym], ym);
+
+  // ---- Single-page daily usage ----
+  bsEnsureDraft(date, ingredients);
+  const d = bakeryStockState.draft.byItem;
+  const dateBar = `
+    <div class="flex items-center justify-between gap-3 mb-5 flex-wrap">
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Date</span>
+        <input type="date" value="${escapeHTML(date)}" max="${escapeHTML(todayISO())}"
+          onchange="bsCaptureInputs(); bakeryStockState.date=this.value; bakeryStockState.draft=null; render();"
+          class="input !w-auto !py-2">
+        <span class="text-xs text-slate-500">${escapeHTML(fmtDate(date))}</span>
+      </label>
+    </div>`;
+  const body = `<div class="space-y-2">${ingredients.map(it => `
+    <div class="bg-white rounded-2xl shadow-card p-4 flex items-center gap-3">
+      <div class="flex-1 min-w-0 text-[15px] font-medium text-slate-900 truncate">${escapeHTML(it.name)}</div>
+      <div class="text-center">
+        <div class="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Used</div>
+        <input id="bs-${it.id}" type="text" inputmode="decimal" autocomplete="off"
+          value="${escapeHTML(d[it.id] || '')}" placeholder="0"
+          class="input !w-24 !h-11 !text-center tabular-nums">
+      </div>
+    </div>`).join('')}</div>`;
+  const navBar = `
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+      <div class="text-xs text-slate-500">${escapeHTML(fmtDate(date))}</div>
+      <button onclick="saveBakeryStock()" class="btn btn-primary">${icon('check','w-4 h-4')} Save day</button>
+    </div>`;
+  return `${header}<div class="max-w-2xl mx-auto">${dateBar}${body}${navBar}</div>`;
+}
+
+function renderBakeryStockMonth(ingredients, monthRows, ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const cell = {}; // ingredientId -> day -> usedQty
+  monthRows.forEach(s => {
+    if (s.usedQty == null) return;
+    const dd = Number(s.stockDate.slice(8,10));
+    (cell[s.ingredientId] = cell[s.ingredientId] || {})[dd] = Number(s.usedQty);
+  });
+  const dayHdr = Array.from({length:days}, (_,i) => `<th class="px-1.5 py-2 text-[10px] font-semibold text-slate-400 text-center">${i+1}</th>`).join('');
+  const rows = ingredients.map(it => {
+    let total = 0;
+    const tds = Array.from({length:days}, (_,i) => {
+      const v = cell[it.id]?.[i+1];
+      if (v != null) total += v;
+      return `<td class="px-1.5 py-1.5 text-center tabular-nums text-slate-700 border-l border-slate-50">${v != null ? escapeHTML(String(v)) : ''}</td>`;
+    }).join('');
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-1.5 sticky left-0 bg-white text-sm text-slate-800 whitespace-nowrap">${escapeHTML(it.name)}</td>
+      ${tds}
+      <td class="px-3 py-1.5 text-center tabular-nums font-semibold text-brand-800 border-l-2 border-brand-200 bg-brand-50/40">${total ? +total.toFixed(2) : ''}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}" onchange="bakeryStockState.date=this.value+'-01'; render();" class="input !w-auto !py-2">
+      <div class="flex items-center gap-2">
+        <button onclick="exportBakeryStockCSV('${escapeHTML(ym)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-slate-500 sticky left-0 bg-white">${escapeHTML(ym)}</th>
+          ${dayHdr}
+          <th class="px-3 py-2 text-[11px] uppercase tracking-wider text-brand-700 text-center border-l-2 border-brand-200">Total</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function exportBakeryStockCSV(ym) {
+  const rows = state.bakeryStockCache[ym] || [];
+  const [y, m] = ym.split('-').map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const ingredients = (state.bakeryIngredients || []).filter(i => i.active)
+    .sort((a,b) => a.sortOrder - b.sortOrder);
+  const cell = {};
+  rows.forEach(s => { if (s.usedQty != null) (cell[s.ingredientId] = cell[s.ingredientId] || {})[Number(s.stockDate.slice(8,10))] = Number(s.usedQty); });
+  const out = [['Month','Ingredient', ...Array.from({length:days},(_,i)=>String(i+1)), 'Total']];
+  ingredients.forEach(it => {
+    let total = 0;
+    const cols = Array.from({length:days}, (_,i) => { const v = cell[it.id]?.[i+1]; if (v!=null) total += v; return v!=null?v:''; });
+    out.push([ym, it.name, ...cols, total ? +total.toFixed(2) : 0]);
+  });
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `bakery-stock-${ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Stock exported', 'success');
+}
+
+async function saveBakeryStock() {
+  bsCaptureInputs();
+  const { date, draft } = bakeryStockState;
+  if (!draft) { toast('Nothing to save.', 'info'); return; }
+  const me = currentEmployee();
+  const ym = date.slice(0,7);
+  const ingredients = (state.bakeryIngredients || []).filter(i => i.active);
+  const existing = (state.bakeryStockCache[ym] || []).filter(s => s.stockDate === date);
+  const exById = {}; existing.forEach(s => { exById[s.ingredientId] = s; });
+  const toUpsert = [], toDeleteIds = [];
+  ingredients.forEach(it => {
+    const qN = dcNum(draft.byItem[it.id]);
+    if (qN == null) {
+      if (exById[it.id]) toDeleteIds.push(exById[it.id].id);
+      return;
+    }
+    toUpsert.push({
+      ingredient_id: it.id, stock_date: date,
+      used_qty: qN, recorded_by: me?.id || null, recorded_at: new Date().toISOString(),
+    });
+  });
+  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (toDeleteIds.length) {
+    const { error } = await sb.from('bakery_stock').delete().in('id', toDeleteIds);
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  if (toUpsert.length) {
+    const { error } = await sb.from('bakery_stock')
+      .upsert(toUpsert, { onConflict: 'ingredient_id,stock_date' });
+    if (error) { toast(error.message, 'error'); return; }
+  }
+  delete state.bakeryStockCache[ym];
+  bakeryStockState.draft = null;
+  await loadBakeryStock(ym);
+  toast('Day saved', 'success');
+}
+
+function openBakeryIngredientModal(editing) {
+  const e = editing || {};
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Ingredient name</label>
+        <input id="bi-name" class="input" placeholder="e.g. Flour" value="${escapeHTML(e.name||'')}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Sort order</label><input id="bi-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+        <div class="flex items-end pb-1">
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="bi-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+        </div>
+      </div>
+      ${editing ? `<button onclick="deleteBakeryIngredient('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this ingredient</button>` : ''}
+    </div>`;
+  openModal(editing ? 'Edit ingredient' : 'Add bakery ingredient', form, async () => {
+    const name = $('#bi-name').value.trim();
+    if (!name) { toast('Ingredient name is required', 'error'); return false; }
+    const row = { name, sort_order: Number($('#bi-sort').value) || 0, active: $('#bi-active').checked };
+    if (editing) {
+      const { data, error } = await sb.from('bakery_ingredients').update(row).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapBakeryIngredientFromDb(data));
+      toast('Ingredient updated', 'success');
+    } else {
+      const { data, error } = await sb.from('bakery_ingredients').insert(row).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.bakeryIngredients.push(mapBakeryIngredientFromDb(data));
+      toast('Ingredient added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add ingredient' });
+}
+
+async function deleteBakeryIngredient(id) {
+  if (!confirm('Delete this ingredient and all its recorded usage? This cannot be undone.')) return;
+  const { error } = await sb.from('bakery_ingredients').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.bakeryIngredients = state.bakeryIngredients.filter(i => i.id !== id);
+  state.bakeryStockCache = {}; // usage cascade-deleted; drop stale cache
+  closeModal();
+  render();
+  toast('Ingredient deleted', 'success');
 }
 
 /* -------------------- INVENTORY (admin or inventory) -------------------- */
@@ -14551,6 +14839,7 @@ function render() {
     case 'weekly_count': content = hasRole('admin','head_barista','barista') ? renderWeeklyCount() : renderRoleDashboard(); break;
     case 'expiry_check': content = hasRole('admin','head_barista','barista') ? renderExpiryCheck() : renderRoleDashboard(); break;
     case 'bakery_transfers': content = hasRole('admin','bakery','operations') ? renderBakeryTransfers() : renderRoleDashboard(); break;
+    case 'bakery_stock': content = hasRole('admin','bakery','operations') ? renderBakeryStock() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
