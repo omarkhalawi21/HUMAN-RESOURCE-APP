@@ -7636,6 +7636,15 @@ const TASK_STATUSES = {
 let workFilter = { tab:'open', dept:'all', q:'' };
 let workMgmtTab = 'tasks';            // 'tasks' | 'checklists'
 let checklistView = { dept:'all', date:'', branch:'' };
+// Per-checklist reveal of already-done items. Default collapsed so a
+// later shift only sees what's still outstanding (not the whole list
+// again); the count + "show" keeps done items one tap away with who
+// completed them, so nothing is lost for accountability.
+let clShowDone = new Set();
+function clToggleDone(id) {
+  if (clShowDone.has(id)) clShowDone.delete(id); else clShowDone.add(id);
+  render();
+}
 // Branch-operational roles allowed to tick a checklist run (their
 // branch is enforced UI-side, mirroring Daily Count's role-gated
 // model). Keep in sync with the checklist_runs write RLS (block 55).
@@ -7974,13 +7983,17 @@ function renderMyWork() {
             </div>
             <div class="h-1.5 bg-slate-100"><div class="h-full ${cAll?'bg-emerald-500':'bg-brand-500'}" style="width:${cpct}%"></div></div>
             <div class="divide-y divide-slate-50">
-              ${ctotal===0?`<div class="p-4 text-sm text-slate-400">No items yet.</div>`:items.map(it=>{
-                const ch=!!(st[it.id]&&st[it.id].done);
-                return `<button type="button" onclick="toggleChecklistItem('${c.id}','${myBranch}','${ctoday}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50">
+              ${ctotal===0?`<div class="p-4 text-sm text-slate-400">No items yet.</div>`:(()=>{
+                const pend = items.filter(it=>!(st[it.id]&&st[it.id].done));
+                const dn   = items.filter(it=> (st[it.id]&&st[it.id].done));
+                const btn=(it,ch)=>`<button type="button" onclick="toggleChecklistItem('${c.id}','${myBranch}','${ctoday}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50">
                   <span class="w-5 h-5 rounded border ${ch?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${ch?icon('check','w-3.5 h-3.5'):''}</span>
                   <span class="flex-1 text-sm ${ch?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
                 </button>`;
-              }).join('')}
+                const shown=clShowDone.has(c.id);
+                return (pend.length?pend.map(it=>btn(it,false)).join(''):`<div class="p-4 text-sm text-emerald-600">All done — nothing left for this shift.</div>`)
+                  + (dn.length?`<button type="button" onclick="clToggleDone('${c.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${dn.length} already done today · ${shown?'hide':'show'}</button>`+(shown?dn.map(it=>btn(it,true)).join(''):''):'');
+              })()}
             </div>
           </div>`;
         }).join('');
@@ -8150,17 +8163,19 @@ function renderWorkChecklists() {
         </div>
         <div class="h-1.5 bg-slate-100"><div class="h-full ${allDone?'bg-emerald-500':'bg-brand-500'}" style="width:${pct}%"></div></div>
         <div class="divide-y divide-slate-50">
-          ${total===0 ? `<div class="p-5 text-sm text-slate-400">No items in this checklist yet — edit the template to add some.</div>` :
-            items.map(it => {
-              const checked = !!(st[it.id] && st[it.id].done);
-              const who = checked && st[it.id].by ? getEmployee(st[it.id].by) : null;
-              return `
-              <button type="button" ${canTick?'':'disabled'} onclick="toggleChecklistItem('${c.id}','${branch}','${date}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 ${canTick?'':'cursor-default opacity-90'}">
-                <span class="w-5 h-5 rounded border ${checked?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${checked?icon('check','w-3.5 h-3.5'):''}</span>
-                <span class="flex-1 text-sm ${checked?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
+          ${total===0 ? `<div class="p-5 text-sm text-slate-400">No items in this checklist yet — edit the template to add some.</div>` : (()=>{
+            const pend = items.filter(it=>!(st[it.id] && st[it.id].done));
+            const dn   = items.filter(it=> (st[it.id] && st[it.id].done));
+            const row=(it,ck)=>{ const who = ck && st[it.id].by ? getEmployee(st[it.id].by) : null;
+              return `<button type="button" ${canTick?'':'disabled'} onclick="toggleChecklistItem('${c.id}','${branch}','${date}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 ${canTick?'':'cursor-default opacity-90'}">
+                <span class="w-5 h-5 rounded border ${ck?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${ck?icon('check','w-3.5 h-3.5'):''}</span>
+                <span class="flex-1 text-sm ${ck?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
                 ${who ? `<span class="text-[11px] text-slate-400 whitespace-nowrap">${escapeHTML((who.firstName+' '+(who.lastName||'')).trim())}</span>` : ''}
-              </button>`;
-            }).join('')}
+              </button>`; };
+            const shown=clShowDone.has(c.id);
+            return (pend.length?pend.map(it=>row(it,false)).join(''):`<div class="p-4 text-sm text-emerald-600">All items done.</div>`)
+              + (dn.length?`<button type="button" onclick="clToggleDone('${c.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${dn.length} already done · ${shown?'hide':'show'}</button>`+(shown?dn.map(it=>row(it,true)).join(''):''):'');
+          })()}
         </div>
       </div>`;
   }).join('');
