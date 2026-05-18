@@ -4566,7 +4566,7 @@ function openPayslip(payrollId) {
         <tr><td class="lbl">Base Salary</td><td class="val" style="text-align:right">${fmtMoney(p.base)}</td></tr>
         <tr><td class="lbl">${otLabel}</td><td class="val amount-pos" style="text-align:right">+ ${fmtMoney(otBonus)}</td></tr>
         ${adjRows}
-        <tr><td class="lbl">Deductions</td><td class="val amount-neg" style="text-align:right">&minus; ${fmtMoney(advanceDed)}</td></tr>
+        ${advanceDed > 0 ? `<tr><td class="lbl">Deductions</td><td class="val amount-neg" style="text-align:right">&minus; ${fmtMoney(advanceDed)}</td></tr>` : ''}
         <tr class="total"><td class="lbl">Net Pay</td><td class="val" style="text-align:right">${fmtMoney(p.net)}</td></tr>
       </tbody>
     </table>
@@ -4639,11 +4639,17 @@ function calcPayroll(ym) {
       !a.repaidAt &&
       (a.deductFromPayroll === 'next' || a.deductFromPayroll === 'installments')
     );
-    let advanceDeduction = 0;
+    // Approved advances flagged for payroll deduction. Each repayment
+    // becomes an itemised deduction line on the payslip (persisted in
+    // adjustments) instead of an opaque lump. Installment bookkeeping
+    // (advanceUpdates) is unchanged — approval is still required.
+    const advanceItems = [];
     empAdvances.forEach(a => {
       const total = Number(a.amount) || 0;
+      const reason = (a.reason || '').trim();
       if (a.deductFromPayroll === 'next') {
-        advanceDeduction += total;
+        const amt = Math.round(total*100)/100;
+        if (amt > 0) advanceItems.push({ kind:'deduction', label:`Advance repayment${reason?': '+reason:''}`, amount: amt });
         advanceUpdates.set(a.id, { installmentsPaid: 1, repaid: true });
       } else {
         // installments: 2 equal halves. Skip if both already taken.
@@ -4652,8 +4658,9 @@ function calcPayroll(ym) {
         const half = Math.round((total / 2) * 100) / 100;
         // Last installment takes whatever remains so totals match exactly.
         const installment = paid === 1 ? Math.max(0, total - half) : half;
-        advanceDeduction += installment;
         const newPaid = paid + 1;
+        const amt = Math.round(installment*100)/100;
+        if (amt > 0) advanceItems.push({ kind:'deduction', label:`Advance repayment${reason?': '+reason:''} (installment ${newPaid}/2)`, amount: amt });
         advanceUpdates.set(a.id, { installmentsPaid: newPaid, repaid: newPaid >= 2 });
       }
     });
@@ -4675,10 +4682,12 @@ function calcPayroll(ym) {
       empAdj.push({ kind: 'deduction', label: `${d.reason||'Deduction'}${d.incidentDate?` (${d.incidentDate})`:''}`, amount: amt });
       deductionUpdates.set(d.id, true);
     });
+    // Advance repayments are itemised deduction lines too.
+    empAdj.push(...advanceItems);
     const manualBonus = empAdj.filter(a => a.kind === 'bonus').reduce((s,a) => s + a.amount, 0);
     const manualDeduction = empAdj.filter(a => a.kind === 'deduction').reduce((s,a) => s + a.amount, 0);
     const bonus = Math.round((ot.amount + manualBonus)*100)/100;
-    const deductions = Math.round((advanceDeduction + manualDeduction)*100)/100;
+    const deductions = Math.round(manualDeduction*100)/100;
     const net = Math.max(0, base + bonus - deductions);
     return {
       employee_id: e.id, period: ym,
@@ -4690,19 +4699,16 @@ function calcPayroll(ym) {
   const totals = rows.reduce((s, r) => {
     const adj = r.adjustments || [];
     const mb = adj.filter(a => a.kind === 'bonus').reduce((x,a) => x + a.amount, 0);
-    const md = adj.filter(a => a.kind === 'deduction').reduce((x,a) => x + a.amount, 0);
     return {
-      base:            s.base            + r.base,
-      bonus:           s.bonus           + r.bonus,
-      deductions:      s.deductions      + r.deductions,
-      net:             s.net             + r.net,
-      otHours:         s.otHours         + r.holiday_ot_hours,
-      otBonus:         s.otBonus         + (r.bonus - mb),
-      manualBonus:     s.manualBonus     + mb,
-      advanceDeduction:s.advanceDeduction+ (r.deductions - md),
-      manualDeduction: s.manualDeduction + md,
+      base:        s.base        + r.base,
+      bonus:       s.bonus       + r.bonus,
+      deductions:  s.deductions  + r.deductions,
+      net:         s.net         + r.net,
+      otHours:     s.otHours     + r.holiday_ot_hours,
+      otBonus:     s.otBonus     + (r.bonus - mb),
+      manualBonus: s.manualBonus + mb,
     };
-  }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0, advanceDeduction:0, manualDeduction:0 });
+  }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0 });
   return { rows, advanceUpdates, deductionUpdates, totals };
 }
 
@@ -4806,13 +4812,9 @@ function renderRunPayrollPreview() {
           <div class="text-slate-600">Manual bonuses</div>
           <div class="text-right font-semibold text-emerald-700">+${fmtMoney(calc.totals.manualBonus)}</div>
         ` : ''}
-        ${calc.totals.advanceDeduction > 0 ? `
-          <div class="text-slate-600">Advance deductions</div>
-          <div class="text-right font-semibold text-rose-700">−${fmtMoney(calc.totals.advanceDeduction)}</div>
-        ` : ''}
-        ${calc.totals.manualDeduction > 0 ? `
-          <div class="text-slate-600">Manual deductions</div>
-          <div class="text-right font-semibold text-rose-700">−${fmtMoney(calc.totals.manualDeduction)}</div>
+        ${calc.totals.deductions > 0 ? `
+          <div class="text-slate-600">Deductions <span class="text-slate-400">(advances, registered &amp; manual)</span></div>
+          <div class="text-right font-semibold text-rose-700">−${fmtMoney(calc.totals.deductions)}</div>
         ` : ''}
         <div class="text-slate-700 border-t border-slate-200 pt-2 mt-1">Net to pay</div>
         <div class="text-right text-base font-bold text-slate-900 border-t border-slate-200 pt-2 mt-1">${fmtMoney(calc.totals.net)}</div>
