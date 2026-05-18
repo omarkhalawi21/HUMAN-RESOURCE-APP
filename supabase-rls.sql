@@ -2828,6 +2828,70 @@ CREATE POLICY "deductions_delete_admin_or_hr"
   USING (public.has_role(ARRAY['admin','hr']));
 
 -- =============================================================
+-- 52. WORK MANAGEMENT — TASKS (Phase 1)
+--     Lightweight task board so operations + admin collaborate
+--     inside the app: assign a task to an employee, set a
+--     department / priority / due date, track status. SELECT is
+--     open to all authenticated users (collaborative board + the
+--     assignee must see their own work + dashboard cards); INSERT/
+--     DELETE are admin/operations; UPDATE is admin/operations OR
+--     the assignee (so the person it's assigned to can move it
+--     todo -> in_progress -> done). Phase 2 (checklists, in-app
+--     notification centre) will build on this same table.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.tasks (
+  id           uuid primary key default gen_random_uuid(),
+  title        text not null,
+  description  text,
+  department   text,
+  assigned_to  uuid references public.employees(id) ON DELETE SET NULL,
+  priority     text not null default 'normal',   -- low | normal | high | urgent
+  status       text not null default 'todo',     -- todo | in_progress | done | blocked
+  due_date     date,
+  completed_at timestamptz,
+  created_by   uuid references public.employees(id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS tasks_status_idx     ON public.tasks(status);
+CREATE INDEX IF NOT EXISTS tasks_department_idx ON public.tasks(department);
+CREATE INDEX IF NOT EXISTS tasks_assigned_idx   ON public.tasks(assigned_to);
+
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='tasks'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "tasks_select_all"
+  ON public.tasks FOR SELECT TO authenticated
+  USING (true);
+CREATE POLICY "tasks_insert_admin_or_ops"
+  ON public.tasks FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "tasks_update_admin_ops_or_assignee"
+  ON public.tasks FOR UPDATE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e
+               WHERE e.id = tasks.assigned_to AND e.user_id = auth.uid())
+  )
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e
+               WHERE e.id = tasks.assigned_to AND e.user_id = auth.uid())
+  );
+CREATE POLICY "tasks_delete_admin_or_ops"
+  ON public.tasks FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
