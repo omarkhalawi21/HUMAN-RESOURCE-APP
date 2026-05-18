@@ -435,6 +435,8 @@ function emptyState() {
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
     deductions: [],     // [{ id, employeeId, amount, reason, details, incidentDate, period, status, appliedAt, createdBy, createdAt }] — admin-registered payroll deductions
     tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, createdBy, createdAt, updatedAt }] — Work Management board
+    checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
+    checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
 
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
@@ -855,6 +857,30 @@ function taskToDb(t) {
     created_by: t.createdBy||null, updated_at: new Date().toISOString(),
   };
 }
+function mapChecklistFromDb(r) {
+  return {
+    id: r.id, department: r.department||'', title: r.title||'',
+    items: Array.isArray(r.items) ? r.items : [],
+    active: r.active !== false, sortOrder: Number(r.sort_order)||0,
+    createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function checklistToDb(c) {
+  return {
+    department: c.department||null, title: c.title||null,
+    items: Array.isArray(c.items) ? c.items : [],
+    active: c.active !== false, sort_order: Number(c.sortOrder)||0,
+    created_by: c.createdBy||null, updated_at: new Date().toISOString(),
+  };
+}
+function mapChecklistRunFromDb(r) {
+  return {
+    id: r.id, checklistId: r.checklist_id, runDate: r.run_date,
+    state: (r.state && typeof r.state === 'object') ? r.state : {},
+    note: r.note||'', createdBy: r.created_by||null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
 function mapCertificateFromDb(r) {
   return {
     id: r.id, employeeId: r.employee_id,
@@ -1261,7 +1287,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1332,6 +1358,10 @@ async function loadAll() {
       // Work Management tasks — bounded operational set (like
       // advances/maintenance); newest first, capped.
       sb.from('tasks').select('*').order('created_at', { ascending: false }).limit(1000),
+      // Checklist templates only (small bounded catalog, like the
+      // count catalogs). checklist_runs are an unbounded per-day
+      // series — loaded on demand per YYYY-MM, never here.
+      sb.from('checklists').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1367,6 +1397,7 @@ async function loadAll() {
     state.advances     = (advancesR.data     || []).map(mapAdvanceFromDb);
     state.deductions   = (deductionsR.data   || []).map(mapDeductionFromDb);
     state.tasks        = (tasksR.data        || []).map(mapTaskFromDb);
+    state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
@@ -1380,6 +1411,7 @@ async function loadAll() {
     state.alertWeeklyCounts  = (alertWeeklyR.data || []).map(mapWeeklyCountFromDb);
     state.alertExpiryChecks  = (alertExpiryR.data || []).map(mapExpiryCheckFromDb);
     state.incomingTransfers  = (incomingTransfersR.data || []).map(mapIncomingTransferFromDb);
+    state.checklistRunsCache = {};
     state.dailyCountsCache   = {};
     state.weeklyCountItems   = (weeklyCountItemsR.data || []).map(mapWeeklyCountItemFromDb);
     state.weeklyCountsCache  = {};
@@ -1410,7 +1442,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests','tasks'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests','tasks','checklist_runs','checklists'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -7473,6 +7505,9 @@ const TASK_STATUSES = {
   done:        { label:'Done',        pill:'bg-emerald-50 text-emerald-700' },
 };
 let workFilter = { tab:'open', dept:'all', q:'' };
+let workMgmtTab = 'tasks';            // 'tasks' | 'checklists'
+let checklistView = { dept:'all', date:'' };
+const _clLoading = new Set();
 function taskIsOpen(t) { return t.status !== 'done'; }
 function taskOverdue(t) { return t.status !== 'done' && t.dueDate && t.dueDate < todayISO(); }
 function taskDueLabel(t) {
@@ -7495,6 +7530,15 @@ function workTaskMatches(t) {
   return true;
 }
 function renderWorkManagement() {
+  if (!hasRole('admin','operations')) return renderRoleDashboard();
+  const tab = workMgmtTab === 'checklists' ? 'checklists' : 'tasks';
+  const tabbar = `<div class="flex gap-1 border-b border-slate-200 mb-5">
+    <button type="button" class="tab ${tab==='tasks'?'active':''}" onclick="workMgmtTab='tasks'; render();">${icon('check','w-4 h-4 inline')} Tasks</button>
+    <button type="button" class="tab ${tab==='checklists'?'active':''}" onclick="workMgmtTab='checklists'; render();">${icon('idcard','w-4 h-4 inline')} Checklists</button>
+  </div>`;
+  return tabbar + (tab === 'checklists' ? renderWorkChecklists() : renderWorkTasks());
+}
+function renderWorkTasks() {
   const canEdit = hasRole('admin','operations');
   if (!canEdit) return renderRoleDashboard();
   const all = (state.tasks||[]).slice();
@@ -7730,6 +7774,242 @@ function tasksSnapshotHTML() {
       </div>
       ${show.length ? `<div>${show.map(rowHTML).join('')}</div>` : `<div class="text-xs text-slate-400 py-2">Nothing overdue or due in the next 3 days.</div>`}
     </div>`;
+}
+
+// ---- Checklists (Phase 2): per-department reusable checklists,
+// ticked per calendar day. Catalog (state.checklists) is bulk-
+// loaded; the runs are an unbounded per-day series loaded on
+// demand per YYYY-MM, mirroring the count-feature discipline.
+function clGenId() {
+  try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(_) {}
+  return 'ci_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+}
+function checklistRunFor(checklistId, date) {
+  const arr = state.checklistRunsCache[date.slice(0,7)];
+  if (!arr) return null;
+  return arr.find(r => r.checklistId === checklistId && r.runDate === date) || null;
+}
+async function loadChecklistRuns(ym) {
+  if (state.checklistRunsCache[ym] || _clLoading.has(ym)) return;
+  _clLoading.add(ym);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('checklist_runs').select('*')
+    .gte('run_date', from).lte('run_date', to);
+  _clLoading.delete(ym);
+  if (error) {
+    toast('Failed to load checklist runs: ' + error.message, 'error');
+    // Cache empty so the page renders instead of looping the shell.
+    state.checklistRunsCache[ym] = [];
+    render();
+    return;
+  }
+  state.checklistRunsCache[ym] = (data || []).map(mapChecklistRunFromDb);
+  render();
+}
+function renderWorkChecklists() {
+  const canEdit = hasRole('admin','operations');
+  if (!checklistView.date) checklistView.date = todayISO();
+  const date = checklistView.date;
+  const ym = date.slice(0,7);
+  const dept = checklistView.dept;
+
+  const controls = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('idcard','w-3.5 h-3.5')} Operations</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Checklists</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">Reusable per-department checklists, ticked off per day. Build a template once; it can be completed every day and the day's progress is saved.</p>
+        </div>
+        ${canEdit ? `<button onclick="openChecklistModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New checklist</button>` : ''}
+      </div>
+      <div class="relative flex flex-wrap items-center gap-3 mt-4">
+        <select class="input !w-auto !py-1.5 text-sm" onchange="checklistView.dept=this.value; render();">
+          <option value="all" ${dept==='all'?'selected':''}>All departments</option>
+          ${SUGGESTED_DEPARTMENTS.map(d=>`<option value="${escapeHTML(d)}" ${dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
+        </select>
+        <input type="date" class="input !w-auto !py-1.5 text-sm" value="${escapeHTML(date)}" onchange="checklistView.date=this.value||todayISO(); render();">
+        ${date!==todayISO() ? `<button class="btn btn-ghost btn-sm" onclick="checklistView.date=todayISO(); render();">Today</button>` : ''}
+      </div>
+    </div>`;
+
+  if (!state.checklistRunsCache[ym]) {
+    loadChecklistRuns(ym);
+    return controls + `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(ym)}…</div>`;
+  }
+
+  let templates = (state.checklists || []).filter(c => c.active);
+  if (dept !== 'all') templates = templates.filter(c => (c.department||'') === dept);
+  templates = templates.slice().sort((a,b) =>
+    (a.sortOrder-b.sortOrder) || (a.department||'').localeCompare(b.department||'') || (a.title||'').localeCompare(b.title||''));
+
+  if (templates.length === 0) {
+    return controls + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('idcard','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">No checklists ${dept!=='all'?`for ${escapeHTML(dept)}`:'yet'}</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Create a checklist template (e.g. a Bakery opening checklist). It can then be ticked off every day, with each day's progress saved.</div>
+        ${canEdit ? `<button onclick="openChecklistModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} New checklist</button>` : ''}
+      </div>`;
+  }
+
+  const cards = templates.map(c => {
+    const run = checklistRunFor(c.id, date);
+    const st = run ? run.state : {};
+    const items = Array.isArray(c.items) ? c.items : [];
+    const done = items.filter(it => st[it.id] && st[it.id].done).length;
+    const total = items.length;
+    const pct = total ? Math.round(done/total*100) : 0;
+    const allDone = total>0 && done===total;
+    return `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden mb-5">
+        <div class="p-5 border-b border-slate-100 flex items-start justify-between gap-3 flex-wrap">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(c.title)}</h3>
+              ${c.department ? `<span class="badge badge-blue">${escapeHTML(c.department)}</span>` : ''}
+              ${allDone ? `<span class="badge badge-green">Complete</span>` : ''}
+            </div>
+            <div class="text-xs text-slate-500 mt-1">${done}/${total} done · ${pct}%</div>
+          </div>
+          ${canEdit ? `<div class="inline-flex gap-1">
+            <button onclick="openChecklistModal('${c.id}')" aria-label="Edit checklist" title="Edit template" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+            <button onclick="deleteChecklist('${c.id}')" aria-label="Delete checklist" title="Delete template" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+          </div>` : ''}
+        </div>
+        <div class="h-1.5 bg-slate-100"><div class="h-full ${allDone?'bg-emerald-500':'bg-brand-500'}" style="width:${pct}%"></div></div>
+        <div class="divide-y divide-slate-50">
+          ${total===0 ? `<div class="p-5 text-sm text-slate-400">No items in this checklist yet — edit the template to add some.</div>` :
+            items.map(it => {
+              const checked = !!(st[it.id] && st[it.id].done);
+              const who = checked && st[it.id].by ? getEmployee(st[it.id].by) : null;
+              return `
+              <button type="button" ${canEdit?'':'disabled'} onclick="toggleChecklistItem('${c.id}','${date}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 ${canEdit?'':'cursor-default opacity-90'}">
+                <span class="w-5 h-5 rounded border ${checked?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${checked?icon('check','w-3.5 h-3.5'):''}</span>
+                <span class="flex-1 text-sm ${checked?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
+                ${who ? `<span class="text-[11px] text-slate-400 whitespace-nowrap">${escapeHTML((who.firstName+' '+(who.lastName||'')).trim())}</span>` : ''}
+              </button>`;
+            }).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  return controls + cards;
+}
+async function toggleChecklistItem(checklistId, date, itemId) {
+  if (!hasRole('admin','operations')) return;
+  const me = currentEmployee();
+  const ym = date.slice(0,7);
+  const run = checklistRunFor(checklistId, date);
+  const st = Object.assign({}, run ? run.state : {});
+  const wasDone = !!(st[itemId] && st[itemId].done);
+  st[itemId] = wasDone ? { done:false } : { done:true, by: me?.id || null, at: new Date().toISOString() };
+  const payload = {
+    checklist_id: checklistId, run_date: date, state: st,
+    created_by: run ? (run.createdBy || me?.id || null) : (me?.id || null),
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await sb.from('checklist_runs')
+    .upsert(payload, { onConflict: 'checklist_id,run_date' }).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  const mapped = mapChecklistRunFromDb(data);
+  const arr = state.checklistRunsCache[ym] || (state.checklistRunsCache[ym] = []);
+  const i = arr.findIndex(r => r.checklistId === checklistId && r.runDate === date);
+  if (i >= 0) arr[i] = mapped; else arr.push(mapped);
+  render();
+}
+function clItemRowHTML(it) {
+  const id = (it && it.id) || clGenId();
+  return `<div class="cl-item flex items-center gap-2" data-id="${escapeHTML(id)}">
+    <input class="cl-item-text input !py-1.5 text-sm flex-1" placeholder="Checklist item…" value="${escapeHTML(it && it.text || '')}">
+    <button type="button" onclick="this.closest('.cl-item').remove()" class="text-slate-400 hover:text-rose-600 px-2" aria-label="Remove item">✕</button>
+  </div>`;
+}
+function clAddItemRow() {
+  const box = document.getElementById('cl-items');
+  if (!box) return;
+  box.insertAdjacentHTML('beforeend', clItemRowHTML({}));
+  const last = box.querySelector('.cl-item:last-child .cl-item-text');
+  if (last) last.focus();
+}
+function openChecklistModal(id) {
+  if (!hasRole('admin','operations')) return;
+  const editing = id ? (state.checklists||[]).find(c => c.id===id) : null;
+  const items = editing && Array.isArray(editing.items) && editing.items.length ? editing.items : [{}];
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Title *</label>
+        <input id="cl-title" class="input" placeholder="e.g. Bakery opening checklist" value="${escapeHTML(editing?.title||'')}">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Department</label>
+          <select id="cl-dept" class="input"><option value="">— None —</option>${SUGGESTED_DEPARTMENTS.map(d=>`<option ${editing?.department===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}</select>
+        </div>
+        <div class="flex items-end">
+          <label class="flex items-center gap-2 text-sm text-slate-700"><input id="cl-active" type="checkbox" ${editing? (editing.active?'checked':'') : 'checked'}> Active</label>
+        </div>
+      </div>
+      <div>
+        <label class="label">Items *</label>
+        <div id="cl-items" class="space-y-2">${items.map(clItemRowHTML).join('')}</div>
+        <button type="button" onclick="clAddItemRow()" class="btn btn-ghost btn-sm mt-2">${icon('plus','w-4 h-4')} Add item</button>
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit checklist' : 'New checklist', form, async () => {
+    const me = currentEmployee();
+    const title = $('#cl-title').value.trim();
+    if (!title) { toast('Title is required', 'error'); return false; }
+    const rows = Array.from(document.querySelectorAll('#cl-items .cl-item'));
+    const itemsOut = rows.map(r => ({
+      id: r.getAttribute('data-id') || clGenId(),
+      text: (r.querySelector('.cl-item-text')?.value || '').trim(),
+    })).filter(x => x.text);
+    if (itemsOut.length === 0) { toast('Add at least one item', 'error'); return false; }
+    const data = {
+      title,
+      department: $('#cl-dept').value,
+      active: $('#cl-active').checked,
+      items: itemsOut,
+      sortOrder: editing?.sortOrder || 0,
+      createdBy: editing?.createdBy || me?.id,
+    };
+    const dbRow = checklistToDb(data);
+    if (editing) {
+      const { data: row, error } = await sb.from('checklists').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapChecklistFromDb(row));
+      toast('Checklist updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('checklists').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.checklists.push(mapChecklistFromDb(row));
+      toast('Checklist created', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Create checklist' });
+}
+async function deleteChecklist(id) {
+  if (!hasRole('admin','operations')) return;
+  const c = (state.checklists||[]).find(x => x.id===id);
+  if (!c) return;
+  if (!confirm(`Delete the checklist "${c.title}"? All its saved daily progress will also be removed.`)) return;
+  const { error } = await sb.from('checklists').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.checklists = state.checklists.filter(x => x.id !== id);
+  // Server cascades checklist_runs; mirror locally so cached months
+  // don't keep stale runs for the deleted checklist.
+  Object.keys(state.checklistRunsCache).forEach(ym => {
+    state.checklistRunsCache[ym] = (state.checklistRunsCache[ym]||[]).filter(r => r.checklistId !== id);
+  });
+  render();
+  toast('Checklist deleted', 'success');
 }
 
 /* -------------------- DEDUCTIONS -------------------- */
