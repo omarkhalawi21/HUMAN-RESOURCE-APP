@@ -434,6 +434,7 @@ function emptyState() {
     warnings: [],       // [{ id, employeeId, severity, type, date, reason, notes, issuedBy, issuedAt, fileData }]
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
     deductions: [],     // [{ id, employeeId, amount, reason, details, incidentDate, period, status, appliedAt, createdBy, createdAt }] — admin-registered payroll deductions
+    tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, createdBy, createdAt, updatedAt }] — Work Management board
 
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
@@ -834,6 +835,24 @@ function deductionToDb(d) {
     reason: d.reason||null, details: d.details||null,
     incident_date: d.incidentDate||null, period: d.period||null,
     status: d.status||'pending', created_by: d.createdBy||null,
+  };
+}
+function mapTaskFromDb(r) {
+  return {
+    id: r.id, title: r.title||'', description: r.description||'',
+    department: r.department||'', assignedTo: r.assigned_to||null,
+    priority: r.priority||'normal', status: r.status||'todo',
+    dueDate: r.due_date||null, completedAt: r.completed_at||null,
+    createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function taskToDb(t) {
+  return {
+    title: t.title||null, description: t.description||null,
+    department: t.department||null, assigned_to: t.assignedTo||null,
+    priority: t.priority||'normal', status: t.status||'todo',
+    due_date: t.dueDate||null, completed_at: t.completedAt||null,
+    created_by: t.createdBy||null, updated_at: new Date().toISOString(),
   };
 }
 function mapCertificateFromDb(r) {
@@ -1242,7 +1261,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1310,6 +1329,9 @@ async function loadAll() {
       // Salary deductions register — admin/hr only (RLS). Bounded by
       // org size; bulk-load is fine (like advances/warnings).
       sb.from('deductions').select('*').order('created_at', { ascending: false }),
+      // Work Management tasks — bounded operational set (like
+      // advances/maintenance); newest first, capped.
+      sb.from('tasks').select('*').order('created_at', { ascending: false }).limit(1000),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1344,6 +1366,7 @@ async function loadAll() {
     state.warnings     = (warningsR.data     || []).map(mapWarningFromDb);
     state.advances     = (advancesR.data     || []).map(mapAdvanceFromDb);
     state.deductions   = (deductionsR.data   || []).map(mapDeductionFromDb);
+    state.tasks        = (tasksR.data        || []).map(mapTaskFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
@@ -1387,7 +1410,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests','tasks'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -1619,7 +1642,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1888,6 +1911,7 @@ function renderShell(routeContent) {
   const lang = state.settings.lang;
   const navItems = [
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
+    { key:'work_management', icon:'check',  label:'Work Management',  show:hasRole('admin','operations'), group:'main' },
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
     { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main', parent:'team' },
@@ -2279,6 +2303,7 @@ function renderDashboard() {
 
     <!-- Cross-branch alerts (read-only, admin) -->
     ${admin ? crossBranchAlertsHTML() : ''}
+    ${tasksSnapshotHTML()}
 
     <!-- Daily-count snapshot (read-only, admin) -->
     ${admin ? dailyCountSnapshotHTML() : ''}
@@ -7430,6 +7455,283 @@ function printAdvanceSlip(id) {
   win.document.write(html); win.document.close();
 }
 
+/* -------------------- WORK MANAGEMENT (tasks) -------------------- */
+// Phase 1: a lightweight task board so operations + admin assign and
+// track work by department. Checklists + in-app notification centre
+// are deliberately deferred to Phase 2 (keeps the nav uncluttered —
+// one "Work Management" entry, internal tabs come with Phase 2).
+const TASK_PRIORITIES = {
+  low:    { label:'Low',    pill:'bg-slate-50 text-slate-600' },
+  normal: { label:'Normal', pill:'bg-blue-50 text-blue-700' },
+  high:   { label:'High',   pill:'bg-amber-50 text-amber-700' },
+  urgent: { label:'Urgent', pill:'bg-rose-50 text-rose-700' },
+};
+const TASK_STATUSES = {
+  todo:        { label:'To do',       pill:'bg-slate-100 text-slate-600' },
+  in_progress: { label:'In progress', pill:'bg-blue-50 text-blue-700' },
+  blocked:     { label:'Blocked',     pill:'bg-rose-50 text-rose-700' },
+  done:        { label:'Done',        pill:'bg-emerald-50 text-emerald-700' },
+};
+let workFilter = { tab:'open', dept:'all', q:'' };
+function taskIsOpen(t) { return t.status !== 'done'; }
+function taskOverdue(t) { return t.status !== 'done' && t.dueDate && t.dueDate < todayISO(); }
+function taskDueLabel(t) {
+  if (!t.dueDate) return '<span class="text-slate-400">—</span>';
+  const today = todayISO();
+  if (t.status === 'done') return `<span class="text-slate-400">${fmtDate(t.dueDate)}</span>`;
+  if (t.dueDate < today)  return `<span class="text-rose-600 font-medium">Overdue · ${fmtDate(t.dueDate)}</span>`;
+  if (t.dueDate === today) return `<span class="text-amber-600 font-medium">Due today</span>`;
+  return `<span class="text-slate-600">${fmtDate(t.dueDate)}</span>`;
+}
+function workTaskMatches(t) {
+  if (workFilter.tab === 'open' && !taskIsOpen(t)) return false;
+  if (workFilter.tab === 'done' && t.status !== 'done') return false;
+  if (workFilter.dept !== 'all' && (t.department||'') !== workFilter.dept) return false;
+  if (workFilter.q) {
+    const e = getEmployee(t.assignedTo);
+    const hay = `${t.title} ${t.description||''} ${t.department||''} ${e?(e.firstName+' '+e.lastName):''}`.toLowerCase();
+    if (!hay.includes(workFilter.q.toLowerCase())) return false;
+  }
+  return true;
+}
+function renderWorkManagement() {
+  const canEdit = hasRole('admin','operations');
+  if (!canEdit) return renderRoleDashboard();
+  const all = (state.tasks||[]).slice();
+  const open = all.filter(taskIsOpen);
+  const overdue = all.filter(taskOverdue);
+  const dueToday = open.filter(t => t.dueDate === todayISO());
+  const filtered = all.filter(workTaskMatches);
+  // Group filtered tasks by department (blank => "Unassigned dept").
+  const byDept = {};
+  filtered.forEach(t => {
+    const k = (t.department||'').trim() || 'No department';
+    (byDept[k] = byDept[k] || []).push(t);
+  });
+  const deptOrder = Object.keys(byDept).sort((a,b)=>a.localeCompare(b));
+  const prioRank = { urgent:0, high:1, normal:2, low:3 };
+  deptOrder.forEach(k => byDept[k].sort((a,b)=>
+    (taskOverdue(b)?1:0)-(taskOverdue(a)?1:0) ||
+    (prioRank[a.priority]??2)-(prioRank[b.priority]??2) ||
+    (a.dueDate||'9999').localeCompare(b.dueDate||'9999')
+  ));
+
+  const header = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('check','w-3.5 h-3.5')} Operations</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Work Management</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">Assign and track work across departments. Operations &amp; admin create tasks; the assignee can move their own task forward. Checklists and reminders arrive in a later phase.</p>
+        </div>
+        <button onclick="openTaskModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New task</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+      ${miniStat('Open tasks', open.length, 'check', 'blue')}
+      ${miniStat('Due today', dueToday.length, 'clock', dueToday.length?'amber':'green')}
+      ${miniStat('Overdue', overdue.length, 'warning', overdue.length?'red':'green')}
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+      <div class="flex gap-1 border-b border-slate-200">
+        <button type="button" class="tab ${workFilter.tab==='open'?'active':''}" onclick="workFilter.tab='open'; render();">Open ${open.length?`<span class="ml-1 badge badge-blue !px-1.5 !py-0">${open.length}</span>`:''}</button>
+        <button type="button" class="tab ${workFilter.tab==='done'?'active':''}" onclick="workFilter.tab='done'; render();">Done</button>
+        <button type="button" class="tab ${workFilter.tab==='all'?'active':''}" onclick="workFilter.tab='all'; render();">All</button>
+      </div>
+      <select class="input !w-auto !py-1.5 text-sm" onchange="workFilter.dept=this.value; render();">
+        <option value="all" ${workFilter.dept==='all'?'selected':''}>All departments</option>
+        ${SUGGESTED_DEPARTMENTS.map(d=>`<option value="${escapeHTML(d)}" ${workFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
+      </select>
+      <input class="input !w-auto !py-1.5 text-sm" style="min-width:180px" placeholder="Search tasks…" value="${escapeHTML(workFilter.q)}" oninput="workFilter.q=this.value; clearTimeout(window._wfT); window._wfT=setTimeout(render,250);">
+    </div>`;
+
+  if (filtered.length === 0) {
+    return header + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">No tasks ${workFilter.tab!=='all'?`(${workFilter.tab})`:''}</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Create a task and assign it to someone — it shows here grouped by department, and due/overdue tasks surface on the dashboard.</div>
+        <button onclick="openTaskModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} New task</button>
+      </div>`;
+  }
+
+  const statusOpts = t => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${t.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
+  const board = deptOrder.map(dept => `
+    <div class="mb-6">
+      <div class="flex items-center gap-2 mb-2">
+        <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(dept)}</h3>
+        <span class="text-xs text-slate-400">${byDept[dept].length}</span>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Task</th><th>Assignee</th><th>Priority</th><th>Due</th><th>Status</th><th class="!text-end">Actions</th></tr></thead>
+            <tbody>
+              ${byDept[dept].map(t => {
+                const e = getEmployee(t.assignedTo);
+                const pr = TASK_PRIORITIES[t.priority] || TASK_PRIORITIES.normal;
+                return `
+                <tr class="hover-row ${taskOverdue(t)?'bg-rose-50/40':''}">
+                  <td>
+                    <div class="font-medium text-slate-900">${escapeHTML(t.title)}</div>
+                    ${t.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(t.description)}</div>` : ''}
+                  </td>
+                  <td>${e ? `<div class="flex items-center gap-2">${avatarHTML(e,24)}<span class="text-sm text-slate-700">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></div>` : '<span class="text-xs text-slate-400">Unassigned</span>'}</td>
+                  <td><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></td>
+                  <td class="text-sm whitespace-nowrap">${taskDueLabel(t)}</td>
+                  <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${t.id}', this.value)">${statusOpts(t)}</select></td>
+                  <td class="!text-end whitespace-nowrap">
+                    <button onclick="openTaskModal('${t.id}')" aria-label="Edit task" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                    <button onclick="deleteTask('${t.id}')" aria-label="Delete task" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>`).join('');
+
+  return header + board;
+}
+function openTaskModal(id) {
+  if (!hasRole('admin','operations')) return;
+  const editing = id ? (state.tasks||[]).find(t => t.id===id) : null;
+  const emps = (state.employees||[]).filter(isActiveEmployee).slice()
+    .sort((a,b)=> ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Title *</label>
+        <input id="tk-title" class="input" placeholder="e.g. Deep-clean the espresso machine" value="${escapeHTML(editing?.title||'')}">
+      </div>
+      <div>
+        <label class="label">Description (optional)</label>
+        <textarea id="tk-desc" class="input" rows="3" placeholder="What needs doing, any context…">${escapeHTML(editing?.description||'')}</textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Department</label>
+          <select id="tk-dept" class="input"><option value="">— None —</option>${SUGGESTED_DEPARTMENTS.map(d=>`<option ${editing?.department===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="label">Assign to</label>
+          <select id="tk-emp" class="input"><option value="">— Unassigned —</option>${emps.map(e=>`<option value="${e.id}" ${editing?.assignedTo===e.id?'selected':''}>${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="label">Priority</label>
+          <select id="tk-prio" class="input">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${(editing?.priority||'normal')===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="label">Status</label>
+          <select id="tk-status" class="input">${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${(editing?.status||'todo')===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select>
+        </div>
+        <div class="col-span-2">
+          <label class="label">Due date (optional)</label>
+          <input id="tk-due" type="date" class="input" value="${escapeHTML(editing?.dueDate||'')}">
+        </div>
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit task' : 'New task', form, async () => {
+    const me = currentEmployee();
+    const title = $('#tk-title').value.trim();
+    if (!title) { toast('Title is required', 'error'); return false; }
+    const status = $('#tk-status').value;
+    const data = {
+      title,
+      description: $('#tk-desc').value.trim(),
+      department: $('#tk-dept').value,
+      assignedTo: $('#tk-emp').value || null,
+      priority: $('#tk-prio').value,
+      status,
+      dueDate: $('#tk-due').value || null,
+      completedAt: status === 'done' ? (editing?.completedAt || new Date().toISOString()) : null,
+      createdBy: editing?.createdBy || me?.id,
+    };
+    const dbRow = taskToDb(data);
+    if (editing) {
+      const { data: row, error } = await sb.from('tasks').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapTaskFromDb(row));
+      toast('Task updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('tasks').insert(dbRow).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      state.tasks.unshift(mapTaskFromDb(row));
+      toast('Task created', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Create task' });
+}
+async function changeTaskStatus(id, status) {
+  const t = (state.tasks||[]).find(x => x.id===id);
+  if (!t || !TASK_STATUSES[status]) return;
+  const completedAt = status === 'done' ? (t.completedAt || new Date().toISOString()) : null;
+  const { data, error } = await sb.from('tasks')
+    .update({ status, completed_at: completedAt, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); render(); return; }
+  Object.assign(t, mapTaskFromDb(data));
+  render();
+  toast(`Marked ${TASK_STATUSES[status].label}`, 'success');
+}
+async function deleteTask(id) {
+  if (!hasRole('admin','operations')) return;
+  const t = (state.tasks||[]).find(x => x.id===id);
+  if (!t) return;
+  if (!confirm(`Delete the task "${t.title}"?`)) return;
+  const { error } = await sb.from('tasks').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.tasks = state.tasks.filter(x => x.id !== id);
+  render();
+  toast('Task deleted', 'success');
+}
+function tasksSnapshotHTML() {
+  if (!hasRole('admin','operations')) return '';
+  const all = (state.tasks||[]);
+  const open = all.filter(taskIsOpen);
+  const overdue = all.filter(taskOverdue)
+    .sort((a,b)=>(a.dueDate||'').localeCompare(b.dueDate||''));
+  const dueSoon = open.filter(t => {
+    if (!t.dueDate || taskOverdue(t)) return false;
+    const d = daysUntil(t.dueDate);
+    return d !== null && d >= 0 && d <= 3;
+  }).sort((a,b)=>(a.dueDate||'').localeCompare(b.dueDate||''));
+  if (all.length === 0) return '';
+  const rowHTML = t => {
+    const e = getEmployee(t.assignedTo);
+    return `<div class="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
+      <div class="min-w-0">
+        <div class="text-sm text-slate-800 truncate">${escapeHTML(t.title)}</div>
+        <div class="text-[11px] text-slate-500">${escapeHTML(t.department||'No dept')}${e?` · ${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}`:''}</div>
+      </div>
+      <div class="text-xs whitespace-nowrap">${taskDueLabel(t)}</div>
+    </div>`;
+  };
+  const show = (overdue.length ? overdue : dueSoon).slice(0,5);
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-2">${icon('check','w-3.5 h-3.5')} Work Management</div>
+          <div class="font-display text-lg font-semibold text-slate-900">Tasks needing attention</div>
+        </div>
+        <a href="#/work_management" class="text-sm text-brand-700 hover:underline">Open board &rarr;</a>
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-3">
+        <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Open</div><div class="font-display text-2xl font-semibold text-slate-900 mt-1">${open.length}</div></div>
+        <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Due ≤3d</div><div class="font-display text-2xl font-semibold ${dueSoon.length?'text-amber-600':'text-slate-900'} mt-1">${dueSoon.length}</div></div>
+        <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Overdue</div><div class="font-display text-2xl font-semibold ${overdue.length?'text-rose-600':'text-slate-900'} mt-1">${overdue.length}</div></div>
+      </div>
+      ${show.length ? `<div>${show.map(rowHTML).join('')}</div>` : `<div class="text-xs text-slate-400 py-2">Nothing overdue or due in the next 3 days.</div>`}
+    </div>`;
+}
+
 /* -------------------- DEDUCTIONS -------------------- */
 // Admin/HR registers a deduction the day an incident happens; it is
 // auto-applied to the chosen month's payroll run, itemised on the
@@ -8915,6 +9217,7 @@ function renderOperationsDashboard() {
 
     <!-- Inventory snapshot (read-only) -->
     ${inventorySnapshotHTML()}
+    ${tasksSnapshotHTML()}
 
     <!-- Branches + 7-day trend -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
@@ -15601,6 +15904,7 @@ function render() {
   let content = '';
   switch (route) {
     case 'dashboard':    content = renderRoleDashboard(); break;
+    case 'work_management': content = hasRole('admin','operations') ? renderWorkManagement() : renderRoleDashboard(); break;
     case 'employees':    content = canManagePeople() ? renderEmployees() : renderRoleDashboard(); break;
     case 'employee':     content = canManagePeople() ? renderEmployeeProfile(getRouteParam()) : renderRoleDashboard(); break;
     case 'attendance':   content = renderAttendance(); break;
