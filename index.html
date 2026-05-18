@@ -426,6 +426,7 @@ function emptyState() {
     leaveRequests: [],
     leaveBalances: {},
     payroll: [],
+    holidays: [],       // company-wide public-holiday calendar (Supabase); drives payroll holiday-overtime
     session: null,
     activity: [],
     companyId: null,
@@ -770,7 +771,17 @@ function mapPayrollFromDb(r) {
     id: r.id, employeeId: r.employee_id, period: r.period,
     base: Number(r.base)||0, bonus: Number(r.bonus)||0, deductions: Number(r.deductions)||0,
     net: Number(r.net)||0, status: r.status, paidAt: r.paid_at,
+    holidayOtHours: Number(r.holiday_ot_hours)||0,
   };
+}
+function mapHolidayFromDb(r) {
+  return {
+    id: r.id, date: r.date, name: r.name||'',
+    createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
+function holidayToDb(h) {
+  return { date: h.date, name: h.name||null, created_by: h.createdBy||null };
 }
 /* V2 mappers — DB ↔ JS */
 function mapWarningFromDb(r) {
@@ -1211,7 +1222,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1272,6 +1283,10 @@ async function loadAll() {
       // Bakery ingredient catalog only (small, branch-agnostic). The
       // bakery_stock series is per-day, loaded on demand per month.
       sb.from('bakery_ingredients').select('*').order('sort_order'),
+      // Public-holiday calendar — small, company-wide, bounded.
+      // SELECT is open to every authenticated user (RLS USING true)
+      // because it affects their own pay and prints on payslips.
+      sb.from('holidays').select('*').order('date'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1294,6 +1309,7 @@ async function loadAll() {
     state.attendance = (attendanceR.data || []).map(mapAttendanceFromDb);
     state.leaveRequests = (leaveR.data || []).map(mapLeaveFromDb);
     state.payroll = (payrollR.data || []).map(mapPayrollFromDb);
+    state.holidays = (holidaysR.data || []).map(mapHolidayFromDb);
     state.leaveBalances = {};
     state.employees.forEach(e => {
       state.leaveBalances[e.id] = { annual: e.leave_annual, sick: e.leave_sick, personal: e.leave_personal };
@@ -1579,7 +1595,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1852,6 +1868,7 @@ function renderShell(routeContent) {
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
     { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main', parent:'team' },
     { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main', parent:'team' },
+    { key:'holidays',     icon:'calendar',  label:'Holidays',        show:canManagePeople(), group:'main', parent:'team' },
     /* People management */
     { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
@@ -4506,7 +4523,7 @@ function openPayslip(payrollId) {
     <table class="doc-table" style="margin-top:8px">
       <tbody>
         <tr><td class="lbl">Base Salary</td><td class="val" style="text-align:right">${fmtMoney(p.base)}</td></tr>
-        <tr><td class="lbl">Bonus</td><td class="val amount-pos" style="text-align:right">+ ${fmtMoney(p.bonus||0)}</td></tr>
+        <tr><td class="lbl">${p.holidayOtHours>0 ? `Holiday Overtime &nbsp;<span style="font-weight:400;color:#6b7280;font-size:12px">(${p.holidayOtHours} hr${p.holidayOtHours===1?'':'s'} &times; 1.5&times; rate)</span>` : 'Bonus'}</td><td class="val amount-pos" style="text-align:right">+ ${fmtMoney(p.bonus||0)}</td></tr>
         <tr><td class="lbl">Deductions</td><td class="val amount-neg" style="text-align:right">&minus; ${fmtMoney(p.deductions||0)}</td></tr>
         <tr class="total"><td class="lbl">Net Pay</td><td class="val" style="text-align:right">${fmtMoney(p.net)}</td></tr>
       </tbody>
@@ -4525,8 +4542,35 @@ function openPayslip(payrollId) {
 // Pure calculator — figures out payroll rows + advance bookkeeping for a
 // given YYYY-MM period without writing anything. Used both by the live
 // preview in the modal and by the actual run.
+// Holiday overtime: an employee who clocked IN and OUT on a date in
+// the company holiday calendar earns 1.5x their hourly rate for the
+// hours worked, on top of the normal monthly salary (KSA labour-law
+// default). Hourly rate = monthly salary / 30 days / 10-hour day
+// (owner-confirmed: staff work 10h shifts, not 8). Returns the OT
+// pay amount and the worked-hours figure (persisted on the payslip
+// so the breakdown survives later attendance edits).
+const HOLIDAY_OT_MULTIPLIER = 1.5;
+const HOLIDAY_DAY_HOURS = 10;
+function holidayOtForEmployee(empId, ym, salary, holidaySet) {
+  if (!holidaySet.size) return { hours: 0, amount: 0 };
+  let mins = 0;
+  for (const a of (state.attendance || [])) {
+    if (a.employeeId !== empId) continue;
+    if (!a.date || a.date.slice(0,7) !== ym) continue;
+    if (!a.clockIn || !a.clockOut) continue;
+    if (!holidaySet.has(a.date)) continue;
+    const d = diffMinutes(a.clockIn, a.clockOut);
+    if (d > 0) mins += d;
+  }
+  const hours = Math.round((mins / 60) * 100) / 100;
+  const hourlyRate = (Number(salary) || 0) / 30 / HOLIDAY_DAY_HOURS;
+  const amount = Math.round(hours * hourlyRate * HOLIDAY_OT_MULTIPLIER * 100) / 100;
+  return { hours, amount };
+}
+
 function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
+  const holidaySet = new Set((state.holidays || []).map(h => h.date));
   // Skip terminated employees — they should not appear in payroll runs
   // after their termination date.
   const rows = state.employees.filter(isActiveEmployee).map(e => {
@@ -4555,12 +4599,13 @@ function calcPayroll(ym) {
       }
     });
     const base = e.salary;
-    const bonus = 0;
+    const ot = holidayOtForEmployee(e.id, ym, e.salary, holidaySet);
+    const bonus = ot.amount;
     const deductions = Math.round(advanceDeduction*100)/100;
     const net = Math.max(0, base + bonus - deductions);
     return {
       employee_id: e.id, period: ym,
-      base, bonus, deductions,
+      base, bonus, deductions, holiday_ot_hours: ot.hours,
       net, status: 'paid', paid_at: todayISO()
     };
   });
@@ -4569,7 +4614,8 @@ function calcPayroll(ym) {
     bonus:      s.bonus      + r.bonus,
     deductions: s.deductions + r.deductions,
     net:        s.net        + r.net,
-  }), { base:0, bonus:0, deductions:0, net:0 });
+    otHours:    s.otHours    + r.holiday_ot_hours,
+  }), { base:0, bonus:0, deductions:0, net:0, otHours:0 });
   return { rows, advanceUpdates, totals };
 }
 
@@ -4651,6 +4697,10 @@ function renderRunPayrollPreview() {
         <div class="text-right font-semibold text-slate-900">${calc.rows.length}</div>
         <div class="text-slate-600">Total base salary</div>
         <div class="text-right font-semibold text-slate-900">${fmtMoney(calc.totals.base)}</div>
+        ${calc.totals.bonus > 0 ? `
+          <div class="text-slate-600">Holiday overtime <span class="text-slate-400">(${(Math.round(calc.totals.otHours*100)/100)} hr${calc.totals.otHours===1?'':'s'} @ 1.5×)</span></div>
+          <div class="text-right font-semibold text-emerald-700">+${fmtMoney(calc.totals.bonus)}</div>
+        ` : ''}
         ${calc.totals.deductions > 0 ? `
           <div class="text-slate-600">Advance deductions</div>
           <div class="text-right font-semibold text-rose-700">−${fmtMoney(calc.totals.deductions)}</div>
@@ -12124,6 +12174,117 @@ async function deleteSupplier(id) {
   render();
 }
 
+function renderHolidays() {
+  const all = (state.holidays || []).slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  const canEdit = canManagePeople();
+  const today = todayISO();
+
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('calendar','w-3.5 h-3.5')} Payroll</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Public Holidays</h2>
+        <div class="text-xs text-slate-500 mt-1 max-w-2xl">Company-wide holiday calendar. Any employee who clocks in <strong>and</strong> out on one of these dates automatically earns <strong>1.5&times; their hourly rate</strong> (monthly salary &divide; 30 days &divide; 10-hour day) for the hours worked, added to that month&rsquo;s payslip when payroll is run. Editing this list affects <strong>future</strong> payroll runs only — payslips already issued stay fixed.</div>
+      </div>
+      ${canEdit ? `<button onclick="openHolidayModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add holiday</button>` : ''}
+    </div>`;
+
+  if (all.length === 0) {
+    return header + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('calendar','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">No holidays added yet</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Add Saudi official holidays (Eid al-Fitr, Eid al-Adha, National Day, Founding Day, etc.) here. Dates shift each year, so keep this current — only future payroll runs use it.</div>
+        ${canEdit ? `<button onclick="openHolidayModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add your first holiday</button>` : ''}
+      </div>`;
+  }
+
+  return header + `
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>
+            <th>Date</th>
+            <th>Day</th>
+            <th>Holiday</th>
+            <th class="!text-end">When</th>
+            ${canEdit ? '<th class="!text-end">Actions</th>' : ''}
+          </tr></thead>
+          <tbody>
+            ${all.map(h => {
+              const upcoming = (h.date||'') >= today;
+              return `
+              <tr class="hover-row">
+                <td class="font-medium text-slate-900 tabular-nums">${fmtDate(h.date)}</td>
+                <td class="text-slate-700 text-sm">${escapeHTML(new Date(h.date).toLocaleDateString(undefined,{weekday:'long'}))}</td>
+                <td class="text-slate-700">${escapeHTML(h.name)}</td>
+                <td class="!text-end">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${upcoming ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}">${upcoming ? 'Upcoming' : 'Past'}</span>
+                </td>
+                ${canEdit ? `
+                  <td class="!text-end">
+                    <div class="inline-flex gap-1">
+                      <button onclick="openHolidayModal('${h.id}')" aria-label="Edit ${escapeHTML(h.name)}" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                      <button onclick="deleteHoliday('${h.id}')" aria-label="Delete ${escapeHTML(h.name)}" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                    </div>
+                  </td>` : ''}
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function openHolidayModal(id) {
+  const editing = id ? (state.holidays||[]).find(h => h.id === id) : null;
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Date *</label>
+        <input id="hol-date" type="date" class="input" value="${escapeHTML(editing?.date||'')}">
+      </div>
+      <div>
+        <label class="label">Holiday name *</label>
+        <input id="hol-name" class="input" placeholder="e.g. Eid al-Fitr, Saudi National Day" value="${escapeHTML(editing?.name||'')}">
+      </div>
+      <p class="text-xs text-slate-500">Staff who work this day get 1.5&times; their hourly rate for hours worked, applied automatically the next time payroll is run for that month.</p>
+    </div>
+  `;
+  openModal(editing ? 'Edit holiday' : 'Add holiday', form, async () => {
+    const me = currentEmployee();
+    const date = $('#hol-date').value;
+    const name = $('#hol-name').value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('Pick a valid date', 'error'); return false; }
+    if (!name) { toast('Holiday name is required', 'error'); return false; }
+    const dbRow = holidayToDb({ date, name, createdBy: editing?.createdBy || me?.id });
+    if (editing) {
+      const { data: row, error } = await sb.from('holidays').update(dbRow).eq('id', editing.id).select().single();
+      if (error) { toast(/duplicate|unique/i.test(error.message) ? 'A holiday already exists on that date.' : error.message, 'error'); return false; }
+      Object.assign(editing, mapHolidayFromDb(row));
+      toast('Holiday updated', 'success');
+    } else {
+      const { data: row, error } = await sb.from('holidays').insert(dbRow).select().single();
+      if (error) { toast(/duplicate|unique/i.test(error.message) ? 'A holiday already exists on that date.' : error.message, 'error'); return false; }
+      state.holidays.push(mapHolidayFromDb(row));
+      toast('Holiday added', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Add holiday' });
+}
+
+async function deleteHoliday(id) {
+  const h = (state.holidays||[]).find(x => x.id === id);
+  if (!h) return;
+  if (!confirm(`Delete the holiday "${h.name}" on ${fmtDate(h.date)}?\n\nFuture payroll runs will no longer pay holiday overtime for this date. Payslips already issued are not affected.`)) return;
+  const { error } = await sb.from('holidays').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.holidays = state.holidays.filter(x => x.id !== id);
+  toast('Holiday deleted', 'success');
+  render();
+}
+
 function renderInventory() {
   const all = (state.inventory || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
   const filtered = getInventoryFiltered();
@@ -15026,6 +15187,7 @@ function render() {
     case 'attendance':   content = renderAttendance(); break;
     case 'leave':        content = renderLeave(); break;
     case 'payroll':      content = renderPayroll(); break;
+    case 'holidays':     content = canManagePeople() ? renderHolidays() : renderRoleDashboard(); break;
     case 'warnings':     content = renderWarnings(); break;
     case 'advances':     content = renderAdvances(); break;
     case 'certificates': content = renderCertificates(); break;

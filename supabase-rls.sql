@@ -2703,6 +2703,59 @@ CREATE POLICY "bpur_delete_admin_or_bakery"
   USING (public.has_role(ARRAY['admin','bakery']));
 
 -- =============================================================
+-- 49. PUBLIC HOLIDAYS + payroll holiday-overtime hours
+--     Company-wide holiday calendar, admin/HR managed. Saudi
+--     official holiday dates are lunar / government-announced each
+--     year, so they MUST be editable data — never hardcoded.
+--     calcPayroll() cross-references attendance against this list:
+--     any employee who clocked in AND out on a holiday date earns
+--     1.5x their hourly rate (monthly salary / 30 days / 10 hours)
+--     for the hours worked, fed into the payslip Bonus line.
+--     payroll.holiday_ot_hours persists the worked-hours figure so
+--     the payslip can show the breakdown after the run (attendance
+--     can change later — the payslip must stay a fixed snapshot).
+--     SELECT is broad (every employee can see the calendar; it
+--     affects their own pay and is printed on payslips); writes are
+--     admin/hr. UNIQUE(date) = one holiday entry per calendar day.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.holidays (
+  id          uuid primary key default gen_random_uuid(),
+  date        date not null unique,
+  name        text not null,
+  created_by  uuid references public.employees(id),
+  created_at  timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS holidays_date_idx ON public.holidays(date);
+
+ALTER TABLE public.holidays ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='holidays'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "holidays_select_all"
+  ON public.holidays FOR SELECT TO authenticated
+  USING (true);
+CREATE POLICY "holidays_insert_admin_or_hr"
+  ON public.holidays FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "holidays_update_admin_or_hr"
+  ON public.holidays FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "holidays_delete_admin_or_hr"
+  ON public.holidays FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS holiday_ot_hours numeric(12,2);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
