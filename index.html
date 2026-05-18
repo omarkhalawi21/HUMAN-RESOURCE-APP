@@ -7664,12 +7664,13 @@ function workTaskMatches(t) {
 }
 function renderWorkManagement() {
   if (!hasRole('admin','operations')) return renderRoleDashboard();
-  const tab = workMgmtTab === 'checklists' ? 'checklists' : 'tasks';
+  const tab = ['checklists','compliance'].includes(workMgmtTab) ? workMgmtTab : 'tasks';
   const tabbar = `<div class="flex gap-1 border-b border-slate-200 mb-5">
     <button type="button" class="tab ${tab==='tasks'?'active':''}" onclick="workMgmtTab='tasks'; render();">${icon('check','w-4 h-4 inline')} Tasks</button>
     <button type="button" class="tab ${tab==='checklists'?'active':''}" onclick="workMgmtTab='checklists'; render();">${icon('idcard','w-4 h-4 inline')} Checklists</button>
+    <button type="button" class="tab ${tab==='compliance'?'active':''}" onclick="workMgmtTab='compliance'; render();">${icon('report','w-4 h-4 inline')} Compliance</button>
   </div>`;
-  return tabbar + (tab === 'checklists' ? renderWorkChecklists() : renderWorkTasks());
+  return tabbar + (tab === 'checklists' ? renderWorkChecklists() : tab === 'compliance' ? renderWorkCompliance() : renderWorkTasks());
 }
 function renderWorkTasks() {
   const canEdit = hasRole('admin','operations');
@@ -8277,6 +8278,203 @@ async function deleteChecklist(id) {
   });
   render();
   toast('Checklist deleted', 'success');
+}
+
+// ---- Compliance (Phase 2): admin/operations oversight — per
+// branch/month, how consistently each checklist is completed +
+// a task-accountability snapshot. Single branch+month at a time
+// so it reuses the on-demand checklist-runs cache (no bulk load).
+let complianceView = { branch:'', ym:'' };
+function clComplianceRows(branch, ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const todayStr = todayISO();
+  const rows = (state.checklists || []).filter(c => c.active).slice()
+    .sort((a,b) => (a.sortOrder-b.sortOrder) || (a.title||'').localeCompare(b.title||''))
+    .map(c => {
+      const items = Array.isArray(c.items) ? c.items : [];
+      const total = items.length;
+      let complete = 0, partial = 0, none = 0;
+      const cells = [];
+      for (let d = 1; d <= days; d++) {
+        const ds = `${ym}-${String(d).padStart(2,'0')}`;
+        if (ds > todayStr) { cells.push({ d, st:'future' }); continue; }
+        const run = checklistRunFor(c.id, branch, ds);
+        const done = (run && total) ? items.filter(it => run.state[it.id] && run.state[it.id].done).length : 0;
+        let st;
+        if (!run || done === 0) { st = 'none'; none++; }
+        else if (total && done >= total) { st = 'complete'; complete++; }
+        else { st = 'partial'; partial++; }
+        cells.push({ d, st, done, total });
+      }
+      const active = complete + partial;
+      const rate = active ? Math.round(complete / active * 100) : null;
+      return { c, total, cells, complete, partial, none, active, rate };
+    });
+  return { days, rows };
+}
+function renderWorkCompliance() {
+  if (!complianceView.branch) complianceView.branch = dcDefaultBranch();
+  if (!complianceView.ym) complianceView.ym = todayISO().slice(0,7);
+  const branch = complianceView.branch, ym = complianceView.ym;
+  const key = dcCacheKey(branch, ym);
+
+  // Task accountability (tasks are company-wide, not branch-scoped).
+  const tasks = state.tasks || [];
+  const tOpen = tasks.filter(taskIsOpen).length;
+  const tOver = tasks.filter(taskOverdue);
+  const tDone = tasks.filter(t => t.status==='done' && (t.completedAt||'').slice(0,7) === ym).length;
+  const byA = {};
+  tOver.forEach(t => { const k = t.assignedTo || '—'; (byA[k] = byA[k] || []).push(t); });
+  const overList = Object.entries(byA).map(([k,arr]) => {
+    const e = k!=='—' ? getEmployee(k) : null;
+    return { name: e ? (e.firstName+' '+(e.lastName||'')).trim() : 'Unassigned', n: arr.length };
+  }).sort((a,b) => b.n-a.n).slice(0, 5);
+
+  const controls = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('report','w-3.5 h-3.5')} Oversight</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Compliance</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">How consistently each checklist is completed at a branch over a month, plus task accountability. Use it to follow up where things are slipping.</p>
+        </div>
+        <button onclick="printComplianceReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Print report</button>
+      </div>
+      <div class="relative flex flex-wrap items-center gap-3 mt-4">
+        <select class="input !w-auto !py-1.5 text-sm" onchange="complianceView.branch=this.value; render();">
+          ${SUGGESTED_BRANCHES.map(b=>`<option value="${b}" ${branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+        </select>
+        <input type="month" class="input !w-auto !py-1.5 text-sm" value="${escapeHTML(ym)}" onchange="complianceView.ym=this.value||todayISO().slice(0,7); render();">
+      </div>
+    </div>`;
+
+  const taskCard = `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-2 mb-3">${icon('check','w-3.5 h-3.5')} Task accountability <span class="text-slate-400 normal-case tracking-normal">(all branches)</span></div>
+      <div class="grid grid-cols-3 gap-3 mb-3">
+        <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Open</div><div class="font-display text-2xl font-semibold text-slate-900 mt-1">${tOpen}</div></div>
+        <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Overdue</div><div class="font-display text-2xl font-semibold ${tOver.length?'text-rose-600':'text-slate-900'} mt-1">${tOver.length}</div></div>
+        <div><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Done in ${escapeHTML(monthLabel(ym))}</div><div class="font-display text-2xl font-semibold text-emerald-600 mt-1">${tDone}</div></div>
+      </div>
+      ${overList.length ? `<div class="text-xs text-slate-500"><span class="font-semibold text-slate-600">Most overdue:</span> ${overList.map(o=>`${escapeHTML(o.name)} (${o.n})`).join(' · ')}</div>` : `<div class="text-xs text-slate-400">No overdue tasks.</div>`}
+    </div>`;
+
+  if (!state.checklistRunsCache[key]) {
+    loadChecklistRuns(branch, ym);
+    return controls + taskCard + `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)} · ${escapeHTML(ym)}…</div>`;
+  }
+
+  const { days, rows } = clComplianceRows(branch, ym);
+  if (rows.length === 0) {
+    return controls + taskCard + `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400 text-sm">No active checklists to report on. Create some in the Checklists tab.</div>`;
+  }
+  const sum = rows.reduce((s,r)=>({ c:s.c+r.complete, p:s.p+r.partial, n:s.n+r.none }), {c:0,p:0,n:0});
+  const oActive = sum.c + sum.p;
+  const oRate = oActive ? Math.round(sum.c / oActive * 100) : null;
+  const sq = (st) => {
+    const col = st==='complete' ? '#10b981' : st==='partial' ? '#f59e0b' : st==='none' ? '#e2e8f0' : 'transparent';
+    return `<span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${col};margin:1px;${st==='future'?'border:1px dashed #e2e8f0;':''}"></span>`;
+  };
+
+  const summary = `
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      ${miniStat('Checklists', rows.length, 'idcard', 'blue')}
+      ${miniStat('Completed days', sum.c, 'check', 'green')}
+      ${miniStat('Partial days', sum.p, 'warning', sum.p?'amber':'green')}
+      ${miniStat('Overall rate', oRate==null?'—':oRate+'%', 'report', oRate==null?'slate':(oRate>=80?'green':oRate>=50?'amber':'red'))}
+    </div>`;
+
+  const tableRows = rows.map(r => {
+    const noActivity = r.complete===0 && r.partial===0;
+    return `
+      <tr class="hover-row ${noActivity?'bg-rose-50/40':''}">
+        <td>
+          <div class="font-medium text-slate-900">${escapeHTML(r.c.title)}</div>
+          ${r.c.department?`<div class="text-xs text-slate-500 mt-0.5">${escapeHTML(r.c.department)}</div>`:''}
+        </td>
+        <td class="text-center text-emerald-700 font-semibold tabular-nums">${r.complete}</td>
+        <td class="text-center text-amber-700 tabular-nums">${r.partial}</td>
+        <td class="text-center text-slate-500 tabular-nums">${r.none}</td>
+        <td class="text-center font-semibold tabular-nums ${r.rate==null?'text-slate-400':(r.rate>=80?'text-emerald-700':r.rate>=50?'text-amber-700':'text-rose-700')}">${r.rate==null?'—':r.rate+'%'}</td>
+        <td><div style="display:flex;flex-wrap:wrap;max-width:380px">${r.cells.map(x=>`<span title="${ym}-${String(x.d).padStart(2,'0')}${x.st==='future'?'':` · ${x.done||0}/${x.total||0}`}">${sq(x.st)}</span>`).join('')}</div></td>
+      </tr>`;
+  }).join('');
+
+  return controls + taskCard + summary + `
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="p-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+        <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(branch)} · ${escapeHTML(monthLabel(ym))}</h3>
+        <div class="text-xs text-slate-500 flex items-center gap-3">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#10b981;vertical-align:middle"></span> complete</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;vertical-align:middle"></span> partial</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#e2e8f0;vertical-align:middle"></span> not done</span>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr><th>Checklist</th><th class="!text-center">Complete</th><th class="!text-center">Partial</th><th class="!text-center">Not done</th><th class="!text-center">Rate</th><th>Daily pattern (1–${days})</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <div class="px-5 py-3 text-[11px] text-slate-400 border-t border-slate-50">Rate = days fully completed ÷ days with any activity. A checklist with zero activity all month is highlighted — for weekly/monthly checklists, low day-counts are expected.</div>
+    </div>`;
+}
+function printComplianceReport() {
+  const branch = complianceView.branch || dcDefaultBranch();
+  const ym = complianceView.ym || todayISO().slice(0,7);
+  if (!state.checklistRunsCache[dcCacheKey(branch, ym)]) { toast('Still loading — try again in a moment', 'error'); return; }
+  const { rows } = clComplianceRows(branch, ym);
+  const tasks = state.tasks || [];
+  const tOpen = tasks.filter(taskIsOpen).length;
+  const tOver = tasks.filter(taskOverdue).length;
+  const tDone = tasks.filter(t => t.status==='done' && (t.completedAt||'').slice(0,7) === ym).length;
+  const sum = rows.reduce((s,r)=>({ c:s.c+r.complete, p:s.p+r.partial, n:s.n+r.none }), {c:0,p:0,n:0});
+  const oActive = sum.c + sum.p;
+  const oRate = oActive ? Math.round(sum.c / oActive * 100) : null;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Checklist Compliance — ${escapeHTML(branch)} ${escapeHTML(ym)}</title>
+  <style>
+    ${LETTERHEAD_CSS}
+    .page { max-width:1000px; }
+    .meta { font-size:13px; color:#374151; margin:4px 0 18px; }
+    .ctab { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:8px; }
+    .ctab th { text-align:left; padding:10px 12px; background:#0f172a; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; }
+    .ctab th.r, .ctab td.r { text-align:center; }
+    .ctab td { padding:9px 12px; border-bottom:1px solid #e5e7eb; color:#1a1a1a; }
+    .ctab tr:nth-child(even) td { background:#fafafa; }
+    .ctab tr.tot td { background:#0f172a; color:#fff; font-weight:700; }
+    .lo { color:#b91c1c; font-weight:700; }
+  </style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML('CHECKLIST COMPLIANCE REPORT')}
+    <div class="doc-date">Branch: ${escapeHTML(branch)} &nbsp;&middot;&nbsp; Period: ${escapeHTML(monthLabel(ym))}</div>
+    <p class="doc-intro">Completion of each active checklist at the branch above for the period stated. Rate = days fully completed &divide; days with any activity. Issued for operational oversight.</p>
+    <div class="meta"><strong>Tasks (all branches):</strong> ${tOpen} open &middot; ${tOver} overdue &middot; ${tDone} completed in ${escapeHTML(monthLabel(ym))}</div>
+    <table class="ctab">
+      <thead><tr><th>Checklist</th><th>Department</th><th class="r">Items</th><th class="r">Complete days</th><th class="r">Partial</th><th class="r">No activity</th><th class="r">Rate</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr>
+          <td>${escapeHTML(r.c.title)}</td>
+          <td>${escapeHTML(r.c.department||'—')}</td>
+          <td class="r">${r.total}</td>
+          <td class="r">${r.complete}</td>
+          <td class="r">${r.partial}</td>
+          <td class="r ${(r.complete===0&&r.partial===0)?'lo':''}">${r.none}</td>
+          <td class="r">${r.rate==null?'—':r.rate+'%'}</td>
+        </tr>`).join('')}
+        <tr class="tot"><td colspan="3">Overall</td><td class="r">${sum.c}</td><td class="r">${sum.p}</td><td class="r">${sum.n}</td><td class="r">${oRate==null?'—':oRate+'%'}</td></tr>
+      </tbody>
+    </table>
+    ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
+    <div class="doc-footer">Compliance report &middot; ${escapeHTML(branch)} ${escapeHTML(monthLabel(ym))} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
+  </div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
+  win.document.write(html); win.document.close();
 }
 
 /* -------------------- DEDUCTIONS -------------------- */
