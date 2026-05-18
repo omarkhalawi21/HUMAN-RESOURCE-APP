@@ -1674,7 +1674,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1943,6 +1943,7 @@ function renderShell(routeContent) {
   const lang = state.settings.lang;
   const navItems = [
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
+    { key:'my_work',      icon:'check',     label:'My Work',         show:true,  group:'main' },
     { key:'work_management', icon:'check',  label:'Work Management',  show:hasRole('admin','operations'), group:'main' },
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
@@ -7884,6 +7885,84 @@ function tasksSnapshotHTML() {
       </div>
       ${show.length ? `<div>${show.map(rowHTML).join('')}</div>` : `<div class="text-xs text-slate-400 py-2">Nothing overdue or due in the next 3 days.</div>`}
     </div>`;
+}
+
+// Personal "My Work" page — every employee sees the tasks assigned
+// to them and can move their OWN task's status forward. This needs
+// no RLS change: the tasks UPDATE policy already allows the
+// assignee. It is read-only for everything else (no create/edit/
+// delete, no checklist ticking — that stays operations/admin).
+function renderMyWork() {
+  const me = currentEmployee();
+  if (!me) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">No employee profile linked to your account.</div>`;
+  const mine = (state.tasks||[]).filter(t => t.assignedTo === me.id);
+  const overdue = mine.filter(taskOverdue)
+    .sort((a,b)=>(a.dueDate||'').localeCompare(b.dueDate||''));
+  const prioRank = { urgent:0, high:1, normal:2, low:3 };
+  const active = mine.filter(t => t.status!=='done' && !taskOverdue(t))
+    .sort((a,b)=> (prioRank[a.priority]??2)-(prioRank[b.priority]??2) || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+  const done = mine.filter(t => t.status==='done')
+    .sort((a,b)=>(b.completedAt||b.updatedAt||'').localeCompare(a.completedAt||a.updatedAt||'')).slice(0,10);
+
+  const header = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
+      <div class="relative">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${escapeHTML((me.firstName+' '+(me.lastName||'')).trim())}</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">My Work</h2>
+        <p class="text-slate-500 mt-1 text-sm max-w-xl">Tasks assigned to you. Move a task forward by changing its status — it saves instantly.</p>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4 mb-5">
+      ${miniStat('Open', mine.filter(t=>t.status!=='done').length, 'check', 'blue')}
+      ${miniStat('Overdue', overdue.length, 'warning', overdue.length?'red':'green')}
+      ${miniStat('Done', mine.filter(t=>t.status==='done').length, 'check', 'green')}
+    </div>`;
+
+  if (mine.length === 0) {
+    return header + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">Nothing assigned to you</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">When operations or an admin assigns you a task, it shows up here and you'll get a bell reminder before it's due.</div>
+      </div>`;
+  }
+
+  const statusOpts = t => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${t.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
+  const rows = list => list.map(t => {
+    const pr = TASK_PRIORITIES[t.priority] || TASK_PRIORITIES.normal;
+    return `
+    <tr class="hover-row ${taskOverdue(t)?'bg-rose-50/40':''}">
+      <td>
+        <div class="font-medium text-slate-900">${escapeHTML(t.title)}</div>
+        ${t.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(t.description)}</div>` : ''}
+      </td>
+      <td class="text-sm text-slate-600">${escapeHTML(t.department||'—')}</td>
+      <td><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></td>
+      <td class="text-sm whitespace-nowrap">${taskDueLabel(t)}</td>
+      <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${t.id}', this.value)">${statusOpts(t)}</select></td>
+    </tr>`;
+  }).join('');
+  const section = (title, list, tone) => list.length ? `
+    <div class="mb-6">
+      <div class="flex items-center gap-2 mb-2">
+        <h3 class="font-display text-base font-semibold ${tone||'text-slate-900'}">${escapeHTML(title)}</h3>
+        <span class="text-xs text-slate-400">${list.length}</span>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="data">
+            <thead><tr><th>Task</th><th>Department</th><th>Priority</th><th>Due</th><th>Status</th></tr></thead>
+            <tbody>${rows(list)}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>` : '';
+
+  return header
+    + section('Overdue', overdue, 'text-rose-700')
+    + section('To do', active, null)
+    + section('Recently done', done, 'text-slate-500');
 }
 
 // ---- Checklists (Phase 2): per-department reusable checklists,
@@ -16294,6 +16373,7 @@ function render() {
   let content = '';
   switch (route) {
     case 'dashboard':    content = renderRoleDashboard(); break;
+    case 'my_work':      content = renderMyWork(); break;
     case 'work_management': content = hasRole('admin','operations') ? renderWorkManagement() : renderRoleDashboard(); break;
     case 'employees':    content = canManagePeople() ? renderEmployees() : renderRoleDashboard(); break;
     case 'employee':     content = canManagePeople() ? renderEmployeeProfile(getRouteParam()) : renderRoleDashboard(); break;
