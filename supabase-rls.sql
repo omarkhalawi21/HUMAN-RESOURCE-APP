@@ -2773,6 +2773,61 @@ ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS holiday_ot_hours numeric(12,
 ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS adjustments jsonb;
 
 -- =============================================================
+-- 51. SALARY DEDUCTIONS REGISTER
+--     Admin/HR records a deduction the day an incident happens
+--     (e.g. caught stealing on the 2nd) against a target payroll
+--     month. When payroll for that month is run, every pending
+--     deduction whose period = that month is subtracted from the
+--     employee's pay, itemised on the payslip (reuses block 50's
+--     payroll.adjustments), and flipped to status='applied' with
+--     applied_at set so a re-run never double-deducts (mirrors the
+--     advances installments-bookkeeping pattern). A printable
+--     deduction slip is generated from each row. RLS is admin/hr
+--     only — disciplinary/financial data, not employee-visible.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.deductions (
+  id            uuid primary key default gen_random_uuid(),
+  employee_id   uuid not null references public.employees(id) ON DELETE CASCADE,
+  amount        numeric(12,2) not null,
+  reason        text not null,                       -- category label
+  details       text,                                -- optional longer note
+  incident_date date not null,                       -- when it happened
+  period        text not null,                       -- 'YYYY-MM' payroll run it applies to
+  status        text not null default 'pending',     -- pending | applied | cancelled
+  applied_at    timestamptz,
+  created_by    uuid references public.employees(id),
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS deductions_period_idx   ON public.deductions(period);
+CREATE INDEX IF NOT EXISTS deductions_employee_idx ON public.deductions(employee_id);
+
+ALTER TABLE public.deductions ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='deductions'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "deductions_select_admin_or_hr"
+  ON public.deductions FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "deductions_insert_admin_or_hr"
+  ON public.deductions FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "deductions_update_admin_or_hr"
+  ON public.deductions FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "deductions_delete_admin_or_hr"
+  ON public.deductions FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

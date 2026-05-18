@@ -433,6 +433,8 @@ function emptyState() {
     /* New v2 features — persisted in localStorage (no Supabase migration required) */
     warnings: [],       // [{ id, employeeId, severity, type, date, reason, notes, issuedBy, issuedAt, fileData }]
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
+    deductions: [],     // [{ id, employeeId, amount, reason, details, incidentDate, period, status, appliedAt, createdBy, createdAt }] — admin-registered payroll deductions
+
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
@@ -815,6 +817,23 @@ function advanceToDb(a) {
     employee_id: a.employeeId, amount: Number(a.amount)||0,
     reason: a.reason||null, status: a.status||'pending',
     deduct_from_payroll: a.deductFromPayroll||'none',
+  };
+}
+function mapDeductionFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id,
+    amount: Number(r.amount)||0, reason: r.reason||'', details: r.details||'',
+    incidentDate: r.incident_date, period: r.period,
+    status: r.status||'pending', appliedAt: r.applied_at,
+    createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
+function deductionToDb(d) {
+  return {
+    employee_id: d.employeeId, amount: Number(d.amount)||0,
+    reason: d.reason||null, details: d.details||null,
+    incident_date: d.incidentDate||null, period: d.period||null,
+    status: d.status||'pending', created_by: d.createdBy||null,
   };
 }
 function mapCertificateFromDb(r) {
@@ -1223,7 +1242,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1288,6 +1307,9 @@ async function loadAll() {
       // SELECT is open to every authenticated user (RLS USING true)
       // because it affects their own pay and prints on payslips.
       sb.from('holidays').select('*').order('date'),
+      // Salary deductions register — admin/hr only (RLS). Bounded by
+      // org size; bulk-load is fine (like advances/warnings).
+      sb.from('deductions').select('*').order('created_at', { ascending: false }),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1321,6 +1343,7 @@ async function loadAll() {
     /* V2 features now loaded from Supabase */
     state.warnings     = (warningsR.data     || []).map(mapWarningFromDb);
     state.advances     = (advancesR.data     || []).map(mapAdvanceFromDb);
+    state.deductions   = (deductionsR.data   || []).map(mapDeductionFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
@@ -1364,7 +1387,7 @@ async function resetState() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -1596,7 +1619,7 @@ function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -1873,6 +1896,7 @@ function renderShell(routeContent) {
     /* People management */
     { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
+    { key:'deductions',   icon:'cash',      label:'Deductions',      show:canManagePeople(), group:'people' },
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
     /* Company resources */
@@ -4603,6 +4627,7 @@ function holidayOtForEmployee(empId, ym, salary, holidaySet) {
 
 function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
+  const deductionUpdates = new Map(); // deductionId -> true (flip to 'applied' after run)
   const holidaySet = new Set((state.holidays || []).map(h => h.date));
   // Skip terminated employees — they should not appear in payroll runs
   // after their termination date.
@@ -4639,6 +4664,16 @@ function calcPayroll(ym) {
     const empAdj = (_payrollAdjustments || [])
       .filter(a => a.employeeId === e.id && (Number(a.amount) || 0) > 0)
       .map(a => ({ kind: a.kind, label: a.label, amount: Math.round((Number(a.amount)||0)*100)/100 }));
+    // Registered deductions posted via the Deductions page for THIS
+    // payroll month. Each becomes an itemised deduction line and is
+    // flipped to 'applied' after the run so it's never double-counted.
+    (state.deductions || []).forEach(d => {
+      if (d.employeeId !== e.id || d.status !== 'pending' || d.period !== ym) return;
+      const amt = Math.round((Number(d.amount)||0)*100)/100;
+      if (amt <= 0) return;
+      empAdj.push({ kind: 'deduction', label: `${d.reason||'Deduction'}${d.incidentDate?` (${d.incidentDate})`:''}`, amount: amt });
+      deductionUpdates.set(d.id, true);
+    });
     const manualBonus = empAdj.filter(a => a.kind === 'bonus').reduce((s,a) => s + a.amount, 0);
     const manualDeduction = empAdj.filter(a => a.kind === 'deduction').reduce((s,a) => s + a.amount, 0);
     const bonus = Math.round((ot.amount + manualBonus)*100)/100;
@@ -4667,7 +4702,7 @@ function calcPayroll(ym) {
       manualDeduction: s.manualDeduction + md,
     };
   }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0, advanceDeduction:0, manualDeduction:0 });
-  return { rows, advanceUpdates, totals };
+  return { rows, advanceUpdates, deductionUpdates, totals };
 }
 
 function runPayroll() {
@@ -4709,8 +4744,20 @@ function runPayroll() {
       if (error) { console.error('Advance update failed:', error); return; }
       Object.assign(a, mapAdvanceFromDb(data));
     }));
+
+    // Flip every registered deduction consumed by this run to
+    // 'applied' so it's never deducted twice (mirrors advances).
+    const deductionsUsed = Array.from(calc.deductionUpdates.keys());
+    const appliedStamp = new Date().toISOString();
+    await Promise.all(deductionsUsed.map(async did => {
+      const d = state.deductions.find(x => x.id === did);
+      if (!d) return;
+      const { data, error } = await sb.from('deductions').update({ status: 'applied', applied_at: appliedStamp }).eq('id', did).select().single();
+      if (error) { console.error('Deduction update failed:', error); return; }
+      Object.assign(d, mapDeductionFromDb(data));
+    }));
     render();
-    toast(`Payroll run for ${ym} — ${calc.rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:''), 'success');
+    toast(`Payroll run for ${ym} — ${calc.rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:'')+(deductionsUsed.length?` (${deductionsUsed.length} deduction(s) applied)`:''), 'success');
     if (confirm('Open the payroll report for this period?')) generatePayrollReport(ym);
     return true;
   }, { saveLabel: 'Run payroll' });
@@ -7372,6 +7419,262 @@ function printAdvanceSlip(id) {
     </div>
     ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
     <div class="doc-footer">Slip reference ADV-${escapeHTML(a.id.slice(-6).toUpperCase())} &middot; Confidential financial document</div>
+  </div>
+  </body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
+  try { win.opener = null; } catch(_) {}
+  win.document.write(html); win.document.close();
+}
+
+/* -------------------- DEDUCTIONS -------------------- */
+// Admin/HR registers a deduction the day an incident happens; it is
+// auto-applied to the chosen month's payroll run, itemised on the
+// payslip, and produces a printable slip. Mirrors the Advances
+// feature (table + list + slip + payroll integration).
+const DEDUCTION_REASONS = [
+  'Theft / Loss',
+  'Damage to company property',
+  'Cash shortage / Till discrepancy',
+  'Policy / Conduct violation',
+  'Unpaid absence',
+  'Late / Attendance penalty',
+  'Loan / Overpayment recovery',
+  'Other',
+];
+let dedTab = 'pending';
+function dedStatusPill(status) {
+  const map = {
+    pending:  ['bg-amber-50 text-amber-700',   'Pending'],
+    applied:  ['bg-emerald-50 text-emerald-700','Applied'],
+    cancelled:['bg-slate-100 text-slate-500',   'Cancelled'],
+  };
+  const [cls,label] = map[status] || ['bg-slate-100 text-slate-500', status||'—'];
+  return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${cls}">${escapeHTML(label)}</span>`;
+}
+function renderDeductions() {
+  if (!canManagePeople()) return renderRoleDashboard();
+  const all = (state.deductions||[]).slice()
+    .sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  const pending   = all.filter(d => d.status==='pending');
+  const applied   = all.filter(d => d.status==='applied');
+  const rows = dedTab==='pending' ? pending : dedTab==='applied' ? applied : all;
+  const pendingTotal = pending.reduce((s,d)=>s+Number(d.amount||0),0);
+  const thisYm = todayISO().slice(0,7);
+  const pendingThisMonth = pending.filter(d=>d.period===thisYm).reduce((s,d)=>s+Number(d.amount||0),0);
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c44a4a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Payroll</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Deductions</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">Register a deduction the day it happens (theft, damage, cash shortage, etc.) against a payroll month. It is automatically subtracted when that month's payroll is run, itemised on the payslip, and a signed slip can be printed.</p>
+        </div>
+        <button onclick="openDeductionModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Register deduction</button>
+      </div>
+    </div>
+
+    <div class="flex gap-1 border-b border-slate-200 mb-5">
+      <button type="button" class="tab ${dedTab==='pending'?'active':''}" onclick="dedTab='pending'; render();">Pending ${pending.length?`<span class="ml-1 badge badge-amber !px-1.5 !py-0">${pending.length}</span>`:''}</button>
+      <button type="button" class="tab ${dedTab==='applied'?'active':''}" onclick="dedTab='applied'; render();">Applied</button>
+      <button type="button" class="tab ${dedTab==='all'?'active':''}" onclick="dedTab='all'; render();">All</button>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+      ${miniStat('Pending total', fmtMoney(pendingTotal), 'cash', 'red')}
+      ${miniStat('Pending this month', fmtMoney(pendingThisMonth), 'wallet', 'amber')}
+      ${miniStat('Applied (all-time)', applied.length, 'check', 'green')}
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="p-5 border-b border-slate-100">
+        <h3 class="font-display text-lg font-semibold text-slate-900">${dedTab==='pending'?'Pending Deductions':dedTab==='applied'?'Applied Deductions':'All Deductions'}</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr><th>Employee</th><th>Amount</th><th>Reason</th><th>Incident</th><th>Applies to</th><th>Status</th><th class="!text-end">Actions</th></tr></thead>
+          <tbody>
+            ${rows.length===0 ? `<tr><td colspan="7" class="text-center text-slate-400 !py-10">No deductions ${dedTab!=='all'?`(${dedTab})`:''}.</td></tr>` :
+              rows.map(d => {
+                const e = getEmployee(d.employeeId);
+                const periodLabel = /^\d{4}-\d{2}$/.test(d.period||'') ? new Date(+d.period.slice(0,4), +d.period.slice(5,7)-1, 1).toLocaleDateString(undefined,{month:'short',year:'numeric'}) : (d.period||'—');
+                const editable = d.status==='pending';
+                return `
+                <tr class="hover-row">
+                  <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<a href="#/employee/${e?.id}" class="font-medium hover:text-brand-700 hover:underline">${escapeHTML((e?(e.firstName+' '+(e.lastName||'')):'—').trim())}</a></div></td>
+                  <td class="font-bold text-rose-700">−${fmtMoney(d.amount)}</td>
+                  <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML((d.reason||'')+(d.details?' — '+d.details:''))}">${escapeHTML(d.reason||'—')}</td>
+                  <td class="text-slate-500 text-xs">${fmtDate(d.incidentDate)}</td>
+                  <td class="text-slate-600 text-xs">${escapeHTML(periodLabel)}</td>
+                  <td>${dedStatusPill(d.status)}</td>
+                  <td class="!text-end whitespace-nowrap">
+                    ${editable ? `<button onclick="openDeductionModal('${d.id}')" aria-label="Edit deduction" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                    <button onclick="cancelDeduction('${d.id}')" aria-label="Cancel deduction" title="Cancel (won't be deducted)" class="text-slate-500 hover:text-amber-600 p-1.5 rounded hover:bg-slate-100">${icon('close','w-4 h-4')}</button>` : ''}
+                    <button onclick="printDeductionSlip('${d.id}')" aria-label="Print deduction slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
+                    ${d.status!=='applied' ? `<button onclick="deleteDeduction('${d.id}')" aria-label="Delete deduction" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>` : ''}
+                  </td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function openDeductionModal(id) {
+  const editing = id ? (state.deductions||[]).find(d => d.id===id) : null;
+  if (editing && editing.status !== 'pending') { toast('Only pending deductions can be edited', 'error'); return; }
+  const emps = (state.employees||[]).filter(isActiveEmployee).slice()
+    .sort((a,b)=> ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
+  const today = todayISO();
+  const incident = editing?.incidentDate || today;
+  const period = editing?.period || incident.slice(0,7);
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Employee *</label>
+        <select id="ded-emp" class="input">${emps.map(e=>`<option value="${e.id}" ${editing?.employeeId===e.id?'selected':''}>${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())} — salary ${fmtMoney(e.salary)}</option>`).join('')}</select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="label">Amount (${escapeHTML(state.settings.currency)}) *</label>
+          <input id="ded-amt" inputmode="decimal" class="input" placeholder="0.00" value="${editing?escapeHTML(String(editing.amount)):''}">
+        </div>
+        <div>
+          <label class="label">Reason *</label>
+          <select id="ded-reason" class="input">${DEDUCTION_REASONS.map(r=>`<option ${editing?.reason===r?'selected':''}>${escapeHTML(r)}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="label">Date of incident *</label>
+          <input id="ded-incident" type="date" class="input" value="${escapeHTML(incident)}" oninput="(function(){var p=document.getElementById('ded-period'); if(p&&!p.dataset.touched){p.value=this.value.slice(0,7);}}).call(this)">
+        </div>
+        <div>
+          <label class="label">Apply to payroll month *</label>
+          <input id="ded-period" type="month" class="input" value="${escapeHTML(period)}" onchange="this.dataset.touched=1">
+        </div>
+        <div class="col-span-2">
+          <label class="label">Details (optional)</label>
+          <textarea id="ded-details" class="input" rows="3" placeholder="What happened, evidence, witnesses, reference…">${escapeHTML(editing?.details||'')}</textarea>
+        </div>
+      </div>
+      <div class="bg-rose-50 border border-rose-100 rounded-xl p-3 text-xs text-rose-800">
+        ${icon('warning','w-4 h-4 inline')} This amount is automatically subtracted when payroll for the chosen month is run, and itemised on that payslip. Net pay cannot go below 0.
+      </div>
+    </div>
+  `;
+  openModal(editing ? 'Edit deduction' : 'Register deduction', form, async () => {
+    const me = currentEmployee();
+    const employeeId = $('#ded-emp')?.value;
+    const amount = parseFloat(($('#ded-amt')?.value||'').replace(/,/g,''));
+    const reason = $('#ded-reason')?.value || '';
+    const details = ($('#ded-details')?.value||'').trim();
+    const incidentDate = $('#ded-incident')?.value;
+    const periodVal = $('#ded-period')?.value;
+    if (!employeeId) { toast('Pick an employee', 'error'); return false; }
+    if (!isFinite(amount) || amount <= 0) { toast('Enter an amount greater than 0', 'error'); return false; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(incidentDate||'')) { toast('Pick the incident date', 'error'); return false; }
+    if (!/^\d{4}-\d{2}$/.test(periodVal||'')) { toast('Pick the payroll month', 'error'); return false; }
+    const payload = deductionToDb({
+      employeeId, amount: Math.round(amount*100)/100, reason, details,
+      incidentDate, period: periodVal, status: 'pending',
+      createdBy: editing?.createdBy || me?.id,
+    });
+    if (editing) {
+      const { data, error } = await sb.from('deductions').update(payload).eq('id', editing.id).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      Object.assign(editing, mapDeductionFromDb(data));
+      toast('Deduction updated', 'success');
+    } else {
+      const { data, error } = await sb.from('deductions').insert(payload).select().single();
+      if (error) { toast(error.message, 'error'); return false; }
+      const saved = mapDeductionFromDb(data);
+      state.deductions.unshift(saved);
+      toast('Deduction registered', 'success');
+      render();
+      if (confirm('Open the deduction slip for printing?')) printDeductionSlip(saved.id);
+      return true;
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Register deduction' });
+}
+async function cancelDeduction(id) {
+  const d = (state.deductions||[]).find(x => x.id===id);
+  if (!d || d.status!=='pending') return;
+  if (!confirm(`Cancel this ${fmtMoney(d.amount)} deduction? It will NOT be subtracted from payroll. The record is kept (marked Cancelled) for audit.`)) return;
+  const { data, error } = await sb.from('deductions').update({ status:'cancelled' }).eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(d, mapDeductionFromDb(data));
+  render();
+  toast('Deduction cancelled', 'success');
+}
+async function deleteDeduction(id) {
+  const d = (state.deductions||[]).find(x => x.id===id);
+  if (!d) return;
+  if (d.status==='applied') { toast('Applied deductions cannot be deleted — the payslip already reflects it', 'error'); return; }
+  if (!confirm(`Delete this ${fmtMoney(d.amount)} deduction record permanently?`)) return;
+  const { error } = await sb.from('deductions').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.deductions = state.deductions.filter(x => x.id !== id);
+  render();
+  toast('Deduction deleted', 'success');
+}
+function printDeductionSlip(id) {
+  const d = (state.deductions||[]).find(x => x.id===id);
+  if (!d) { toast('Deduction not found', 'error'); return; }
+  const e = getEmployee(d.employeeId);
+  const ex = getEmpExtras(d.employeeId);
+  const recorder = d.createdBy ? getEmployee(d.createdBy) : null;
+  const c = state.settings;
+  const currency = c.currency || 'SAR';
+  const fullName = e ? (e.firstName + ' ' + (e.lastName||'')).trim() : '—';
+  const recorderName = recorder ? (recorder.firstName + ' ' + (recorder.lastName||'')).trim() : '';
+  const nationalId = ex.iqama?.number || '—';
+  const amountWords = numberToWords(d.amount);
+  const periodLabel = /^\d{4}-\d{2}$/.test(d.period||'') ? new Date(+d.period.slice(0,4), +d.period.slice(5,7)-1, 1).toLocaleDateString(undefined,{month:'long',year:'numeric'}) : (d.period||'—');
+  const statusLabel = (d.status||'pending').toUpperCase();
+  const statusColor = { applied:'#047857', pending:'#b45309', cancelled:'#6b7280' }[d.status] || '#374151';
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Salary Deduction Slip — ${escapeHTML(fullName)}</title>
+  <style>
+    ${LETTERHEAD_CSS}
+    .status-pill { display:inline-block; padding:5px 14px; font-size:11px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; border:1.5px solid ${statusColor}; color:${statusColor}; border-radius:2px; margin-left:12px; vertical-align:middle; }
+    .doc-table td.amount-val { font-size:18px; font-weight:700; color:#b91c1c; }
+    .amount-words { font-size:12px; font-style:italic; color:#6b7280; margin-top:4px; }
+    .terms { background:#fafafa; border:1px solid #e5e7eb; padding:14px 18px; font-size:13px; color:#374151; line-height:1.65; margin:24px 0 0; }
+  </style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML('SALARY DEDUCTION SLIP')}
+    <div class="doc-date">Date: ${fmtDate(d.incidentDate)} <span class="status-pill">${escapeHTML(statusLabel)}</span></div>
+    <p class="doc-intro">This document records a salary deduction applied to the employee named below, the reason for it, and the payroll period from which it is deducted.</p>
+    <table class="doc-table">
+      <tbody>
+        <tr><td class="lbl">Full Name</td><td class="val">${escapeHTML(fullName)}</td></tr>
+        <tr><td class="lbl">National ID / Residency Number</td><td class="val">${escapeHTML(nationalId)}</td></tr>
+        <tr><td class="lbl">Job Title / Department</td><td class="val">${escapeHTML(e?.role||'—')} &nbsp;&middot;&nbsp; ${escapeHTML(e?.department||'—')}</td></tr>
+        <tr><td class="lbl">Branch</td><td class="val">${escapeHTML(ex.branch||'—')}</td></tr>
+        <tr><td class="lbl">Monthly Base Salary</td><td class="val">${fmtMoney(e?.salary||0)}</td></tr>
+        <tr><td class="lbl">Deduction Amount</td><td class="val amount-val">${escapeHTML(currency)} ${Number(d.amount||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2})}<div class="amount-words">${escapeHTML(amountWords)} ${escapeHTML(currency)}</div></td></tr>
+        <tr><td class="lbl">Reason</td><td class="val">${escapeHTML(d.reason||'—')}</td></tr>
+        ${d.details ? `<tr><td class="lbl">Details</td><td class="val">${escapeHTML(d.details).replace(/\n/g,'<br>')}</td></tr>` : ''}
+        <tr><td class="lbl">Date of Incident</td><td class="val">${fmtDate(d.incidentDate)}</td></tr>
+        <tr><td class="lbl">Deducted From Payroll</td><td class="val">${escapeHTML(periodLabel)}</td></tr>
+        <tr><td class="lbl">Status</td><td class="val" style="color:${statusColor};text-transform:uppercase;font-weight:700">${escapeHTML(statusLabel)}</td></tr>
+        ${d.appliedAt ? `<tr><td class="lbl">Applied On</td><td class="val">${fmtDate(d.appliedAt)}</td></tr>` : ''}
+        <tr><td class="lbl">Recorded By</td><td class="val">${escapeHTML(recorderName || '—')}</td></tr>
+      </tbody>
+    </table>
+    <div class="terms">
+      <strong>Acknowledgement:</strong> The deduction stated above has been levied in accordance with company policy and applicable labour regulations. The employee is entitled to request clarification of this deduction. ${d.status==='applied' ? `This amount was deducted from the ${escapeHTML(periodLabel)} payroll.` : d.status==='cancelled' ? 'This deduction was cancelled and will NOT be applied to payroll.' : `This amount is scheduled to be deducted from the ${escapeHTML(periodLabel)} payroll.`}
+    </div>
+    <div class="doc-sign">
+      <div class="sign-row">Employee Signature:&nbsp; <span style="font-weight:400;color:#6b7280;font-size:13px">(${escapeHTML(fullName)})</span></div>
+      <div class="sign-row">Authorized Signatory &mdash; HR / Management:${recorderName ? ' &nbsp; <span style="font-weight:400;color:#6b7280;font-size:13px">(' + escapeHTML(recorderName) + ')</span>' : ''}</div>
+    </div>
+    ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
+    <div class="doc-footer">Slip reference DED-${escapeHTML(d.id.slice(-6).toUpperCase())} &middot; Confidential financial document</div>
   </div>
   </body></html>`;
   const win = window.open('', '_blank');
@@ -15303,6 +15606,7 @@ function render() {
     case 'holidays':     content = canManagePeople() ? renderHolidays() : renderRoleDashboard(); break;
     case 'warnings':     content = renderWarnings(); break;
     case 'advances':     content = renderAdvances(); break;
+    case 'deductions':   content = canManagePeople() ? renderDeductions() : renderRoleDashboard(); break;
     case 'certificates': content = renderCertificates(); break;
     case 'documents':    content = renderDocuments(); break;
     case 'archive':      content = hasRole('admin','operations') ? renderArchive() : renderRoleDashboard(); break;
