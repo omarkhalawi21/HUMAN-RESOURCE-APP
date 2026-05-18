@@ -2709,8 +2709,9 @@ CREATE POLICY "bpur_delete_admin_or_bakery"
 --     year, so they MUST be editable data — never hardcoded.
 --     calcPayroll() cross-references attendance against this list:
 --     any employee who clocked in AND out on a holiday date earns
---     1.5x their hourly rate (monthly salary / 30 days / 10 hours)
---     for the hours worked, fed into the payslip Bonus line.
+--     1.5x their hourly rate (monthly salary / 30 days / standard
+--     day length: 8h for Saudi nationals, 10h for other
+--     nationalities) for hours worked, fed into the Bonus line.
 --     payroll.holiday_ot_hours persists the worked-hours figure so
 --     the payslip can show the breakdown after the run (attendance
 --     can change later — the payslip must stay a fixed snapshot).
@@ -2754,6 +2755,22 @@ CREATE POLICY "holidays_delete_admin_or_hr"
   USING (public.has_role(ARRAY['admin','hr']));
 
 ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS holiday_ot_hours numeric(12,2);
+
+-- =============================================================
+-- 50. PAYROLL MANUAL ADJUSTMENTS
+--     Per-employee ad-hoc deduction / bonus lines entered in the
+--     Run Payroll preview BEFORE the run, so the payslip is correct
+--     the first time and stays an immutable snapshot afterwards.
+--     Stored as a jsonb array on the payroll row (read only with
+--     the payslip, never queried independently — no separate table
+--     needed): [{kind:'deduction'|'bonus', label, amount}]. The
+--     rolled-up figures still land in payroll.bonus / .deductions
+--     so the list view, report and CSV stay correct; the jsonb is
+--     the itemised breakdown the payslip prints (audit trail —
+--     KSA labour-law requires documented justification for wage
+--     deductions). No RLS change: payroll policies already exist.
+-- =============================================================
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS adjustments jsonb;
 
 -- =============================================================
 -- DONE.
