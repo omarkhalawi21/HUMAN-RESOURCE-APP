@@ -1891,12 +1891,12 @@ function renderShell(routeContent) {
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
     { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main', parent:'team' },
-    { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main', parent:'team' },
-    { key:'holidays',     icon:'calendar',  label:'Holidays',        show:canManagePeople(), group:'main', parent:'team' },
+    { key:'payroll',      icon:'wallet',    label:t('payroll'),      show:true,  group:'main', parent:'payroll' },
+    { key:'holidays',     icon:'calendar',  label:'Holidays',        show:canManagePeople(), group:'main', parent:'payroll' },
+    { key:'deductions',   icon:'cash',      label:'Deductions',      show:canManagePeople(), group:'main', parent:'payroll' },
     /* People management */
     { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
-    { key:'deductions',   icon:'cash',      label:'Deductions',      show:canManagePeople(), group:'people' },
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
     /* Company resources */
@@ -1942,6 +1942,7 @@ function renderShell(routeContent) {
           // behind one row so the sidebar stays scannable.
           const subgroupMeta = {
             team:        { label: state.settings.lang==='ar' ? 'الفريق'   : 'Team',        icon: 'users' },
+            payroll:     { label: state.settings.lang==='ar' ? 'الرواتب'  : 'Payroll',     icon: 'wallet' },
             inventory:   { label: state.settings.lang==='ar' ? 'المخزون'  : 'Inventory',   icon: 'box' },
             maintenance: { label: state.settings.lang==='ar' ? 'الصيانة'  : 'Maintenance', icon: 'wrench' },
             bakery:      { label: state.settings.lang==='ar' ? 'المخبز'   : 'Bakery',      icon: 'box' },
