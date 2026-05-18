@@ -2985,6 +2985,117 @@ CREATE POLICY "checklist_runs_delete_admin_or_ops"
   USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
+-- 56. SEED — Barista floor checklists (from the branch checklist
+--     PDF). 5 daily routines split out + 3 merged weekly/monthly/
+--     maintenance supersets (union across the per-branch printouts).
+--     Each is a shared template completed PER BRANCH per day.
+--     Item ids are stable short tokens so re-running the seed (or
+--     later edits) never orphans saved tick state. Idempotent:
+--     each insert is guarded by WHERE NOT EXISTS on the title, so
+--     re-pasting the file is safe and edits made in-app are NOT
+--     overwritten.
+-- =============================================================
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Opening Checklist', '[
+  {"id":"op1","text":"TURN ON THE C.O.D MACHINE"},
+  {"id":"op2","text":"TURN ON THE ESPRESSO MACHINE"},
+  {"id":"op3","text":"WASH THE COD DISPENSERS"},
+  {"id":"op4","text":"PREPARE C.O.D"},
+  {"id":"op5","text":"PREPARE / ARRANGE THE BAR"},
+  {"id":"op6","text":"FILL ALL THE GRINDERS"},
+  {"id":"op7","text":"DO THE REQUIRED CALIBRATIONS, CHECK THE TDS & POST IN THE QUALITY GROUP"},
+  {"id":"op8","text":"CLEAN THE TABLES & SEATS"},
+  {"id":"op9","text":"TURN ON THE SCREEN & NECESSARY LIGHTS"},
+  {"id":"op10","text":"COUNT THE PETTY CASH & OPEN THE TILL"},
+  {"id":"op11","text":"FILL IN THE DAILY INVENTORY SHEET"}
+]'::jsonb, true, 1
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Opening Checklist');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Morning Tasks', '[
+  {"id":"mo1","text":"CLEANING THE SURFACE AREAS, TABLES & CHAIRS"},
+  {"id":"mo2","text":"CLEAN BOTH MIRRORS (DOOR & CAFE)"},
+  {"id":"mo3","text":"WATER THE PLANTS"},
+  {"id":"mo4","text":"MOPPING THE SURFACES"},
+  {"id":"mo5","text":"PREPARING FILTERS"},
+  {"id":"mo6","text":"CLEANING / DUSTING THE SHELVES"},
+  {"id":"mo7","text":"REFILLING THE BEANS ON THE SHELVES"},
+  {"id":"mo8","text":"CHECKING BEANS STOCK & ORDERING"}
+]'::jsonb, true, 2
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Morning Tasks');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Handover Tasks', '[
+  {"id":"ha1","text":"REFILL THE CUPS ON THE CUP WARMER"},
+  {"id":"ha2","text":"REFILLING SUGAR, STRAWS, COVERS & WOODEN STIRRERS"},
+  {"id":"ha3","text":"CLEANING THE V60 SERVER AREA"},
+  {"id":"ha4","text":"CLEANING THE ESPRESSO MACHINE TRAY"},
+  {"id":"ha5","text":"CLEANING THE FLOORS"},
+  {"id":"ha6","text":"REFILLING THE BEANS ON THE DISPLAY"}
+]'::jsonb, true, 3
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Handover Tasks');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Evening Prep (Mise en place)', '[
+  {"id":"ev1","text":"CHECK THE CLEANLINESS OF THE SHOP & CLEAN WHERE NECESSARY"},
+  {"id":"ev2","text":"ORGANISE TABLES & CHAIRS, WIPE MIRROR & GLASS"},
+  {"id":"ev3","text":"CHECK WHAT NEEDS TO BE REFILLED (CUPS, SUGAR, GLOVES, MASKS & COVERS)"},
+  {"id":"ev4","text":"CHECK BAR STOCK FOR THE BEANS"},
+  {"id":"ev5","text":"ENSURE YOU HAVE ENOUGH FILTERS; IF NOT, FOLD THEM"}
+]'::jsonb, true, 4
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Evening Prep (Mise en place)');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Closing Checklist', '[
+  {"id":"cl1","text":"EMPTY ALL THE BINS & THE NECESSARY BINS"},
+  {"id":"cl2","text":"WASH ALL THE NECESSARY EQUIPMENT & PUT THEM TO DRY"},
+  {"id":"cl3","text":"CLEAN ALL THE NECESSARY BAR AREAS AND LEAVE THEM SPARKLING CLEAN"},
+  {"id":"cl4","text":"EMPTY ALL THE GRINDERS & MAKE SURE ALL THE BAGS ARE AIR TIGHT"},
+  {"id":"cl5","text":"EMPTY ALL THE C.O.D DISPENSERS, RINSE THEM, ADD CHEMICAL & FILL WITH HOT WATER"},
+  {"id":"cl6","text":"CLEAN ALL THE FLOORS AND LEAVE THEM SPARKLY CLEAN"},
+  {"id":"cl7","text":"CLOSE THE TILL; PLACE MONEY & RECEIPTS IN THE ENVELOPE, SEAL & ADD DATE, NAME, SIGNATURE, AVAILABLE CASH, FOODICS CASH, CASHBOX & PETTY CASH"},
+  {"id":"cl8","text":"SWITCH OFF ALL MACHINES (C.O.D, GRINDERS & COFFEE MACHINES) & LIGHTS"},
+  {"id":"cl9","text":"PUT ALL THE SCALES TO CHARGE & ENSURE THEY ARE CHARGING"},
+  {"id":"cl10","text":"CLOSE THE DOOR ON YOUR WAY & ENSURE IT IS LOCKED PROPERLY"}
+]'::jsonb, true, 5
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Closing Checklist');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Weekly Cleaning Tasks', '[
+  {"id":"wk1","text":"CLEANING ALL THE SHELVES (BAR & BEANS)"},
+  {"id":"wk2","text":"CLEANING THE BAR AREA, ICE MAKER & BAR SHELVES"},
+  {"id":"wk3","text":"CLEANING THE SHOP GLASSES"},
+  {"id":"wk4","text":"CLEAN THE TRASH BINS"},
+  {"id":"wk5","text":"DEEP CLEANING THE WASHROOMS"},
+  {"id":"wk6","text":"CLEANING THE BAR FRIDGE & MAIN FRIDGE"},
+  {"id":"wk7","text":"CLEAN UNDER THE STAIRCASE"},
+  {"id":"wk8","text":"CLEAN THE UPSTAIRS AREA (BROOM & MOP)"},
+  {"id":"wk9","text":"DUSTING, CLEANING & ORGANISING THE SHELVES (BEANS & STORAGE)"},
+  {"id":"wk10","text":"CHECK BEANS ON THE DISPLAY ARE UP TO DATE (1 MONTH OLD AT MOST)"}
+]'::jsonb, true, 6
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Weekly Cleaning Tasks');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Monthly Cleaning Tasks', '[
+  {"id":"mn1","text":"COFFEE STAINS ON THE WALLS"},
+  {"id":"mn2","text":"CLEAN THE BAR ORGANISERS"},
+  {"id":"mn3","text":"CLEAN & DUST THE PLANTS"},
+  {"id":"mn4","text":"ARRANGE THE BAR AREA SHELVES & CLEAN THEM"},
+  {"id":"mn5","text":"CLEAN THE SINK AREA & ARRANGE THE NECESSARY"},
+  {"id":"mn6","text":"CLEAN THE SHOP MIRRORS (FRONT & BEHIND)"},
+  {"id":"mn7","text":"CLEANING THE CUP WARMER"}
+]'::jsonb, true, 7
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Monthly Cleaning Tasks');
+
+INSERT INTO public.checklists (department, title, items, active, sort_order)
+SELECT 'Barista', 'Maintenance Tasks', '[
+  {"id":"mt1","text":"BACK-FLUSH THE MACHINE WITH CHEMICAL & SOAK THE PORTAFILTERS (EVERY FRIDAY)"},
+  {"id":"mt2","text":"CLEAN THE STEAM WANDS WITH BLUE CAFEC CHEMICAL (EVERY SATURDAY MORNING)"},
+  {"id":"mt3","text":"CLEAN THE CUP WARMER, TOP OF THE MACHINE (EVERY SATURDAY MORNING)"}
+]'::jsonb, true, 8
+WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Maintenance Tasks');
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
