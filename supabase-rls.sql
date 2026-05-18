@@ -2985,6 +2985,66 @@ CREATE POLICY "checklist_runs_delete_admin_or_ops"
   USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
+-- 55. CHECKLIST RUNS — per-branch + branch-staff can tick
+--     Every checklist is now completed independently per branch
+--     (shared template, one run per checklist PER BRANCH per day),
+--     mirroring the daily/weekly-count (item,branch,period) shape.
+--     Branch lives on the run; the unique key gains `branch`.
+--     Writes broaden from admin/operations to the branch-
+--     operational roles so on-floor staff can tick their own
+--     branch's checklist (branch correctness is UI-enforced via a
+--     branch selector defaulting to the user's branch — same model
+--     as Daily Count, which is role-gated, not branch-gated in
+--     RLS). Idempotent: column add guarded, old 2-col unique
+--     dropped + 3-col added inside a DO block, policies re-issued.
+-- =============================================================
+ALTER TABLE public.checklist_runs ADD COLUMN IF NOT EXISTS branch text;
+-- Pre-branch rows (Phase 2a) get assigned to the first branch so
+-- the new unique key is valid. Safe: checklists shipped same day.
+UPDATE public.checklist_runs SET branch = 'KHOBAR'
+  WHERE branch IS NULL OR TRIM(branch) = '';
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint
+             WHERE conname = 'checklist_runs_checklist_id_run_date_key') THEN
+    ALTER TABLE public.checklist_runs
+      DROP CONSTRAINT checklist_runs_checklist_id_run_date_key;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'checklist_runs_checklist_branch_date_key') THEN
+    ALTER TABLE public.checklist_runs
+      ADD CONSTRAINT checklist_runs_checklist_branch_date_key
+      UNIQUE (checklist_id, branch, run_date);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS checklist_runs_branch_date_idx
+  ON public.checklist_runs(branch, run_date);
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='checklist_runs'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "checklist_runs_select_all"
+  ON public.checklist_runs FOR SELECT TO authenticated USING (true);
+CREATE POLICY "checklist_runs_insert_floor"
+  ON public.checklist_runs FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','bakery','chef','maintenance']));
+CREATE POLICY "checklist_runs_update_floor"
+  ON public.checklist_runs FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','bakery','chef','maintenance']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','bakery','chef','maintenance']));
+CREATE POLICY "checklist_runs_delete_admin_or_ops"
+  ON public.checklist_runs FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
 -- 56. SEED — Barista floor checklists (from the branch checklist
 --     PDF). 5 daily routines split out + 3 merged weekly/monthly/
 --     maintenance supersets (union across the per-branch printouts).

@@ -875,7 +875,7 @@ function checklistToDb(c) {
 }
 function mapChecklistRunFromDb(r) {
   return {
-    id: r.id, checklistId: r.checklist_id, runDate: r.run_date,
+    id: r.id, checklistId: r.checklist_id, branch: r.branch||'', runDate: r.run_date,
     state: (r.state && typeof r.state === 'object') ? r.state : {},
     note: r.note||'', createdBy: r.created_by||null,
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -7635,7 +7635,11 @@ const TASK_STATUSES = {
 };
 let workFilter = { tab:'open', dept:'all', q:'' };
 let workMgmtTab = 'tasks';            // 'tasks' | 'checklists'
-let checklistView = { dept:'all', date:'' };
+let checklistView = { dept:'all', date:'', branch:'' };
+// Branch-operational roles allowed to tick a checklist run (their
+// branch is enforced UI-side, mirroring Daily Count's role-gated
+// model). Keep in sync with the checklist_runs write RLS (block 55).
+function canTickChecklists() { return hasRole('admin','operations','head_barista','barista','bakery','chef','maintenance'); }
 const _clLoading = new Set();
 function taskIsOpen(t) { return t.status !== 'done'; }
 function taskOverdue(t) { return t.status !== 'done' && t.dueDate && t.dueDate < todayISO(); }
@@ -7907,9 +7911,9 @@ function tasksSnapshotHTML() {
 
 // Personal "My Work" page — every employee sees the tasks assigned
 // to them and can move their OWN task's status forward. This needs
-// no RLS change: the tasks UPDATE policy already allows the
-// assignee. It is read-only for everything else (no create/edit/
-// delete, no checklist ticking — that stays operations/admin).
+// the tasks UPDATE policy already allows the assignee. Branch
+// staff also tick their own branch's checklists from here. Still
+// read-only for task create/edit/delete (operations/admin only).
 function renderMyWork() {
   const me = currentEmployee();
   if (!me) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">No employee profile linked to your account.</div>`;
@@ -7937,13 +7941,60 @@ function renderMyWork() {
       ${miniStat('Done', mine.filter(t=>t.status==='done').length, 'check', 'green')}
     </div>`;
 
+  // Branch staff also complete their own branch's checklists right
+  // here (their branch = their employee_extras.branch, same default
+  // as Daily Count). Renders even when no tasks are assigned.
+  let clSection = '';
+  if (canTickChecklists()) {
+    const myBranch = dcDefaultBranch();
+    const ctoday = todayISO();
+    const cym = ctoday.slice(0,7);
+    const ckey = dcCacheKey(myBranch, cym);
+    const actives = (state.checklists||[]).filter(c=>c.active).slice()
+      .sort((a,b)=>(a.sortOrder-b.sortOrder) || (a.title||'').localeCompare(b.title||''));
+    const head = `<div class="flex items-center gap-2 mb-2 mt-2"><h3 class="font-display text-base font-semibold text-slate-900">Today's checklists</h3><span class="badge badge-blue">${escapeHTML(myBranch)}</span></div>`;
+    if (actives.length) {
+      if (!state.checklistRunsCache[ckey]) {
+        loadChecklistRuns(myBranch, cym);
+        clSection = `<div class="mb-6">${head}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-400 text-sm">Loading…</div></div>`;
+      } else {
+        const ccards = actives.map(c => {
+          const run = checklistRunFor(c.id, myBranch, ctoday);
+          const st = run ? run.state : {};
+          const items = Array.isArray(c.items)?c.items:[];
+          const cdone = items.filter(it=>st[it.id]&&st[it.id].done).length;
+          const ctotal = items.length;
+          const cpct = ctotal?Math.round(cdone/ctotal*100):0;
+          const cAll = ctotal>0 && cdone===ctotal;
+          return `<div class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
+            <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+              <div class="flex items-center gap-2"><h4 class="font-semibold text-slate-900">${escapeHTML(c.title)}</h4>${c.department?`<span class="badge badge-blue">${escapeHTML(c.department)}</span>`:''}${cAll?`<span class="badge badge-green">Complete</span>`:''}</div>
+              <div class="text-xs text-slate-500">${cdone}/${ctotal} · ${cpct}%</div>
+            </div>
+            <div class="h-1.5 bg-slate-100"><div class="h-full ${cAll?'bg-emerald-500':'bg-brand-500'}" style="width:${cpct}%"></div></div>
+            <div class="divide-y divide-slate-50">
+              ${ctotal===0?`<div class="p-4 text-sm text-slate-400">No items yet.</div>`:items.map(it=>{
+                const ch=!!(st[it.id]&&st[it.id].done);
+                return `<button type="button" onclick="toggleChecklistItem('${c.id}','${myBranch}','${ctoday}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50">
+                  <span class="w-5 h-5 rounded border ${ch?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${ch?icon('check','w-3.5 h-3.5'):''}</span>
+                  <span class="flex-1 text-sm ${ch?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
+                </button>`;
+              }).join('')}
+            </div>
+          </div>`;
+        }).join('');
+        clSection = `<div class="mb-6">${head}${ccards}</div>`;
+      }
+    }
+  }
+
   if (mine.length === 0) {
-    return header + `
+    return header + (clSection || `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
         <div class="font-display text-lg font-semibold text-slate-900">Nothing assigned to you</div>
         <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">When operations or an admin assigns you a task, it shows up here and you'll get a bell reminder before it's due.</div>
-      </div>`;
+      </div>`);
   }
 
   const statusOpts = t => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${t.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
@@ -7980,7 +8031,8 @@ function renderMyWork() {
   return header
     + section('Overdue', overdue, 'text-rose-700')
     + section('To do', active, null)
-    + section('Recently done', done, 'text-slate-500');
+    + section('Recently done', done, 'text-slate-500')
+    + clSection;
 }
 
 // ---- Checklists (Phase 2): per-department reusable checklists,
@@ -7991,36 +8043,41 @@ function clGenId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(_) {}
   return 'ci_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
 }
-function checklistRunFor(checklistId, date) {
-  const arr = state.checklistRunsCache[date.slice(0,7)];
+function checklistRunFor(checklistId, branch, date) {
+  const arr = state.checklistRunsCache[dcCacheKey(branch, date.slice(0,7))];
   if (!arr) return null;
-  return arr.find(r => r.checklistId === checklistId && r.runDate === date) || null;
+  return arr.find(r => r.checklistId === checklistId && r.branch === branch && r.runDate === date) || null;
 }
-async function loadChecklistRuns(ym) {
-  if (state.checklistRunsCache[ym] || _clLoading.has(ym)) return;
-  _clLoading.add(ym);
+async function loadChecklistRuns(branch, ym) {
+  const key = dcCacheKey(branch, ym);
+  if (state.checklistRunsCache[key] || _clLoading.has(key)) return;
+  _clLoading.add(key);
   const [y, m] = ym.split('-').map(Number);
   const from = ym + '-01';
   const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
   const { data, error } = await sb.from('checklist_runs').select('*')
-    .gte('run_date', from).lte('run_date', to);
-  _clLoading.delete(ym);
+    .eq('branch', branch).gte('run_date', from).lte('run_date', to);
+  _clLoading.delete(key);
   if (error) {
     toast('Failed to load checklist runs: ' + error.message, 'error');
     // Cache empty so the page renders instead of looping the shell.
-    state.checklistRunsCache[ym] = [];
+    state.checklistRunsCache[key] = [];
     render();
     return;
   }
-  state.checklistRunsCache[ym] = (data || []).map(mapChecklistRunFromDb);
+  state.checklistRunsCache[key] = (data || []).map(mapChecklistRunFromDb);
   render();
 }
 function renderWorkChecklists() {
   const canEdit = hasRole('admin','operations');
+  const canTick = canTickChecklists();
   if (!checklistView.date) checklistView.date = todayISO();
+  if (!checklistView.branch) checklistView.branch = dcDefaultBranch();
   const date = checklistView.date;
   const ym = date.slice(0,7);
   const dept = checklistView.dept;
+  const branch = checklistView.branch;
+  const key = dcCacheKey(branch, ym);
 
   const controls = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
@@ -8034,6 +8091,9 @@ function renderWorkChecklists() {
         ${canEdit ? `<button onclick="openChecklistModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New checklist</button>` : ''}
       </div>
       <div class="relative flex flex-wrap items-center gap-3 mt-4">
+        <select class="input !w-auto !py-1.5 text-sm" onchange="checklistView.branch=this.value; render();">
+          ${SUGGESTED_BRANCHES.map(b=>`<option value="${b}" ${branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+        </select>
         <select class="input !w-auto !py-1.5 text-sm" onchange="checklistView.dept=this.value; render();">
           <option value="all" ${dept==='all'?'selected':''}>All departments</option>
           ${SUGGESTED_DEPARTMENTS.map(d=>`<option value="${escapeHTML(d)}" ${dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
@@ -8043,9 +8103,9 @@ function renderWorkChecklists() {
       </div>
     </div>`;
 
-  if (!state.checklistRunsCache[ym]) {
-    loadChecklistRuns(ym);
-    return controls + `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(ym)}…</div>`;
+  if (!state.checklistRunsCache[key]) {
+    loadChecklistRuns(branch, ym);
+    return controls + `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)} · ${escapeHTML(ym)}…</div>`;
   }
 
   let templates = (state.checklists || []).filter(c => c.active);
@@ -8064,7 +8124,7 @@ function renderWorkChecklists() {
   }
 
   const cards = templates.map(c => {
-    const run = checklistRunFor(c.id, date);
+    const run = checklistRunFor(c.id, branch, date);
     const st = run ? run.state : {};
     const items = Array.isArray(c.items) ? c.items : [];
     const done = items.filter(it => st[it.id] && st[it.id].done).length;
@@ -8094,7 +8154,7 @@ function renderWorkChecklists() {
               const checked = !!(st[it.id] && st[it.id].done);
               const who = checked && st[it.id].by ? getEmployee(st[it.id].by) : null;
               return `
-              <button type="button" ${canEdit?'':'disabled'} onclick="toggleChecklistItem('${c.id}','${date}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 ${canEdit?'':'cursor-default opacity-90'}">
+              <button type="button" ${canTick?'':'disabled'} onclick="toggleChecklistItem('${c.id}','${branch}','${date}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 ${canTick?'':'cursor-default opacity-90'}">
                 <span class="w-5 h-5 rounded border ${checked?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${checked?icon('check','w-3.5 h-3.5'):''}</span>
                 <span class="flex-1 text-sm ${checked?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
                 ${who ? `<span class="text-[11px] text-slate-400 whitespace-nowrap">${escapeHTML((who.firstName+' '+(who.lastName||'')).trim())}</span>` : ''}
@@ -8106,25 +8166,25 @@ function renderWorkChecklists() {
 
   return controls + cards;
 }
-async function toggleChecklistItem(checklistId, date, itemId) {
-  if (!hasRole('admin','operations')) return;
+async function toggleChecklistItem(checklistId, branch, date, itemId) {
+  if (!canTickChecklists()) return;
   const me = currentEmployee();
-  const ym = date.slice(0,7);
-  const run = checklistRunFor(checklistId, date);
+  const key = dcCacheKey(branch, date.slice(0,7));
+  const run = checklistRunFor(checklistId, branch, date);
   const st = Object.assign({}, run ? run.state : {});
   const wasDone = !!(st[itemId] && st[itemId].done);
   st[itemId] = wasDone ? { done:false } : { done:true, by: me?.id || null, at: new Date().toISOString() };
   const payload = {
-    checklist_id: checklistId, run_date: date, state: st,
+    checklist_id: checklistId, branch, run_date: date, state: st,
     created_by: run ? (run.createdBy || me?.id || null) : (me?.id || null),
     updated_at: new Date().toISOString(),
   };
   const { data, error } = await sb.from('checklist_runs')
-    .upsert(payload, { onConflict: 'checklist_id,run_date' }).select().single();
+    .upsert(payload, { onConflict: 'checklist_id,branch,run_date' }).select().single();
   if (error) { toast(error.message, 'error'); return; }
   const mapped = mapChecklistRunFromDb(data);
-  const arr = state.checklistRunsCache[ym] || (state.checklistRunsCache[ym] = []);
-  const i = arr.findIndex(r => r.checklistId === checklistId && r.runDate === date);
+  const arr = state.checklistRunsCache[key] || (state.checklistRunsCache[key] = []);
+  const i = arr.findIndex(r => r.checklistId === checklistId && r.branch === branch && r.runDate === date);
   if (i >= 0) arr[i] = mapped; else arr.push(mapped);
   render();
 }
