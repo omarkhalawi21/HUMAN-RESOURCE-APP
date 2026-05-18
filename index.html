@@ -4545,12 +4545,20 @@ function openPayslip(payrollId) {
 // Holiday overtime: an employee who clocked IN and OUT on a date in
 // the company holiday calendar earns 1.5x their hourly rate for the
 // hours worked, on top of the normal monthly salary (KSA labour-law
-// default). Hourly rate = monthly salary / 30 days / 10-hour day
-// (owner-confirmed: staff work 10h shifts, not 8). Returns the OT
-// pay amount and the worked-hours figure (persisted on the payslip
-// so the breakdown survives later attendance edits).
+// default). Hourly rate = monthly salary / 30 days / standard day
+// hours, where the day length is owner-confirmed nationality-based:
+// Saudi nationals work an 8-hour day, other nationalities a 10-hour
+// day (a shorter day => higher hourly rate => higher OT). Nationality
+// is read from employee_extras; blank/unknown is treated as non-Saudi
+// (the "other nationalities" 10h default). Returns the OT pay amount
+// and worked-hours figure (persisted on the payslip so the breakdown
+// survives later attendance edits).
 const HOLIDAY_OT_MULTIPLIER = 1.5;
-const HOLIDAY_DAY_HOURS = 10;
+const HOLIDAY_DAY_HOURS_SAUDI = 8;
+const HOLIDAY_DAY_HOURS_OTHER = 10;
+function holidayDayHours(empId) {
+  return getEmpExtras(empId).nationality === 'Saudi' ? HOLIDAY_DAY_HOURS_SAUDI : HOLIDAY_DAY_HOURS_OTHER;
+}
 function holidayOtForEmployee(empId, ym, salary, holidaySet) {
   if (!holidaySet.size) return { hours: 0, amount: 0 };
   let mins = 0;
@@ -4563,7 +4571,7 @@ function holidayOtForEmployee(empId, ym, salary, holidaySet) {
     if (d > 0) mins += d;
   }
   const hours = Math.round((mins / 60) * 100) / 100;
-  const hourlyRate = (Number(salary) || 0) / 30 / HOLIDAY_DAY_HOURS;
+  const hourlyRate = (Number(salary) || 0) / 30 / holidayDayHours(empId);
   const amount = Math.round(hours * hourlyRate * HOLIDAY_OT_MULTIPLIER * 100) / 100;
   return { hours, amount };
 }
@@ -12184,7 +12192,7 @@ function renderHolidays() {
       <div>
         <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('calendar','w-3.5 h-3.5')} Payroll</div>
         <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Public Holidays</h2>
-        <div class="text-xs text-slate-500 mt-1 max-w-2xl">Company-wide holiday calendar. Any employee who clocks in <strong>and</strong> out on one of these dates automatically earns <strong>1.5&times; their hourly rate</strong> (monthly salary &divide; 30 days &divide; 10-hour day) for the hours worked, added to that month&rsquo;s payslip when payroll is run. Editing this list affects <strong>future</strong> payroll runs only — payslips already issued stay fixed.</div>
+        <div class="text-xs text-slate-500 mt-1 max-w-2xl">Company-wide holiday calendar. Any employee who clocks in <strong>and</strong> out on one of these dates automatically earns <strong>1.5&times; their hourly rate</strong> (monthly salary &divide; 30 days &divide; a standard work day — <strong>8 hours for Saudi nationals, 10 for other nationalities</strong>) for the hours worked, added to that month&rsquo;s payslip when payroll is run. Editing this list affects <strong>future</strong> payroll runs only — payslips already issued stay fixed.</div>
       </div>
       ${canEdit ? `<button onclick="openHolidayModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add holiday</button>` : ''}
     </div>`;
