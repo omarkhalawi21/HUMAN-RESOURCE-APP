@@ -2104,10 +2104,15 @@ function renderShell(routeContent) {
       <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm hidden sm:inline-flex" title="Language">
         ${icon('globe','w-4 h-4')} ${lang==='en'?'AR':'EN'}
       </button>
-      <button class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" onclick="toggleNotifications()" aria-label="Notifications">
-        ${icon('bell','w-5 h-5')}
-        ${state.leaveRequests.filter(r=>r.status==='pending').length>0 && admin ? '<span class="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500"></span>' : ''}
-      </button>
+      <div class="relative">
+        <button class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" onclick="toggleNotifications()" aria-label="Notifications">
+          ${icon('bell','w-5 h-5')}
+          ${(() => { const u = notifUnseenCount(); return u>0
+            ? `<span class="absolute" style="top:2px; ${lang==='ar'?'left:2px':'right:2px'}; min-width:16px; height:16px; padding:0 4px;"><span class="w-full h-full rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">${u>9?'9+':u}</span></span>`
+            : ''; })()}
+        </button>
+        ${notifOpen ? notifPanelHTML(lang) : ''}
+      </div>
     </header>`;
 
   const previewBanner = isPreviewing() ? `
@@ -2159,12 +2164,117 @@ function globalSearch(q) {
     r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 }
+/* -------------------- NOTIFICATION CENTRE --------------------
+   In-app only (no email/push, by design). Notifications are
+   derived live from existing state for the current user/role —
+   no table needed. "Seen" state is per-browser in localStorage;
+   opening the panel marks the current set seen so the badge
+   clears. Items disappear from the feed as the underlying thing
+   is resolved (leave approved, task done, doc renewed…). */
+const NOTIF_SEEN_KEY = 'hcr_notif_seen_v1';
+let notifOpen = false;
+function getNotifSeen() {
+  try { return new Set(JSON.parse(localStorage.getItem(NOTIF_SEEN_KEY) || '[]')); }
+  catch(_) { return new Set(); }
+}
+function setNotifSeen(set) {
+  try { localStorage.setItem(NOTIF_SEEN_KEY, JSON.stringify([...set].slice(-500))); } catch(_) {}
+}
+function buildNotifications() {
+  const me = currentEmployee();
+  const today = todayISO();
+  const isMgr = canManagePeople();                 // admin / hr
+  const isOps = hasRole('admin','operations');
+  const out = [];
+  if (isMgr) {
+    (state.leaveRequests||[]).filter(r=>r.status==='pending').forEach(r=>{
+      const e=getEmployee(r.employeeId);
+      out.push({ key:'leave-'+r.id, icon:'calendar', tone:'amber', title:'Leave request pending',
+        detail:`${e?(e.firstName+' '+(e.lastName||'')).trim():'—'} · ${escapeHTML(r.type||'leave')}`, href:'#/leave' });
+    });
+    (state.advances||[]).filter(a=>a.status==='pending').forEach(a=>{
+      const e=getEmployee(a.employeeId);
+      out.push({ key:'adv-'+a.id, icon:'cash', tone:'amber', title:'Advance request pending',
+        detail:`${e?(e.firstName+' '+(e.lastName||'')).trim():'—'} · ${fmtMoney(a.amount)}`, href:'#/advances' });
+    });
+    (state.employees||[]).filter(isActiveEmployee).forEach(e=>{
+      const x=getEmpExtras(e.id);
+      [['IQAMA', x.iqama&&x.iqama.expiry], ['Baladiya', x.baladiya&&x.baladiya.expiry]].forEach(([lbl,exp])=>{
+        if(!exp) return;
+        const d=daysUntil(exp);
+        if(d!==null && d<=30) out.push({ key:'doc-'+e.id+'-'+lbl+'-'+exp, icon:'idcard', tone:d<0?'red':'amber',
+          title:`${lbl} ${d<0?'expired':'expiring soon'}`, detail:`${(e.firstName+' '+(e.lastName||'')).trim()} · ${fmtDate(exp)}`, href:'#/documents' });
+      });
+    });
+  }
+  // Tasks: ops/admin get all; everyone gets their own assigned ones
+  // (so non-ops staff still get reminders via the bell even though
+  // the Work Management page itself stays ops/admin for now).
+  (state.tasks||[]).filter(t=>t.status!=='done' && (isOps || t.assignedTo===me?.id)).forEach(t=>{
+    if (taskOverdue(t)) {
+      out.push({ key:'task-od-'+t.id, icon:'warning', tone:'red', title:'Task overdue',
+        detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}`, href:'#/work_management' });
+    } else if (t.dueDate) {
+      const d=daysUntil(t.dueDate);
+      if (d!==null && d>=0 && d<=3) out.push({ key:'task-soon-'+t.id, icon:'clock', tone:'amber',
+        title:d===0?'Task due today':'Task due soon', detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}`, href:'#/work_management' });
+    }
+  });
+  // Today's incomplete checklists — only if this month's runs are
+  // already cached (don't trigger an extra fetch from the bell).
+  if (isOps) {
+    const arr = state.checklistRunsCache && state.checklistRunsCache[today.slice(0,7)];
+    if (arr) (state.checklists||[]).filter(c=>c.active).forEach(c=>{
+      const items = Array.isArray(c.items)?c.items:[];
+      if (!items.length) return;
+      const run = arr.find(r=>r.checklistId===c.id && r.runDate===today);
+      const done = run ? items.filter(it=>run.state[it.id]&&run.state[it.id].done).length : 0;
+      if (done < items.length) out.push({ key:'cl-'+c.id+'-'+today, icon:'idcard', tone:'amber',
+        title:'Checklist incomplete today', detail:`${escapeHTML(c.title)} · ${done}/${items.length}`, href:'#/work_management' });
+    });
+  }
+  return out.slice(0, 30);
+}
+function notifUnseenCount() {
+  const seen = getNotifSeen();
+  return buildNotifications().filter(n=>!seen.has(n.key)).length;
+}
 function toggleNotifications() {
-  if (!canManagePeople()) { toast('No new notifications'); return; }
-  const pendings = state.leaveRequests.filter(r=>r.status==='pending');
-  if (!pendings.length) return toast('No pending requests');
-  toast(`${pendings.length} pending leave request(s)`);
-  location.hash = '#/leave';
+  notifOpen = !notifOpen;
+  if (notifOpen) {
+    const seen = getNotifSeen();
+    buildNotifications().forEach(n=>seen.add(n.key));
+    setNotifSeen(seen);
+  }
+  render();
+}
+function notifGo(href) {
+  notifOpen = false;
+  if (href) location.hash = href; else render();
+}
+function notifPanelHTML(lang) {
+  const list = buildNotifications();
+  const toneCls = { red:'text-rose-600 bg-rose-50', amber:'text-amber-600 bg-amber-50', blue:'text-blue-600 bg-blue-50' };
+  return `
+    <div class="notif-backdrop" onclick="notifOpen=false; render();" style="position:fixed;inset:0;z-index:39;"></div>
+    <div class="absolute mt-2 bg-white rounded-xl shadow-pop border border-slate-200 z-40 overflow-hidden"
+         style="top:100%; ${lang==='ar'?'left:0':'right:0'}; width:20rem; max-width:90vw;">
+      <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div class="font-semibold text-slate-900 text-sm">Notifications</div>
+        <span class="text-xs text-slate-400">${list.length}</span>
+      </div>
+      <div style="max-height:24rem; overflow-y:auto;">
+        ${list.length===0 ? `<div class="px-4 py-8 text-center text-sm text-slate-400">You're all caught up.</div>` :
+          list.map(n=>`
+          <button type="button" onclick="notifGo('${n.href||''}')" class="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0">
+            <span class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${toneCls[n.tone]||'text-slate-600 bg-slate-100'}">${icon(n.icon,'w-4 h-4')}</span>
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-slate-800">${n.title}</span>
+              <span class="block text-xs text-slate-500 truncate">${n.detail}</span>
+            </span>
+          </button>`).join('')}
+      </div>
+    </div>`;
 }
 
 /* -------------------- DASHBOARD -------------------- */
