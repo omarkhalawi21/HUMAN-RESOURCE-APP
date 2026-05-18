@@ -2756,6 +2756,22 @@ CREATE POLICY "holidays_delete_admin_or_hr"
 ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS holiday_ot_hours numeric(12,2);
 
 -- =============================================================
+-- 50. PAYROLL MANUAL ADJUSTMENTS
+--     Per-employee ad-hoc deduction / bonus lines entered in the
+--     Run Payroll preview BEFORE the run, so the payslip is correct
+--     the first time and stays an immutable snapshot afterwards.
+--     Stored as a jsonb array on the payroll row (read only with
+--     the payslip, never queried independently — no separate table
+--     needed): [{kind:'deduction'|'bonus', label, amount}]. The
+--     rolled-up figures still land in payroll.bonus / .deductions
+--     so the list view, report and CSV stay correct; the jsonb is
+--     the itemised breakdown the payslip prints (audit trail —
+--     KSA labour-law requires documented justification for wage
+--     deductions). No RLS change: payroll policies already exist.
+-- =============================================================
+ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS adjustments jsonb;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
