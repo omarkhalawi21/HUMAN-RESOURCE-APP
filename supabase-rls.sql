@@ -2892,6 +2892,99 @@ CREATE POLICY "tasks_delete_admin_or_ops"
   USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
+-- 53. WORK MANAGEMENT — CHECKLIST TEMPLATES (Phase 2)
+--     Per-department reusable checklists (e.g. "Bakery opening
+--     checklist"). Small bounded catalog — bulk-loaded like the
+--     count-feature catalogs. Items embedded as a jsonb array
+--     [{id,text}] (edited as a set; never queried individually).
+--     SELECT open to all authenticated; manage = admin/operations.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.checklists (
+  id          uuid primary key default gen_random_uuid(),
+  department  text,
+  title       text not null,
+  items       jsonb not null default '[]'::jsonb,
+  active      boolean not null default true,
+  sort_order  integer default 0,
+  created_by  uuid references public.employees(id),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS checklists_department_idx ON public.checklists(department);
+
+ALTER TABLE public.checklists ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='checklists'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "checklists_select_all"
+  ON public.checklists FOR SELECT TO authenticated USING (true);
+CREATE POLICY "checklists_insert_admin_or_ops"
+  ON public.checklists FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "checklists_update_admin_or_ops"
+  ON public.checklists FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "checklists_delete_admin_or_ops"
+  ON public.checklists FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
+-- 54. WORK MANAGEMENT — CHECKLIST RUNS (Phase 2)
+--     One row per (checklist, calendar day) holding the tick
+--     state as jsonb { itemId: { done, by, at } }. This is an
+--     unbounded time series, so it is NEVER bulk-loaded — the
+--     frontend loads one YYYY-MM on demand and caches it (same
+--     discipline as daily/weekly counts). UNIQUE(checklist_id,
+--     run_date) so ticking upserts on that key.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.checklist_runs (
+  id           uuid primary key default gen_random_uuid(),
+  checklist_id uuid not null references public.checklists(id) ON DELETE CASCADE,
+  run_date     date not null,
+  state        jsonb not null default '{}'::jsonb,
+  note         text,
+  created_by   uuid references public.employees(id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  UNIQUE (checklist_id, run_date)
+);
+CREATE INDEX IF NOT EXISTS checklist_runs_date_idx ON public.checklist_runs(run_date);
+
+ALTER TABLE public.checklist_runs ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='checklist_runs'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "checklist_runs_select_all"
+  ON public.checklist_runs FOR SELECT TO authenticated USING (true);
+CREATE POLICY "checklist_runs_insert_admin_or_ops"
+  ON public.checklist_runs FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "checklist_runs_update_admin_or_ops"
+  ON public.checklist_runs FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "checklist_runs_delete_admin_or_ops"
+  ON public.checklist_runs FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
