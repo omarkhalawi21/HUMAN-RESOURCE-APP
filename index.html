@@ -661,6 +661,11 @@ function nearestBranch(lat, lng, accuracy=0) {
   }
   return best;
 }
+// Roles that work from the head office rather than a coffee branch.
+// A branch flagged is_head_office is a geofenced clock-in spot reserved
+// for these roles; floor staff are rejected there (enforced in clockIn()
+// via realRole() — mirrors the app's role-gated, UI-enforced branch model).
+const HEAD_OFFICE_ROLES = ['admin', 'operations', 'accounting', 'marketing'];
 
 /* -------------------- FIELD MAPPERS (DB snake_case ↔ JS camelCase) -------------------- */
 function mapCompanyFromDb(r) {
@@ -691,6 +696,7 @@ const ROLES = {
   hr:           { label: 'HR' },
   operations:   { label: 'Operations' },
   accounting:   { label: 'Accounting' },
+  marketing:    { label: 'Marketing' },
   head_barista: { label: 'Head Barista' },
   roaster:      { label: 'Roaster' },
   barista:      { label: 'Barista' },
@@ -753,6 +759,7 @@ function mapBranchFromDb(r) {
     id: r.id, name: r.name, address: r.address || '',
     latitude: Number(r.latitude), longitude: Number(r.longitude),
     radius: Number(r.radius_meters)||150, isActive: r.is_active !== false,
+    isHeadOffice: r.is_head_office === true,
   };
 }
 function branchToDb(b) {
@@ -760,6 +767,7 @@ function branchToDb(b) {
     name: b.name, address: b.address || null,
     latitude: Number(b.latitude), longitude: Number(b.longitude),
     radius_meters: Number(b.radius)||150, is_active: !!b.isActive,
+    is_head_office: !!b.isHeadOffice,
   };
 }
 function mapLeaveFromDb(r) {
@@ -4163,6 +4171,10 @@ async function clockIn() {
         toast(`You are ${dist}m from "${near.branch.name}". Clock-in only works at a branch location.`, 'error');
         return;
       }
+      if (near.branch.isHeadOffice && !HEAD_OFFICE_ROLES.includes(realRole())) {
+        toast(`"${near.branch.name}" is the head office — clock-in here is for office staff only (admin, operations, accounting, marketing).`, 'error');
+        return;
+      }
       branch = near.branch;
       location.label = near.branch.name;
     }
@@ -6167,7 +6179,7 @@ function renderSettings() {
             <tbody>
               ${state.branches.map(b => `
                 <tr class="hover-row">
-                  <td><div class="flex items-center gap-2"><span class="w-7 h-7 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center">${icon('pin','w-3.5 h-3.5')}</span><span class="font-medium">${escapeHTML(b.name)}</span></div></td>
+                  <td><div class="flex items-center gap-2"><span class="w-7 h-7 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center">${icon('pin','w-3.5 h-3.5')}</span><span class="font-medium">${escapeHTML(b.name)}</span>${b.isHeadOffice?'<span class="badge badge-purple">Head office</span>':''}</div></td>
                   <td class="text-slate-600 text-xs">${escapeHTML(b.address||'—')}</td>
                   <td class="text-slate-500 text-xs font-mono">${b.latitude.toFixed(5)}, ${b.longitude.toFixed(5)}</td>
                   <td class="text-slate-700">${b.radius}m</td>
@@ -6280,6 +6292,10 @@ function openBranchModal(id) {
           </select>
         </div>
       </div>
+      <div class="flex items-start gap-2">
+        <input id="br-headoffice" type="checkbox" ${editing?.isHeadOffice?'checked':''} class="w-4 h-4 mt-1 accent-brand-600">
+        <label for="br-headoffice" class="text-sm text-slate-700">Head office — only office staff (admin, operations, accounting, marketing) can clock in here. Floor staff are blocked at this location.</label>
+      </div>
       <div class="text-xs text-slate-500 bg-brand-50 border border-brand-100 rounded-lg p-3">
         Common radius values: <strong>50m</strong> single shop · <strong>150m</strong> small building (default) · <strong>300m</strong> block · <strong>500m</strong> campus.
       </div>
@@ -6293,6 +6309,7 @@ function openBranchModal(id) {
       longitude: parseFloat($('#br-lng').value),
       radius: parseInt($('#br-radius').value, 10) || 150,
       isActive: $('#br-active').value === 'true',
+      isHeadOffice: $('#br-headoffice').checked,
     };
     if (!data.name) { toast('Branch name required', 'error'); return false; }
     if (isNaN(data.latitude) || isNaN(data.longitude)) { toast('Valid latitude and longitude required', 'error'); return false; }
