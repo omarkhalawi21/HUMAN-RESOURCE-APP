@@ -4816,10 +4816,17 @@ function calcPayroll(ym) {
       arr.push(a);
     }
   }
+  // Re-running a period that already has payslips must NOT re-charge
+  // advances or registered deductions — they were taken in the
+  // original run (this is the duplicate-run double-charge fix). All
+  // history is kept (nothing deleted); base, holiday OT and freshly-
+  // entered manual adjustments still recompute so a re-run can fix
+  // those. Advances/deductions for a redo go via a manual adjustment.
+  const isRerun = (state.payroll || []).some(p => p.period === ym);
   // Skip terminated employees — they should not appear in payroll runs
   // after their termination date.
   const rows = state.employees.filter(isActiveEmployee).map(e => {
-    const empAdvances = (state.advances||[]).filter(a =>
+    const empAdvances = isRerun ? [] : (state.advances||[]).filter(a =>
       a.employeeId === e.id &&
       a.status === 'approved' &&
       !a.repaidAt &&
@@ -4861,7 +4868,7 @@ function calcPayroll(ym) {
     // Registered deductions posted via the Deductions page for THIS
     // payroll month. Each becomes an itemised deduction line and is
     // flipped to 'applied' after the run so it's never double-counted.
-    (state.deductions || []).forEach(d => {
+    if (!isRerun) (state.deductions || []).forEach(d => {
       if (d.employeeId !== e.id || d.status !== 'pending' || d.period !== ym) return;
       const amt = Math.round((Number(d.amount)||0)*100)/100;
       if (amt <= 0) return;
@@ -4895,7 +4902,7 @@ function calcPayroll(ym) {
       manualBonus: s.manualBonus + mb,
     };
   }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0 });
-  return { rows, advanceUpdates, deductionUpdates, totals };
+  return { rows, advanceUpdates, deductionUpdates, totals, isRerun };
 }
 
 function runPayroll() {
@@ -4919,7 +4926,7 @@ function runPayroll() {
     const calc = calcPayroll(ym);
     if (calc.rows.length === 0) { toast('No employees to pay', 'error'); return false; }
     const isDuplicate = state.payroll.some(p => p.period===ym);
-    if (isDuplicate && !confirm(`Payroll for ${ym} already exists. Running again will create duplicate payslips. Continue?`)) return false;
+    if (isDuplicate && !confirm(`Payroll for ${ym} already exists. This re-run keeps the original payslips and adds a new set with base, holiday overtime and any manual adjustments — advances and registered deductions already taken in the first run are NOT charged again. Continue?`)) return false;
     const { data, error } = await sb.from('payroll').insert(calc.rows).select();
     if (error) { toast(error.message, 'error'); return false; }
     (data || []).forEach(r => state.payroll.unshift(mapPayrollFromDb(r)));
@@ -4967,7 +4974,6 @@ function renderRunPayrollPreview() {
     return;
   }
   const calc = calcPayroll(ym);
-  const isDuplicate = state.payroll.some(p => p.period===ym);
   const advancesAffected = calc.advanceUpdates.size;
   const installmentsRemain = Array.from(calc.advanceUpdates.values()).filter(u => !u.repaid).length;
 
@@ -4977,10 +4983,10 @@ function renderRunPayrollPreview() {
   }
 
   target.innerHTML = `
-    ${isDuplicate ? `
+    ${calc.isRerun ? `
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2 mb-3">
         ${icon('warning','w-4 h-4 shrink-0 mt-0.5')}
-        <div>Payroll for <strong>${escapeHTML(ym)}</strong> already exists. Running again will create duplicate payslips for every employee.</div>
+        <div>Payroll for <strong>${escapeHTML(ym)}</strong> already exists. This re-run keeps the original payslips and adds a fresh set with base, holiday overtime &amp; manual adjustments only — <strong>advances and registered deductions already taken in the first run are not re-charged</strong>.</div>
       </div>
     ` : ''}
     <div class="bg-slate-50 rounded-xl p-4">
