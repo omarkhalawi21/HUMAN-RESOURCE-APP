@@ -7654,7 +7654,7 @@ function clToggleDone(id) {
 // Branch-operational roles allowed to tick a checklist run (their
 // branch is enforced UI-side, mirroring Daily Count's role-gated
 // model). Keep in sync with the checklist_runs write RLS (block 55).
-function canTickChecklists() { return hasRole('admin','operations','head_barista','barista','bakery','chef','maintenance'); }
+function canTickChecklists() { return hasRole('admin','head_barista','barista'); }
 const _clLoading = new Set();
 function taskIsOpen(t) { return t.status !== 'done'; }
 function taskOverdue(t) { return t.status !== 'done' && t.dueDate && t.dueDate < todayISO(); }

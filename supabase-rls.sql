@@ -3156,6 +3156,38 @@ SELECT 'Barista', 'Maintenance Tasks', '[
 WHERE NOT EXISTS (SELECT 1 FROM public.checklists WHERE title = 'Maintenance Tasks');
 
 -- =============================================================
+-- 57. CHECKLIST RUNS — restrict ticking to barista roles
+--     Owner decision: only baristas & head baristas (plus admin as
+--     superuser) complete checklists. Narrows the block-55 write
+--     policies from the broad floor set to admin/head_barista/
+--     barista. SELECT stays open (managers/Compliance read all);
+--     DELETE stays admin/operations. Idempotent: drop + recreate.
+--     Keep the JS canTickChecklists() helper in sync with this.
+-- =============================================================
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='checklist_runs'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "checklist_runs_select_all"
+  ON public.checklist_runs FOR SELECT TO authenticated USING (true);
+CREATE POLICY "checklist_runs_insert_barista"
+  ON public.checklist_runs FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "checklist_runs_update_barista"
+  ON public.checklist_runs FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "checklist_runs_delete_admin_or_ops"
+  ON public.checklist_runs FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
