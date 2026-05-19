@@ -3188,6 +3188,32 @@ CREATE POLICY "checklist_runs_delete_admin_or_ops"
   USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
+-- 58. MARKETING ROLE + HEAD-OFFICE BRANCH FLAG
+--     (a) Adds 'marketing' to the system_role CHECK constraint so
+--         back-office marketing staff can be assigned that role.
+--         (Latest re-issue wins when the file runs top-to-bottom.)
+--     (b) Adds branches.is_head_office. A branch flagged true is a
+--         geofenced clock-in location reserved for office roles
+--         (admin/operations/accounting/marketing); floor staff are
+--         rejected there. Enforcement is UI-side in clockIn() via
+--         realRole() + the HEAD_OFFICE_ROLES constant — the app's
+--         role-gated, UI-enforced branch model, NOT a per-row RLS
+--         rule (mirrors the count/checklist branch convention).
+--         Keep HEAD_OFFICE_ROLES in sync with the role list here.
+-- =============================================================
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista','roaster',
+    'accounting','marketing','maintenance','bakery','employee'
+  ));
+
+ALTER TABLE public.branches
+  ADD COLUMN IF NOT EXISTS is_head_office boolean NOT NULL DEFAULT false;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
