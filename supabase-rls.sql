@@ -3214,6 +3214,97 @@ ALTER TABLE public.branches
   ADD COLUMN IF NOT EXISTS is_head_office boolean NOT NULL DEFAULT false;
 
 -- =============================================================
+-- 59. PERSONAL TO-DO LISTS
+--     Lightweight per-user lists for the office cluster (admin /
+--     operations / accounting / hr / marketing). Each row is one
+--     named list; items live in a jsonb array on the row, shape
+--     [{id, text, done, doneAt, createdAt}]. Mirrors the
+--     checklists.items pattern (concurrent edits = last-writer-
+--     wins; fine for a personal list — no shared editors).
+--
+--     RLS is strict owner-only: each policy joins to employees by
+--     auth.uid() so you can only ever see/edit/delete YOUR rows.
+--     Role-gating is UI-only (canUsePersonalTodos() hides the
+--     section from non-office roles); no need to encode roles in
+--     RLS — if a barista somehow inserts a row, they just own a
+--     private list. Keep canUsePersonalTodos() ↔ the office-
+--     cluster list in sync.
+--
+--     ON DELETE CASCADE on owner_id: terminating/deleting an
+--     employee cleans up their lists. Lists are personal, not
+--     business records.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.personal_todo_lists (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id   uuid NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
+  name       text NOT NULL,
+  items      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  sort_order int  NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS personal_todo_lists_owner_idx
+  ON public.personal_todo_lists(owner_id);
+
+ALTER TABLE public.personal_todo_lists ENABLE ROW LEVEL SECURITY;
+
+-- Drop & recreate so this block is idempotent on re-paste.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='personal_todo_lists'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.personal_todo_lists', r.policyname);
+  END LOOP;
+END $$;
+
+CREATE POLICY "personal_todo_lists_select_own"
+  ON public.personal_todo_lists FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = personal_todo_lists.owner_id
+        AND e.user_id = auth.uid()
+    )
+  );
+CREATE POLICY "personal_todo_lists_insert_own"
+  ON public.personal_todo_lists FOR INSERT TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = personal_todo_lists.owner_id
+        AND e.user_id = auth.uid()
+    )
+  );
+CREATE POLICY "personal_todo_lists_update_own"
+  ON public.personal_todo_lists FOR UPDATE TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = personal_todo_lists.owner_id
+        AND e.user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = personal_todo_lists.owner_id
+        AND e.user_id = auth.uid()
+    )
+  );
+CREATE POLICY "personal_todo_lists_delete_own"
+  ON public.personal_todo_lists FOR DELETE TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = personal_todo_lists.owner_id
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
