@@ -437,6 +437,7 @@ function emptyState() {
     tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, createdBy, createdAt, updatedAt }] — Work Management board
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
+    todoLists: [],      // personal lists for office staff: [{ id, ownerId, name, items:[{id,text,done,doneAt,createdAt}], sortOrder, createdAt, updatedAt }] — RLS scopes to owner
 
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
@@ -894,6 +895,22 @@ function mapChecklistRunFromDb(r) {
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
+function mapTodoListFromDb(r) {
+  return {
+    id: r.id, ownerId: r.owner_id, name: r.name||'',
+    items: Array.isArray(r.items) ? r.items : [],
+    sortOrder: Number(r.sort_order)||0,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function todoListToDb(t) {
+  return {
+    owner_id: t.ownerId, name: t.name||'',
+    items: Array.isArray(t.items) ? t.items : [],
+    sort_order: Number(t.sortOrder)||0,
+    updated_at: new Date().toISOString(),
+  };
+}
 function mapCertificateFromDb(r) {
   return {
     id: r.id, employeeId: r.employee_id,
@@ -1300,7 +1317,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1375,6 +1392,10 @@ async function loadAll() {
       // count catalogs). checklist_runs are an unbounded per-day
       // series — loaded on demand per YYYY-MM, never here.
       sb.from('checklists').select('*').order('sort_order'),
+      // Personal to-do lists — RLS scopes the result to owner_id =
+      // current user, so this is bounded by what THIS user owns
+      // (typically a handful). Safe to bulk-load.
+      sb.from('personal_todo_lists').select('*').order('sort_order').order('created_at'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1411,6 +1432,7 @@ async function loadAll() {
     state.deductions   = (deductionsR.data   || []).map(mapDeductionFromDb);
     state.tasks        = (tasksR.data        || []).map(mapTaskFromDb);
     state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
+    state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
@@ -7673,6 +7695,110 @@ function clToggleDone(id) {
   if (clShowDone.has(id)) clShowDone.delete(id); else clShowDone.add(id);
   render();
 }
+// Personal to-do lists — same collapse-done pattern as clShowDone but
+// per-list. Office cluster (HEAD_OFFICE_ROLES + HR) gets a "My Lists"
+// section in My Work; RLS is owner-only so listing/editing is safe.
+let todoShowDone = new Set();
+function todoToggleDone(id) {
+  if (todoShowDone.has(id)) todoShowDone.delete(id); else todoShowDone.add(id);
+  render();
+}
+function canUsePersonalTodos() {
+  return hasRole('admin','operations','accounting','hr','marketing');
+}
+function todoGenId() {
+  try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(_) {}
+  return 'ti_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+}
+async function createTodoList(name) {
+  const me = currentEmployee();
+  if (!me) { toast('Not signed in', 'error'); return; }
+  const trimmed = (name||'').trim();
+  if (!trimmed) { toast('List name required', 'error'); return; }
+  const row = todoListToDb({
+    ownerId: me.id, name: trimmed, items: [],
+    sortOrder: (state.todoLists||[]).filter(l=>l.ownerId===me.id).length,
+  });
+  const { data, error } = await sb.from('personal_todo_lists').insert(row).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  state.todoLists.push(mapTodoListFromDb(data));
+  render();
+}
+async function renameTodoList(id, name) {
+  const list = (state.todoLists||[]).find(l=>l.id===id);
+  if (!list) return;
+  const trimmed = (name||'').trim();
+  if (!trimmed) return;
+  const { data, error } = await sb.from('personal_todo_lists')
+    .update({ name: trimmed, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(list, mapTodoListFromDb(data));
+  render();
+}
+async function deleteTodoList(id) {
+  const list = (state.todoLists||[]).find(l=>l.id===id);
+  if (!list) return;
+  if (!confirm(`Delete the list "${list.name}"? Items in it will be lost.`)) return;
+  const { error } = await sb.from('personal_todo_lists').delete().eq('id', id);
+  if (error) { toast(error.message, 'error'); return; }
+  state.todoLists = state.todoLists.filter(l=>l.id!==id);
+  todoShowDone.delete(id);
+  render();
+}
+async function addTodoItem(listId, text) {
+  const list = (state.todoLists||[]).find(l=>l.id===listId);
+  if (!list) return;
+  const trimmed = (text||'').trim();
+  if (!trimmed) return;
+  const newItems = [...(list.items||[]), {
+    id: todoGenId(), text: trimmed, done: false, doneAt: null,
+    createdAt: new Date().toISOString(),
+  }];
+  const { data, error } = await sb.from('personal_todo_lists')
+    .update({ items: newItems, updated_at: new Date().toISOString() })
+    .eq('id', listId).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(list, mapTodoListFromDb(data));
+  render();
+}
+async function toggleTodoItem(listId, itemId) {
+  const list = (state.todoLists||[]).find(l=>l.id===listId);
+  if (!list) return;
+  const newItems = (list.items||[]).map(it => it.id===itemId
+    ? { ...it, done: !it.done, doneAt: !it.done ? new Date().toISOString() : null }
+    : it
+  );
+  const { data, error } = await sb.from('personal_todo_lists')
+    .update({ items: newItems, updated_at: new Date().toISOString() })
+    .eq('id', listId).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(list, mapTodoListFromDb(data));
+  render();
+}
+async function deleteTodoItem(listId, itemId) {
+  const list = (state.todoLists||[]).find(l=>l.id===listId);
+  if (!list) return;
+  const newItems = (list.items||[]).filter(it => it.id !== itemId);
+  const { data, error } = await sb.from('personal_todo_lists')
+    .update({ items: newItems, updated_at: new Date().toISOString() })
+    .eq('id', listId).select().single();
+  if (error) { toast(error.message, 'error'); return; }
+  Object.assign(list, mapTodoListFromDb(data));
+  render();
+}
+function promptNewTodoList() {
+  const name = prompt('Name your list (e.g. "Today", "Errands", "Project ideas"):');
+  if (name == null) return;
+  createTodoList(name);
+}
+function promptRenameTodoList(id) {
+  const list = (state.todoLists||[]).find(l=>l.id===id);
+  if (!list) return;
+  const name = prompt('Rename list:', list.name);
+  if (name == null) return;
+  renameTodoList(id, name);
+}
 // Branch-operational roles allowed to tick a checklist run (their
 // branch is enforced UI-side, mirroring Daily Count's role-gated
 // model). Keep in sync with the checklist_runs write RLS (block 55).
@@ -7982,9 +8108,42 @@ function renderMyWork() {
   // Branch staff also complete their own branch's checklists right
   // here (their branch = their employee_extras.branch, same default
   // as Daily Count). Renders even when no tasks are assigned.
+  // HEADOFFICE is special: office staff don't tick floor checklists.
+  // Admin/operations at HEADOFFICE get a tiny "X of Y branches running
+  // today's checklists" status + a deep-link to Compliance; other
+  // office roles (accounting/marketing/hr) see no checklist section.
   let clSection = '';
-  if (canTickChecklists()) {
-    const myBranch = dcDefaultBranch();
+  const myBranch = dcDefaultBranch();
+  if (myBranch === 'HEADOFFICE') {
+    if (hasRole('admin','operations')) {
+      const ctoday = todayISO();
+      const cym = ctoday.slice(0,7);
+      const coffeeBranches = SUGGESTED_BRANCHES.filter(b => b !== 'HEADOFFICE');
+      coffeeBranches.forEach(b => {
+        const k = dcCacheKey(b, cym);
+        if (!state.checklistRunsCache[k]) loadChecklistRuns(b, cym);
+      });
+      const anyLoading = coffeeBranches.some(b => !state.checklistRunsCache[dcCacheKey(b, cym)]);
+      const branchesRunning = coffeeBranches.filter(b => {
+        const runs = state.checklistRunsCache[dcCacheKey(b, cym)];
+        if (!runs) return false;
+        return runs.some(r => r.runDate === ctoday && r.state && Object.values(r.state).some(s => s && s.done));
+      }).length;
+      clSection = `<div class="mb-6">
+        <div class="flex items-center justify-between gap-2 mb-2 mt-2">
+          <h3 class="font-display text-base font-semibold text-slate-900">Today's checklists</h3>
+          <a href="#/work_management" onclick="workMgmtTab='compliance'" class="text-xs text-brand-600 hover:underline">View Compliance →</a>
+        </div>
+        <div class="bg-white rounded-2xl shadow-card p-4 flex items-center gap-3 text-sm text-slate-600">
+          <span class="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">${icon('check','w-4 h-4')}</span>
+          ${anyLoading
+            ? '<span class="text-slate-400">Loading checklist data…</span>'
+            : `<span><strong class="text-slate-900">${branchesRunning}</strong> of ${coffeeBranches.length} branches running today's checklists.</span>`}
+        </div>
+      </div>`;
+    }
+    // Non-admin/ops office roles at HEADOFFICE: clSection stays ''.
+  } else if (canTickChecklists()) {
     const ctoday = todayISO();
     const cym = ctoday.slice(0,7);
     const ckey = dcCacheKey(myBranch, cym);
@@ -8030,8 +8189,72 @@ function renderMyWork() {
     }
   }
 
+  // Personal to-do lists — office cluster only (admin/operations/
+  // accounting/hr/marketing). RLS is owner-only so listing/editing
+  // never crosses users. Items are jsonb on the list row; reads come
+  // from state.todoLists (bulk-loaded once at sign-in).
+  let todoSection = '';
+  if (canUsePersonalTodos()) {
+    const myLists = (state.todoLists||[])
+      .filter(l => l.ownerId === me.id)
+      .slice()
+      .sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.createdAt||'').localeCompare(b.createdAt||''));
+    const tHead = `<div class="flex items-center justify-between gap-2 mb-2 mt-2">
+      <h3 class="font-display text-base font-semibold text-slate-900">My Lists</h3>
+      <button onclick="promptNewTodoList()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} New list</button>
+    </div>`;
+    if (myLists.length === 0) {
+      todoSection = `<div class="mb-6">${tHead}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-500 text-sm">No lists yet. Click <strong>New list</strong> to add your first one — name it whatever you want, then add tasks and check them off.</div></div>`;
+    } else {
+      // No per-item delete: users either check items off (done items
+      // collapse via todoShowDone) or delete the whole list. Keeps the
+      // row dense and mirrors how the checklist UI handles "remove".
+      const itemRow = (listId, it, ch) => `<button type="button" onclick="toggleTodoItem('${listId}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50">
+        <span class="w-5 h-5 rounded border ${ch?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${ch?icon('check','w-3.5 h-3.5'):''}</span>
+        <span class="flex-1 text-sm ${ch?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
+      </button>`;
+      const cards = myLists.map(l => {
+        const items = Array.isArray(l.items) ? l.items : [];
+        const doneCount = items.filter(it=>it.done).length;
+        const total = items.length;
+        const pct = total ? Math.round(doneCount/total*100) : 0;
+        const allDone = total>0 && doneCount===total;
+        const pending = items.filter(it=>!it.done);
+        const done = items.filter(it=>it.done);
+        const shown = todoShowDone.has(l.id);
+        return `<div class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
+          <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+            <div class="flex items-center gap-2 min-w-0">
+              <h4 class="font-semibold text-slate-900 truncate">${escapeHTML(l.name)}</h4>
+              ${allDone?'<span class="badge badge-green">Done</span>':''}
+            </div>
+            <div class="flex items-center gap-3 text-xs">
+              <span class="text-slate-500 tabular-nums">${doneCount}/${total} · ${pct}%</span>
+              <button onclick="promptRenameTodoList('${l.id}')" class="text-slate-500 hover:text-brand-700 hover:underline">rename</button>
+              <button onclick="deleteTodoList('${l.id}')" class="text-rose-500 hover:underline">delete</button>
+            </div>
+          </div>
+          <div class="h-1.5 bg-slate-100"><div class="h-full ${allDone?'bg-emerald-500':'bg-brand-500'}" style="width:${pct}%"></div></div>
+          <div class="divide-y divide-slate-50">
+            ${pending.length
+              ? pending.map(it=>itemRow(l.id,it,false)).join('')
+              : `<div class="p-4 text-sm ${total===0?'text-slate-400':'text-emerald-600'}">${total===0?'No items yet — add one below.':'All done — nothing pending.'}</div>`}
+            ${done.length
+              ? `<button type="button" onclick="todoToggleDone('${l.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${done.length} done · ${shown?'hide':'show'}</button>${shown ? done.map(it=>itemRow(l.id,it,true)).join('') : ''}`
+              : ''}
+          </div>
+          <form class="p-3 border-t border-slate-100 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('input'); addTodoItem('${l.id}', i.value); i.value='';">
+            <input class="input flex-1" placeholder="Add a task and press Enter" maxlength="500" />
+            <button type="submit" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add</button>
+          </form>
+        </div>`;
+      }).join('');
+      todoSection = `<div class="mb-6">${tHead}${cards}</div>`;
+    }
+  }
+
   if (mine.length === 0) {
-    return header + (clSection || `
+    return header + (clSection || todoSection ? (clSection + todoSection) : `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
         <div class="font-display text-lg font-semibold text-slate-900">Nothing assigned to you</div>
@@ -8074,7 +8297,8 @@ function renderMyWork() {
     + section('Overdue', overdue, 'text-rose-700')
     + section('To do', active, null)
     + section('Recently done', done, 'text-slate-500')
-    + clSection;
+    + clSection
+    + todoSection;
 }
 
 // ---- Checklists (Phase 2): per-department reusable checklists,
