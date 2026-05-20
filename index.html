@@ -632,7 +632,12 @@ const COMMON_NATIONALITIES = [
   'Bangladeshi', 'Sri Lankan', 'Sudanese', 'Ethiopian', 'Indonesian',
   'Nepali', 'Jordanian', 'Syrian', 'Kenyan', 'Ugandan', 'Other'
 ];
-const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH'];
+// HEADOFFICE is appended (not prepended) so SUGGESTED_BRANCHES[0]
+// stays 'KHOBAR' — that's the dcDefaultBranch() fallback for floor
+// staff whose profile has no branch set. HEADOFFICE is the
+// office-staff location, paired with the is_head_office geofence
+// flag and HEAD_OFFICE_ROLES (admin/operations/accounting/marketing).
+const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH', 'HEADOFFICE'];
 // Department names track the system roles where they overlap, so HR
 // can assign both fields consistently (department is the free-text
 // label shown on the profile; system_role is the strict permission).
