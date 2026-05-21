@@ -151,6 +151,13 @@
 
   /* RTL adjustments */
   [dir="rtl"] .rtl-flip { transform: scaleX(-1); }
+  /* Logical text-alignment utilities — Tailwind v3.3+ ships these as
+     text-start / text-end but they're not in the locally-compiled
+     tailwind.css. Defined here so we can swap hardcoded `text-left`
+     (which stays physical-left in RTL, reading "wrong side" inside an
+     otherwise mirrored layout) for `text-start`. Same for end. */
+  .text-start { text-align: start; }
+  .text-end   { text-align: end; }
 
   /* --- Atmosphere & depth pass ---------------------------------------
      tailwind.css loads before this block, so these same-specificity rules
@@ -1768,6 +1775,16 @@ const DATA_URL_BASE64_RE = /^data:[a-z.+-]+\/[a-z0-9.+-]+(;[\w=-]+)*;base64,[A-Z
 function isSafeBase64DataUrl(url) {
   return typeof url === 'string' && DATA_URL_BASE64_RE.test(url);
 }
+// MIME allowlist for the employee-photo and company-stamp uploads.
+// Both previously checked only `file.type.startsWith('image/')`, which
+// permits image/svg+xml — and SVG can carry executable <script>, the
+// same XSS vector that ARCHIVE_ALLOWED_MIMES already excludes for
+// archive uploads. Keep this list in sync with the image subset of
+// ARCHIVE_ALLOWED_MIMES.
+const PHOTO_ALLOWED_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+]);
+function isAllowedPhotoMime(m) { return PHOTO_ALLOWED_MIMES.has((m||'').toLowerCase()); }
 
 // Common file-input handler: pulls the file off the event, enforces a
 // size cap, checks MIME against an allowlist, reads as a data URL, and
@@ -2380,7 +2397,7 @@ function renderShell(routeContent) {
               const activeInside = entry.items.some(it => it.key === route);
               const isOpen = activeInside || isSidebarSubgroupOpen(entry.key);
               const chev = isOpen ? '▾' : '▸';
-              html += `<button type="button" onclick="toggleSidebarSubgroup('${entry.key}')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 text-left">
+              html += `<button type="button" onclick="toggleSidebarSubgroup('${entry.key}')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 text-start">
                 <span class="icon w-5 h-5 text-slate-400">${ICONS[meta.icon]}</span>
                 <span>${escapeHTML(meta.label)}</span>
                 <span class="ml-auto text-slate-400 text-xs">${chev}</span>
@@ -2591,7 +2608,7 @@ function notifPanelHTML(lang, prebuilt) {
       <div style="max-height:24rem; overflow-y:auto;">
         ${list.length===0 ? `<div class="px-4 py-8 text-center text-sm text-slate-400">You're all caught up.</div>` :
           list.map(n=>`
-          <button type="button" onclick="notifGo('${n.href||''}')" class="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0">
+          <button type="button" onclick="notifGo('${n.href||''}')" class="w-full text-start px-4 py-3 flex items-start gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0">
             <span class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${toneCls[n.tone]||'text-slate-600 bg-slate-100'}">${icon(n.icon,'w-4 h-4')}</span>
             <span class="min-w-0">
               <span class="block text-sm font-medium text-slate-800">${n.title}</span>
@@ -2753,22 +2770,22 @@ function renderDashboard() {
       const urgentMaint = (state.maintenance||[]).filter(m => m.priority==='urgent' && m.status!=='resolved' && m.status!=='cancelled').length;
       return `
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <button onclick="location.hash='#/receipts'" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+          <button onclick="location.hash='#/receipts'" class="bg-white rounded-2xl shadow-card p-4 text-start hover:shadow-pop transition-all">
             <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('receipt','w-3.5 h-3.5')} Accounting MTD</div>
             <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${fmtMoney(receiptsMtdTotal)}</div>
             <div class="text-xs text-slate-500 mt-1">${receiptsMtd.length} receipt${receiptsMtd.length===1?'':'s'} this month</div>
           </button>
-          <button onclick="inventoryFilter={category:'all',branch:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+          <button onclick="inventoryFilter={category:'all',branch:'all',q:'',lowStock:true}; location.hash='#/inventory'; render();" class="bg-white rounded-2xl shadow-card p-4 text-start hover:shadow-pop transition-all">
             <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('box','w-3.5 h-3.5')} Low stock</div>
             <div class="font-display text-2xl font-semibold ${lowStock>0?'text-rose-600':'text-slate-900'} mt-1">${lowStock}</div>
             <div class="text-xs text-slate-500 mt-1">${lowStock>0?'need restock':'all healthy'}</div>
           </button>
-          <button onclick="maintenanceFilter={status:'open',priority:'all',q:''}; location.hash='#/maintenance'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+          <button onclick="maintenanceFilter={status:'open',priority:'all',q:''}; location.hash='#/maintenance'; render();" class="bg-white rounded-2xl shadow-card p-4 text-start hover:shadow-pop transition-all">
             <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wrench','w-3.5 h-3.5')} Open work orders</div>
             <div class="font-display text-2xl font-semibold ${openMaint>0?'text-amber-600':'text-slate-900'} mt-1">${openMaint}</div>
             <div class="text-xs text-slate-500 mt-1">awaiting triage</div>
           </button>
-          <button onclick="maintenanceFilter={status:'all',priority:'urgent',q:''}; location.hash='#/maintenance'; render();" class="bg-white rounded-2xl shadow-card p-4 text-left hover:shadow-pop transition-all">
+          <button onclick="maintenanceFilter={status:'all',priority:'urgent',q:''}; location.hash='#/maintenance'; render();" class="bg-white rounded-2xl shadow-card p-4 text-start hover:shadow-pop transition-all">
             <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('warning','w-3.5 h-3.5')} Urgent maintenance</div>
             <div class="font-display text-2xl font-semibold ${urgentMaint>0?'text-rose-600':'text-slate-900'} mt-1">${urgentMaint}</div>
             <div class="text-xs text-slate-500 mt-1">${urgentMaint>0?'need attention':'none'}</div>
@@ -4039,10 +4056,23 @@ function resetWeekendOff(which) {
 function handlePhotoUpload(ev) {
   const file = ev.target.files?.[0];
   if (!file) return;
-  if (file.size > 2 * 1024 * 1024) { toast('Image too large (max 2MB)', 'error'); return; }
+  if (file.size > 2 * 1024 * 1024) { toast('Image too large (max 2MB)', 'error'); ev.target.value=''; return; }
+  // Defence-in-depth: explicit image-MIME allowlist (no SVG) +
+  // shape-validate the resulting data URL the same way the archive /
+  // receipt / maintenance-photo paths do via isSafeBase64DataUrl.
+  if (!isAllowedPhotoMime(file.type)) {
+    toast('Unsupported image type. Use PNG, JPG, GIF, or WebP.', 'error');
+    ev.target.value=''; return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
-    _pendingPhoto = e.target.result;
+    const dataUrl = e.target.result;
+    if (!isSafeBase64DataUrl(dataUrl)) {
+      toast('Could not read image file', 'error');
+      _pendingPhoto = null;
+      return;
+    }
+    _pendingPhoto = dataUrl;
     const preview = document.getElementById('m-photo-preview');
     if (preview) preview.innerHTML = `<img src="${escapeHTML(_pendingPhoto)}" class="w-full h-full object-cover" alt="">`;
   };
@@ -6738,10 +6768,17 @@ function handleStampUpload(ev) {
   const file = ev.target.files?.[0];
   if (!file) return;
   if (file.size > 1024 * 1024) { toast('Stamp image must be under 1 MB', 'error'); ev.target.value=''; return; }
-  if (!file.type.startsWith('image/')) { toast('Please choose an image file', 'error'); return; }
+  // Defence-in-depth (mirror of handlePhotoUpload): explicit image-MIME
+  // allowlist (rejects SVG, which can carry executable script) +
+  // shape-validate the resulting data URL via isSafeBase64DataUrl.
+  if (!isAllowedPhotoMime(file.type)) {
+    toast('Unsupported image type. Use PNG, JPG, GIF, or WebP.', 'error');
+    ev.target.value=''; return;
+  }
   const reader = new FileReader();
   reader.onload = async e => {
     const dataUrl = e.target.result;
+    if (!isSafeBase64DataUrl(dataUrl)) { toast('Could not read stamp image', 'error'); return; }
     if (!state.companyId) { toast('Company record not loaded yet', 'error'); return; }
     const { error } = await sb.from('companies').update({ company_stamp: dataUrl }).eq('id', state.companyId);
     if (error) { toast(humanizeError(error), 'error'); return; }
@@ -10098,13 +10135,20 @@ function safeFileName(n) {
   return String(n||'document').replace(/[\\/\x00-\x1f]+/g,'_').slice(0, 200) || 'document';
 }
 async function handleArchiveFile(ev) {
+  // Clear before validating: if the user already picked a valid file
+  // and then picks one that fails the MIME check, we MUST drop the
+  // previous selection — otherwise the next "Save" uploads the old
+  // file under the new file's intended slot (a real bug, reproducible
+  // by picking a PDF, then trying to pick an .exe).
+  _archiveFile = null;
+  const p = document.getElementById('ar-preview');
+  if (p) p.innerHTML = '';
   const f = await readUploadedFile(ev, {
     allowed: ARCHIVE_ALLOWED_MIMES,
     errorMsg: 'Unsupported file type. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.',
   });
   if (!f) return;
   _archiveFile = { name: f.name, mime: f.mime, size: f.size, dataUrl: f.dataUrl };
-  const p = document.getElementById('ar-preview');
   if (p) p.innerHTML = `${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(f.name)}</strong> (${(f.size/1024).toFixed(1)} KB)`;
 }
 // Lazy-load the base64 file blob on demand. loadAll strips data_url
@@ -16390,6 +16434,16 @@ function openReceiptModal() {
 }
 
 async function handleReceiptFile(ev) {
+  // Clear before validating — same fix as handleArchiveFile. If the
+  // second file pick fails the MIME check, drop the prior selection
+  // so the next Save doesn't upload the old file under the new
+  // metadata. Also re-disables the OCR button until a valid file is
+  // loaded, mirroring its initial state.
+  _receiptFile = null;
+  const p = document.getElementById('rc-preview');
+  if (p) p.innerHTML = '';
+  const ocrBtn = document.getElementById('rc-ocr-btn');
+  if (ocrBtn) ocrBtn.disabled = true;
   const f = await readUploadedFile(ev, {
     allowed: RECEIPT_ALLOWED_MIMES,
     errorMsg: 'Unsupported file type. Use an image (PNG/JPG/WebP) or PDF.',
@@ -16397,7 +16451,6 @@ async function handleReceiptFile(ev) {
   if (!f) return;
   _receiptFile = { name: f.name, mime: f.mime, size: f.size, dataUrl: f.dataUrl };
   const isImage = f.mime.startsWith('image/');
-  const p = document.getElementById('rc-preview');
   if (p) {
     p.innerHTML = isImage
       ? `<img src="${f.dataUrl}" alt="Receipt preview" class="max-h-48 rounded-lg border border-slate-200" />`
@@ -16405,7 +16458,6 @@ async function handleReceiptFile(ev) {
   }
   // OCR works on images directly and on PDFs via pdf.js (renders page 1 to
   // a canvas, then hands the canvas to Tesseract).
-  const ocrBtn = document.getElementById('rc-ocr-btn');
   if (ocrBtn) {
     ocrBtn.disabled = false;
     ocrBtn.title = isImage
