@@ -78,6 +78,12 @@
   /* Compact pill-style search */
   .pill-search { border-radius: 999px; padding: 5px 12px 5px 32px; font-size: 12px; background-position: 10px center; }
   .label { font-size: 12px; font-weight: 600; color: #6b5a3f; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
+  /* Add `label-required` (alongside `.label`) on form labels whose
+     input has the `required` attribute. Renders a red asterisk after
+     the label text so users see the required hint *before* hitting
+     Save — paired with the HTML5 `required` attr the browser surfaces
+     the native "Please fill out this field" tooltip. */
+  .label-required::after { content: ' *'; color: #b91c1c; font-weight: 700; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; transition: all .15s; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
   .btn-primary { background: #6e4220; color: white; }
   .btn-primary:hover { background: #58351c; }
@@ -3835,9 +3841,9 @@ function openEmployeeModal(id) {
 
     <div id="emp-pane-basic">
       <div class="grid grid-cols-2 gap-4">
-        <div><label class="label">First name</label><input id="m-fn" class="input" value="${escapeHTML(editing?.firstName||'')}"></div>
-        <div><label class="label">Last name</label><input id="m-ln" class="input" value="${escapeHTML(editing?.lastName||'')}"></div>
-        <div class="col-span-2"><label class="label">Email</label><input id="m-em" class="input" type="email" value="${escapeHTML(editing?.email||'')}"></div>
+        <div><label class="label label-required">First name</label><input id="m-fn" class="input" required value="${escapeHTML(editing?.firstName||'')}"></div>
+        <div><label class="label label-required">Last name</label><input id="m-ln" class="input" required value="${escapeHTML(editing?.lastName||'')}"></div>
+        <div class="col-span-2"><label class="label label-required">Email</label><input id="m-em" class="input" type="email" required value="${escapeHTML(editing?.email||'')}"></div>
         <div><label class="label">Phone</label><input id="m-ph" class="input" value="${escapeHTML(editing?.phone||'')}"></div>
         <div><label class="label">Nationality</label>
           <input id="m-nat" class="input" list="nat-list" value="${escapeHTML(ex.nationality||'')}" placeholder="e.g. Saudi">
@@ -3888,8 +3894,8 @@ function openEmployeeModal(id) {
             `;
           })()}
         </div>
-        <div><label class="label">Joining date</label><input id="m-hd" class="input" type="date" value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
-        <div><label class="label">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" value="${editing?.salary||0}"></div>
+        <div><label class="label label-required">Joining date</label><input id="m-hd" class="input" type="date" required value="${escapeHTML(editing?.hireDate||todayISO())}"></div>
+        <div><label class="label label-required">Monthly salary (${state.settings.currency})</label><input id="m-sa" class="input" type="number" min="0" step="100" required value="${editing?.salary||0}"></div>
         <div class="col-span-2"><label class="label">Status</label>
           <select id="m-st" class="input">
             <option value="active" ${editing?.status==='active'?'selected':''}>Active</option>
@@ -4687,8 +4693,8 @@ function openLeaveModal() {
         </select>
       </div>
       <div><label class="label">${escapeHTML(t('leave_days'))}</label><input id="lv-days" class="input" type="number" min="1" value="1" readonly></div>
-      <div><label class="label">${escapeHTML(t('leave_start_date'))}</label><input id="lv-start" class="input" type="date" min="${today}" value="${today}" oninput="calcLeaveDays()"></div>
-      <div><label class="label">${escapeHTML(t('leave_end_date'))}</label><input id="lv-end" class="input" type="date" min="${today}" value="${today}" oninput="calcLeaveDays()"></div>
+      <div><label class="label label-required">${escapeHTML(t('leave_start_date'))}</label><input id="lv-start" class="input" type="date" min="${today}" value="${today}" required oninput="calcLeaveDays()"></div>
+      <div><label class="label label-required">${escapeHTML(t('leave_end_date'))}</label><input id="lv-end" class="input" type="date" min="${today}" value="${today}" required oninput="calcLeaveDays()"></div>
       <div class="col-span-2"><label class="label">${escapeHTML(t('reason'))}</label><textarea id="lv-reason" class="input" rows="3" placeholder="${escapeHTML(t('leave_reason_placeholder'))}"></textarea></div>
     </div>
   `;
@@ -6692,11 +6698,11 @@ function openBranchModal(id) {
   const editing = id ? state.branches.find(b => b.id===id) : null;
   const form = `
     <div class="space-y-4">
-      <div><label class="label">Branch name</label><input id="br-name" class="input" value="${escapeHTML(editing?.name||'')}" placeholder="e.g. Main Roastery, Café Riyadh"></div>
+      <div><label class="label label-required">Branch name</label><input id="br-name" class="input" required value="${escapeHTML(editing?.name||'')}" placeholder="e.g. Main Roastery, Café Riyadh"></div>
       <div><label class="label">Address (optional)</label><input id="br-addr" class="input" value="${escapeHTML(editing?.address||'')}" placeholder="Street, district, city"></div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="label">Latitude</label><input id="br-lat" class="input" type="number" step="any" value="${editing?.latitude ?? ''}" placeholder="24.71361"></div>
-        <div><label class="label">Longitude</label><input id="br-lng" class="input" type="number" step="any" value="${editing?.longitude ?? ''}" placeholder="46.67528"></div>
+        <div><label class="label label-required">Latitude</label><input id="br-lat" class="input" type="number" step="any" required value="${editing?.latitude ?? ''}" placeholder="24.71361"></div>
+        <div><label class="label label-required">Longitude</label><input id="br-lng" class="input" type="number" step="any" required value="${editing?.longitude ?? ''}" placeholder="46.67528"></div>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <button type="button" onclick="useMyLocationForBranch()" class="btn btn-ghost btn-sm">${icon('pin','w-4 h-4')} Use my current location</button>
@@ -7421,16 +7427,16 @@ function openWarningModal() {
         </datalist>
       </div>
       <div>
-        <label class="label">Date of incident</label>
-        <input id="w-date" class="input" type="date" value="${todayISO()}">
+        <label class="label label-required">Date of incident</label>
+        <input id="w-date" class="input" type="date" required value="${todayISO()}">
       </div>
       <div>
         <label class="label">Issued by</label>
         <input class="input" disabled value="${escapeHTML(me.firstName+' '+me.lastName)}">
       </div>
       <div class="col-span-2">
-        <label class="label">Reason / Description</label>
-        <textarea id="w-reason" class="input" rows="3" placeholder="Describe the incident clearly and factually..."></textarea>
+        <label class="label label-required">Reason / Description</label>
+        <textarea id="w-reason" class="input" rows="3" required placeholder="Describe the incident clearly and factually..."></textarea>
       </div>
       <div class="col-span-2">
         <label class="label">Notes / Corrective action</label>
@@ -7945,8 +7951,8 @@ function openAdvanceModal() {
     </div>` : ''}
     <div class="grid grid-cols-2 gap-4">
       <div>
-        <label class="label">Amount (${state.settings.currency})</label>
-        <input id="adv-amt" class="input" type="number" min="50" step="50" placeholder="500">
+        <label class="label label-required">Amount (${state.settings.currency})</label>
+        <input id="adv-amt" class="input" type="number" min="50" step="50" placeholder="500" required>
         <div class="text-xs text-slate-500 mt-1">Suggestion: max 50% of monthly salary</div>
       </div>
       <div>
@@ -7958,8 +7964,8 @@ function openAdvanceModal() {
         </select>
       </div>
       <div class="col-span-2">
-        <label class="label">Reason</label>
-        <textarea id="adv-reason" class="input" rows="3" placeholder="Briefly describe what the advance is for..."></textarea>
+        <label class="label label-required">Reason</label>
+        <textarea id="adv-reason" class="input" rows="3" placeholder="Briefly describe what the advance is for..." required></textarea>
       </div>
     </div>
     <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 mt-4">
@@ -8354,8 +8360,8 @@ function openTaskModal(id) {
   const form = `
     <div class="space-y-4">
       <div>
-        <label class="label">Title *</label>
-        <input id="tk-title" class="input" placeholder="e.g. Deep-clean the espresso machine" value="${escapeHTML(editing?.title||'')}">
+        <label class="label label-required">Title</label>
+        <input id="tk-title" class="input" required placeholder="e.g. Deep-clean the espresso machine" value="${escapeHTML(editing?.title||'')}">
       </div>
       <div>
         <label class="label">Description (optional)</label>
@@ -9300,7 +9306,7 @@ function openDeductionModal(id) {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="label">Amount (${escapeHTML(state.settings.currency)}) *</label>
-          <input id="ded-amt" inputmode="decimal" class="input" placeholder="0.00" value="${editing?escapeHTML(String(editing.amount)):''}">
+          <input id="ded-amt" inputmode="decimal" class="input" placeholder="0.00" required value="${editing?escapeHTML(String(editing.amount)):''}">
         </div>
         <div>
           <label class="label">Reason *</label>
@@ -9308,11 +9314,11 @@ function openDeductionModal(id) {
         </div>
         <div>
           <label class="label">Date of incident *</label>
-          <input id="ded-incident" type="date" class="input" value="${escapeHTML(incident)}" oninput="(function(){var p=document.getElementById('ded-period'); if(p&&!p.dataset.touched){p.value=this.value.slice(0,7);}}).call(this)">
+          <input id="ded-incident" type="date" class="input" required value="${escapeHTML(incident)}" oninput="(function(){var p=document.getElementById('ded-period'); if(p&&!p.dataset.touched){p.value=this.value.slice(0,7);}}).call(this)">
         </div>
         <div>
           <label class="label">Apply to payroll month *</label>
-          <input id="ded-period" type="month" class="input" value="${escapeHTML(period)}" onchange="this.dataset.touched=1">
+          <input id="ded-period" type="month" class="input" required value="${escapeHTML(period)}" onchange="this.dataset.touched=1">
         </div>
         <div class="col-span-2">
           <label class="label">Details (optional)</label>
@@ -11490,8 +11496,8 @@ function openMaintenanceModal(id) {
   const form = `
     <div class="space-y-4">
       <div>
-        <label class="label">Title</label>
-        <input id="maint-title" class="input" placeholder="e.g. Espresso machine #2 not heating" value="${escapeHTML(editing?.title||'')}">
+        <label class="label label-required">Title</label>
+        <input id="maint-title" class="input" required placeholder="e.g. Espresso machine #2 not heating" value="${escapeHTML(editing?.title||'')}">
       </div>
       <div>
         <label class="label">Description</label>
@@ -14475,8 +14481,8 @@ function openSupplierModal(id) {
   const form = `
     <div class="space-y-4">
       <div>
-        <label class="label">Supplier name *</label>
-        <input id="sup-name" class="input" placeholder="e.g. Tamimi Markets" value="${escapeHTML(editing?.name||'')}">
+        <label class="label label-required">Supplier name</label>
+        <input id="sup-name" class="input" required placeholder="e.g. Tamimi Markets" value="${escapeHTML(editing?.name||'')}">
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
@@ -14613,11 +14619,11 @@ function openHolidayModal(id) {
     <div class="space-y-4">
       <div>
         <label class="label">Date *</label>
-        <input id="hol-date" type="date" class="input" value="${escapeHTML(editing?.date||'')}">
+        <input id="hol-date" type="date" class="input" required value="${escapeHTML(editing?.date||'')}">
       </div>
       <div>
         <label class="label">Holiday name *</label>
-        <input id="hol-name" class="input" placeholder="e.g. Eid al-Fitr, Saudi National Day" value="${escapeHTML(editing?.name||'')}">
+        <input id="hol-name" class="input" required placeholder="e.g. Eid al-Fitr, Saudi National Day" value="${escapeHTML(editing?.name||'')}">
       </div>
       <p class="text-xs text-slate-500">Staff who work this day get 1.5&times; their hourly rate for hours worked, applied automatically the next time payroll is run for that month.</p>
     </div>
@@ -14798,8 +14804,8 @@ function openInventoryItemModal(id, defaults = {}) {
     <div class="space-y-4">
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="md:col-span-2">
-          <label class="label">Item name</label>
-          <input id="inv-name" class="input" placeholder="e.g. House Espresso Beans" value="${escapeHTML(editing?.name||'')}">
+          <label class="label label-required">Item name</label>
+          <input id="inv-name" class="input" required placeholder="e.g. House Espresso Beans" value="${escapeHTML(editing?.name||'')}">
         </div>
         <div>
           <label class="label">SKU (optional)</label>
@@ -16391,16 +16397,16 @@ function openReceiptModal() {
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
-          <label class="label">Vendor / Supplier</label>
-          <input id="rc-vendor" class="input" placeholder="e.g. Tamimi Markets">
+          <label class="label label-required">Vendor / Supplier</label>
+          <input id="rc-vendor" class="input" required placeholder="e.g. Tamimi Markets">
         </div>
         <div>
-          <label class="label">Date</label>
-          <input id="rc-date" type="date" class="input" value="${today}">
+          <label class="label label-required">Date</label>
+          <input id="rc-date" type="date" class="input" required value="${today}">
         </div>
         <div>
-          <label class="label">Amount (${escapeHTML(cur)})</label>
-          <input id="rc-amount" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+          <label class="label label-required">Amount (${escapeHTML(cur)})</label>
+          <input id="rc-amount" type="number" min="0" step="0.01" class="input" required placeholder="0.00">
         </div>
         <div>
           <label class="label">Category</label>
