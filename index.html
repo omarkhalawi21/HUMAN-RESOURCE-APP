@@ -2252,6 +2252,10 @@ async function logout() {
   bakeryTransfersState = { date:'', view:'entry', draft:null };
   bakeryStockState     = { date:'', view:'entry', draft:null };
   bakeryPurchasesState = { ym:'', draft:null };
+  // Sec #7 — drop any unresolved partial-failure bookkeeping. The DB
+  // state survives logout, so the next admin login can still inspect
+  // advances/deductions directly to confirm what landed.
+  _pendingBookkeeping = null;
   authMode = 'login';
   location.hash = '';
   render();
@@ -4831,6 +4835,27 @@ function renderPayroll() {
   const activeFilterCount = (payrollFilter.employee!=='all'?1:0) + (payrollFilter.branch!=='all'?1:0) + (payrollFilter.department!=='all'?1:0) + (payrollFilter.status!=='all'?1:0) + (payrollFilter.from?1:0) + (payrollFilter.to?1:0) + (payrollFilter.q?1:0);
 
   return `
+    ${_pendingBookkeeping && admin ? `
+    <!-- Sec #7 — partial-failure recovery banner. Shown at the top
+         of Payroll so admins/HR see it on their next visit. -->
+    <div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
+      <span class="shrink-0 text-rose-600">${icon('warning','w-5 h-5')}</span>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-rose-900">Payroll bookkeeping partially failed — ${escapeHTML(_pendingBookkeeping.ym)}</div>
+        <p class="text-sm text-rose-800 mt-1">
+          ${_pendingBookkeeping.advanceFailures.length} advance update${_pendingBookkeeping.advanceFailures.length===1?'':'s'}
+          and ${_pendingBookkeeping.deductionFailures.length} deduction update${_pendingBookkeeping.deductionFailures.length===1?'':'s'}
+          didn't apply during the run. The payslips are correct but those advances are still showing as not-fully-repaid
+          and those deductions are still pending. Click <strong>Retry bookkeeping</strong> to re-apply only the failed
+          pieces (safe to click repeatedly — each update is idempotent).
+        </p>
+        <div class="flex gap-2 mt-3 flex-wrap">
+          <button onclick="retryPayrollBookkeeping()" class="btn btn-primary btn-sm">${icon('refresh','w-4 h-4')} Retry bookkeeping</button>
+          <button onclick="dismissPayrollBookkeeping()" class="btn btn-ghost btn-sm">Dismiss</button>
+        </div>
+      </div>
+    </div>
+    ` : ''}
     ${admin ? `
     <!-- Action header -->
     <div class="bg-white rounded-2xl shadow-card p-5 mb-5 flex items-center justify-between flex-wrap gap-3">
@@ -5162,6 +5187,28 @@ function openPayslip(payrollId) {
 // payslip via payroll.adjustments so the issued payslip is a fixed,
 // itemised snapshot.
 let _payrollAdjustments = [];
+// Sec #7 fix — surface partial-failure of payroll bookkeeping.
+// runPayroll inserts payslips then does best-effort Promise.all of
+// advance + deduction updates. Before this PR, errors in those
+// updates only console.error'd; the operator saw "success" while
+// some advances stayed "1/2 installments" or deductions stayed
+// "pending". The isRerun guard then skipped them on a second
+// attempt — permanent revenue leak.
+//
+// Now: per-update success/failure is collected; on any failure the
+// module-level _pendingBookkeeping is set, a persistent red banner
+// shows at the top of renderPayroll, and a "Retry bookkeeping"
+// button re-applies ONLY the failed updates (each update is
+// idempotent — installments_paid moves monotonically, status moves
+// pending→applied only). In-session only; banner clears on logout
+// or after a successful retry. If the operator reloads without
+// retrying, the underlying DB state is still detectable via the
+// Advances / Deductions pages (advance still shows 1/2, deduction
+// still pending) and a future run for the same period would no
+// longer skip them because the isRerun branch is on per-payslip
+// existence — once those pieces are re-applied via the UI, the
+// system is consistent.
+let _pendingBookkeeping = null;
 
 // Pure calculator — figures out payroll rows + advance bookkeeping for a
 // given YYYY-MM period without writing anything. Used both by the live
@@ -5202,9 +5249,22 @@ function holidayOtForEmployee(empId, ym, salary, holidaySet, attRows) {
   return { hours, amount };
 }
 
+// KSA Labour Law Article 92 caps single-month wage deductions at
+// 50% of the worker's wage. The app interprets "wage" as base + bonus
+// (base salary plus the same-month earned holiday-OT premium, since
+// that's wage-equivalent per the typical reading). The previous code
+// silently capped net at 0 via Math.max — so deductions in excess of
+// gross just vanished. calcPayroll now flags any over-cap or
+// would-be-negative row in `warnings`, surfaced by the Run Payroll
+// preview so the operator decides (adjust, or run-anyway accepting
+// the cap-to-0). The net calc itself still uses Math.max(0,…) for
+// historical/payslip compatibility; the choice of whether to carry
+// excess forward is left to the operator.
+const KSA_DEDUCTION_CAP_PCT = 0.5;
 function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
   const deductionUpdates = new Map(); // deductionId -> true (flip to 'applied' after run)
+  const warnings = [];               // [{ employeeId, name, gross, deductions, cap50, rawNet, overCap, negativeNet, overCapBy, negativeBy }]
   const holidaySet = new Set((state.holidays || []).map(h => h.date));
   // Bucket attendance by employee ONCE (only when there are holidays
   // to score against) so the per-employee holiday-OT scan is O(rows)
@@ -5284,7 +5344,25 @@ function calcPayroll(ym) {
     const manualDeduction = empAdj.filter(a => a.kind === 'deduction').reduce((s,a) => s + a.amount, 0);
     const bonus = Math.round((ot.amount + manualBonus)*100)/100;
     const deductions = Math.round(manualDeduction*100)/100;
-    const net = Math.max(0, Math.round((base + bonus - deductions) * 100) / 100);
+    // Compute the warning flags before clamping. gross = base+bonus
+    // (the KSA Article 92 "wage" basis). cap50 is the 50% wage cap;
+    // rawNet is what net would be WITHOUT the Math.max clamp — a
+    // negative value means the silent cap-to-0 would swallow money.
+    const gross = Math.round((base + bonus) * 100) / 100;
+    const cap50 = Math.round(gross * KSA_DEDUCTION_CAP_PCT * 100) / 100;
+    const rawNet = Math.round((gross - deductions) * 100) / 100;
+    if (deductions > cap50 || rawNet < 0) {
+      warnings.push({
+        employeeId: e.id,
+        name: ((e.firstName||'') + ' ' + (e.lastName||'')).trim() || e.email || e.id,
+        gross, deductions, cap50, rawNet,
+        overCap: deductions > cap50,
+        negativeNet: rawNet < 0,
+        overCapBy: Math.max(0, Math.round((deductions - cap50) * 100) / 100),
+        negativeBy: rawNet < 0 ? Math.round((-rawNet) * 100) / 100 : 0,
+      });
+    }
+    const net = Math.max(0, rawNet);
     return {
       employee_id: e.id, period: ym,
       base, bonus, deductions, holiday_ot_hours: ot.hours,
@@ -5305,7 +5383,7 @@ function calcPayroll(ym) {
       manualBonus: s.manualBonus + mb,
     };
   }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0 });
-  return { rows, advanceUpdates, deductionUpdates, totals, isRerun };
+  return { rows, advanceUpdates, deductionUpdates, totals, isRerun, warnings };
 }
 
 function runPayroll() {
@@ -5336,7 +5414,11 @@ function runPayroll() {
 
     // Persist advance bookkeeping (installments counter + repaid timestamp)
     // back to Supabase so it survives reloads and other devices see it.
+    // Sec #7 fix: collect per-update failures with their intended payload
+    // so the operator can retry the failed pieces without re-running
+    // the whole payroll (which would create a duplicate payslip set).
     const advancesUsed = Array.from(calc.advanceUpdates.keys());
+    const advanceFailures = [];
     await Promise.all(advancesUsed.map(async aid => {
       const a = state.advances.find(x => x.id === aid);
       const u = calc.advanceUpdates.get(aid);
@@ -5344,7 +5426,11 @@ function runPayroll() {
       const updates = { installments_paid: u.installmentsPaid };
       if (u.repaid && !a.repaidAt) updates.repaid_at = todayISO();
       const { data, error } = await sb.from('advances').update(updates).eq('id', aid).select().single();
-      if (error) { console.error('Advance update failed:', error); return; }
+      if (error) {
+        console.error('Advance update failed:', error);
+        advanceFailures.push({ aid, updates, error: error.message });
+        return;
+      }
       Object.assign(a, mapAdvanceFromDb(data));
     }));
 
@@ -5352,15 +5438,36 @@ function runPayroll() {
     // 'applied' so it's never deducted twice (mirrors advances).
     const deductionsUsed = Array.from(calc.deductionUpdates.keys());
     const appliedStamp = new Date().toISOString();
+    const deductionFailures = [];
     await Promise.all(deductionsUsed.map(async did => {
       const d = state.deductions.find(x => x.id === did);
       if (!d) return;
-      const { data, error } = await sb.from('deductions').update({ status: 'applied', applied_at: appliedStamp }).eq('id', did).select().single();
-      if (error) { console.error('Deduction update failed:', error); return; }
+      const updates = { status: 'applied', applied_at: appliedStamp };
+      const { data, error } = await sb.from('deductions').update(updates).eq('id', did).select().single();
+      if (error) {
+        console.error('Deduction update failed:', error);
+        deductionFailures.push({ did, updates, error: error.message });
+        return;
+      }
       Object.assign(d, mapDeductionFromDb(data));
     }));
+
+    // Any failure: park the failed payloads in module state so the
+    // banner at the top of renderPayroll can offer Retry. Use an
+    // error toast so the operator notices instead of dismissing the
+    // usual green success toast.
+    if (advanceFailures.length || deductionFailures.length) {
+      _pendingBookkeeping = {
+        ym,
+        runAt: new Date().toISOString(),
+        advanceFailures,
+        deductionFailures,
+      };
+      toast(`Payroll run for ${ym} — ${calc.rows.length} payslips generated, but ${advanceFailures.length + deductionFailures.length} bookkeeping update(s) failed. See the banner on the Payroll page to retry.`, 'error');
+    } else {
+      toast(`Payroll run for ${ym} — ${calc.rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:'')+(deductionsUsed.length?` (${deductionsUsed.length} deduction(s) applied)`:''), 'success');
+    }
     render();
-    toast(`Payroll run for ${ym} — ${calc.rows.length} payslips generated`+(advancesUsed.length?` (${advancesUsed.length} advance(s) deducted)`:'')+(deductionsUsed.length?` (${deductionsUsed.length} deduction(s) applied)`:''), 'success');
     if (confirm('Open the payroll report for this period?')) generatePayrollReport(ym);
     return true;
   }, { saveLabel: 'Run payroll' });
@@ -5390,6 +5497,27 @@ function renderRunPayrollPreview() {
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2 mb-3">
         ${icon('warning','w-4 h-4 shrink-0 mt-0.5')}
         <div>Payroll for <strong>${escapeHTML(ym)}</strong> already exists. This re-run keeps the original payslips and adds a fresh set with base, holiday overtime &amp; manual adjustments only — <strong>advances and registered deductions already taken in the first run are not re-charged</strong>.</div>
+      </div>
+    ` : ''}
+    ${calc.warnings.length ? `
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 mb-3">
+        <div class="flex items-start gap-2 mb-2">
+          ${icon('warning','w-4 h-4 shrink-0 mt-0.5')}
+          <div class="font-semibold">${calc.warnings.length} employee${calc.warnings.length===1?'':'s'} would breach the 50% wage-deduction cap</div>
+        </div>
+        <p class="ms-6 mb-2 text-amber-800">KSA Labour Law Article 92 caps single-month wage deductions at 50%. The app currently clamps net pay to 0 when deductions exceed wage — silently swallowing the excess. Adjust the manual lines below (e.g. defer a deduction to next month), or click <strong>Run anyway</strong> to accept the cap-to-zero behaviour for this run.</p>
+        <ul class="ms-6 space-y-1">
+          ${calc.warnings.map(w => `
+            <li>
+              <strong>${escapeHTML(w.name)}</strong>:
+              wage ${fmtMoney(w.gross)} − deductions ${fmtMoney(w.deductions)} =
+              ${w.negativeNet
+                ? `<span class="text-rose-700 font-semibold">${fmtMoney(w.rawNet)} (negative — would be capped to 0, losing ${fmtMoney(w.negativeBy)})</span>`
+                : `<span class="font-semibold">${fmtMoney(w.rawNet)}</span>`}.
+              Over the 50% cap by <strong>${fmtMoney(w.overCapBy)}</strong>.
+            </li>
+          `).join('')}
+        </ul>
       </div>
     ` : ''}
     <div class="bg-slate-50 rounded-xl p-4">
@@ -5472,6 +5600,64 @@ function removePayrollAdjustment(i) {
   _payrollAdjustments.splice(i, 1);
   renderPayrollAdjust();
   renderRunPayrollPreview();
+}
+
+// Sec #7 fix — retry only the failed bookkeeping updates from the
+// last partial-failure run. Each update is naturally idempotent:
+//   advances.installments_paid → monotonic (already-bumped re-write
+//     is a no-op if we send the same payload).
+//   advances.repaid_at         → set once; re-sending the same ISO
+//     stamp is a no-op.
+//   deductions.status='applied' + applied_at → re-applying is a no-op
+//     because status is already 'applied' after the first success.
+// Safe to click multiple times. On all-clear, the banner disappears;
+// any remaining failures stay in _pendingBookkeeping for another try.
+async function retryPayrollBookkeeping() {
+  if (!_pendingBookkeeping) return;
+  if (!canManagePeople()) { toast('Admins / HR only', 'error'); return; }
+  const { advanceFailures = [], deductionFailures = [] } = _pendingBookkeeping;
+  const newAdv = [];
+  await Promise.all(advanceFailures.map(async f => {
+    const { aid, updates } = f;
+    const { data, error } = await sb.from('advances').update(updates).eq('id', aid).select().single();
+    if (error) {
+      console.error('Advance retry failed:', error);
+      newAdv.push({ ...f, error: error.message });
+      return;
+    }
+    const a = state.advances.find(x => x.id === aid);
+    if (a) Object.assign(a, mapAdvanceFromDb(data));
+  }));
+  const newDed = [];
+  await Promise.all(deductionFailures.map(async f => {
+    const { did, updates } = f;
+    const { data, error } = await sb.from('deductions').update(updates).eq('id', did).select().single();
+    if (error) {
+      console.error('Deduction retry failed:', error);
+      newDed.push({ ...f, error: error.message });
+      return;
+    }
+    const d = state.deductions.find(x => x.id === did);
+    if (d) Object.assign(d, mapDeductionFromDb(data));
+  }));
+  if (newAdv.length === 0 && newDed.length === 0) {
+    _pendingBookkeeping = null;
+    toast('Bookkeeping retried successfully — all updates applied.', 'success');
+  } else {
+    _pendingBookkeeping = {
+      ..._pendingBookkeeping,
+      advanceFailures: newAdv,
+      deductionFailures: newDed,
+    };
+    toast(`Still failing: ${newAdv.length} advance(s) + ${newDed.length} deduction(s). Check the browser console for the underlying error.`, 'error');
+  }
+  render();
+}
+function dismissPayrollBookkeeping() {
+  if (!_pendingBookkeeping) return;
+  if (!confirm('Dismiss the bookkeeping warning?\n\nThe failed updates won\'t be retried automatically — you\'ll need to fix them manually (mark the advance repaid, set the deduction to applied, etc.) or the next payroll re-run for this period will skip them.')) return;
+  _pendingBookkeeping = null;
+  render();
 }
 
 /* -------------------- REPORTS -------------------- */
