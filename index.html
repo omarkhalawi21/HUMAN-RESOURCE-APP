@@ -834,6 +834,12 @@ const SUGGESTED_DEPARTMENTS = [
 ];
 
 /* -------------------- GEOFENCING HELPERS -------------------- */
+// Default clock-in radius used when a branch row lacks a value or
+// when the admin opens the "Add branch" modal. 150m fits a typical
+// small building/courtyard; the modal copy explains the range
+// (50/150/300/500). Single source — was duplicated in mapBranchFromDb,
+// branchToDb, the modal default, and the parseInt fallback.
+const DEFAULT_BRANCH_RADIUS_M = 150;
 function distanceMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
@@ -907,10 +913,12 @@ function mapEmployeeFromDb(r) {
     role: r.job_title, department: r.department,
     hireDate: r.hire_date, salary: Number(r.salary)||0,
     status: r.status,
-    // isAdmin is a derived convenience flag, not a column. system_role is the
-    // source of truth, read-side only — writes go through system_role via
-    // employeeToDb. Setting emp.isAdmin and saving is a silent no-op.
-    isAdmin: sysRole === 'admin',
+    // systemRole is the single source of truth — `is_admin` (the column
+    // and the derived JS flag) is gone. To check "is this user an
+    // admin" use `e.systemRole === 'admin'` directly, or the helper
+    // `isAdmin()` for the *current* user. Never reintroduce a derived
+    // emp.isAdmin — the CLAUDE.md warns about this; new code reading
+    // emp.isAdmin would silently bypass the "view as role" preview.
     systemRole: sysRole,
     avatarColor: r.avatar_color || '#a87035',
     photo: r.photo,
@@ -951,7 +959,7 @@ function mapBranchFromDb(r) {
   return {
     id: r.id, name: r.name, address: r.address || '',
     latitude: Number(r.latitude), longitude: Number(r.longitude),
-    radius: Number(r.radius_meters)||150, isActive: r.is_active !== false,
+    radius: Number(r.radius_meters)||DEFAULT_BRANCH_RADIUS_M, isActive: r.is_active !== false,
     isHeadOffice: r.is_head_office === true,
   };
 }
@@ -959,7 +967,7 @@ function branchToDb(b) {
   return {
     name: b.name, address: b.address || null,
     latitude: Number(b.latitude), longitude: Number(b.longitude),
-    radius_meters: Number(b.radius)||150, is_active: !!b.isActive,
+    radius_meters: Number(b.radius)||DEFAULT_BRANCH_RADIUS_M, is_active: !!b.isActive,
     is_head_office: !!b.isHeadOffice,
   };
 }
@@ -1629,8 +1637,13 @@ async function loadAll() {
     state.employees.forEach(e => {
       state.leaveBalances[e.id] = { annual: e.leave_annual, sick: e.leave_sick, personal: e.leave_personal };
     });
+    // Surface the real systemRole on the user shim (was collapsed to
+    // 'admin'/'employee' via the legacy isAdmin derived flag, so the
+    // Settings → Users badge always read "employee" for everyone who
+    // wasn't an admin — HR/operations/barista/etc. all hidden behind
+    // the same word). Use `e.systemRole` directly.
     state.users = state.employees.filter(e => e.user_id).map(e => ({
-      id: 'u-'+e.id, username: e.email, role: e.isAdmin?'admin':'employee', employeeId: e.id, user_id: e.user_id
+      id: 'u-'+e.id, username: e.email, role: e.systemRole || 'employee', employeeId: e.id, user_id: e.user_id
     }));
     /* V2 features now loaded from Supabase */
     state.warnings     = (warningsR.data     || []).map(mapWarningFromDb);
@@ -1826,7 +1839,7 @@ function currentUser() {
   // Find employee record matching the auth user_id
   const emp = state.employees.find(e => e.user_id === state.session.userId);
   if (!emp) return null;
-  return { id: 'u-'+emp.id, username: emp.email, password: '', role: emp.isAdmin?'admin':'employee', employeeId: emp.id, user_id: emp.user_id };
+  return { id: 'u-'+emp.id, username: emp.email, password: '', role: emp.systemRole || 'employee', employeeId: emp.id, user_id: emp.user_id };
 }
 function currentEmployee() {
   if (!state.session) return null;
@@ -2202,8 +2215,20 @@ async function afterAuth(user) {
 }
 async function logout() {
   await sb.auth.signOut();
-  // All data lives in Supabase; in-memory state is rebuilt on next login
+  // All data lives in Supabase; in-memory state is rebuilt on next login.
   state = emptyState();
+  // Per-feature wizard / view state is held in module-level `let`s
+  // OUTSIDE state, so emptyState() doesn't touch them. On a shared
+  // device (KSA cafés often share a single tablet across shifts), the
+  // previous user's branch / week / draft would otherwise be visible
+  // to the next user on first render. Reset to the same shape each
+  // declaration uses so cache-key checks rebuild cleanly.
+  dailyCountState     = { branch:'', date:'', view:'entry', step:0, draft:null };
+  weeklyCountState    = { branch:'', week:'', view:'entry', draft:null };
+  expiryCheckState    = { branch:'', week:'', view:'entry', draft:null };
+  bakeryTransfersState = { date:'', view:'entry', draft:null };
+  bakeryStockState     = { date:'', view:'entry', draft:null };
+  bakeryPurchasesState = { ym:'', draft:null };
   authMode = 'login';
   location.hash = '';
   render();
@@ -6336,7 +6361,7 @@ function renderAccount() {
             <div class="text-slate-500 mt-1">${escapeHTML(me.role)} · ${escapeHTML(me.department)}</div>
             <div class="flex items-center gap-3 mt-2">
               <span class="text-xs text-slate-500">@${escapeHTML(user.username)}</span>
-              <span class="badge ${isAdminUser?'badge-purple':'badge-slate'}">${escapeHTML(user.role)}</span>
+              <span class="badge ${isAdminUser?'badge-purple':'badge-slate'}">${escapeHTML(roleLabel(user.role))}</span>
             </div>
           </div>
         </div>
@@ -6501,7 +6526,7 @@ function renderSettings() {
                 <div class="font-medium text-slate-900 text-sm truncate">${escapeHTML(e?(e.firstName+' '+e.lastName):'(no employee)')}${isMe?' <span class="text-xs text-slate-400 font-normal">(you)</span>':''}</div>
                 <div class="text-xs text-slate-500">@${escapeHTML(u.username)}</div>
               </div>
-              <span class="badge ${u.role==='admin'?'badge-purple':'badge-slate'}">${escapeHTML(u.role)}</span>
+              <span class="badge ${u.role==='admin'?'badge-purple':'badge-slate'}">${escapeHTML(roleLabel(u.role))}</span>
               <div class="flex items-center gap-2 text-xs">
                 ${isMe?'':`<button onclick="toggleAdmin('${u.id}')" class="text-slate-600 hover:text-brand-700 hover:underline whitespace-nowrap">${u.role==='admin'?'demote':'make admin'}</button><span class="text-slate-300">·</span>`}
                 <button onclick="resetUserPassword('${u.id}')" class="text-brand-600 hover:underline whitespace-nowrap">reset pw</button>
@@ -6638,7 +6663,7 @@ function openBranchModal(id) {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="label">Radius (meters)</label>
-          <input id="br-radius" class="input" type="number" min="20" max="5000" step="10" value="${editing?.radius ?? 150}">
+          <input id="br-radius" class="input" type="number" min="20" max="5000" step="10" value="${editing?.radius ?? DEFAULT_BRANCH_RADIUS_M}">
         </div>
         <div>
           <label class="label">Status</label>
@@ -6663,7 +6688,7 @@ function openBranchModal(id) {
       address: $('#br-addr').value.trim(),
       latitude: parseFloat($('#br-lat').value),
       longitude: parseFloat($('#br-lng').value),
-      radius: parseInt($('#br-radius').value, 10) || 150,
+      radius: parseInt($('#br-radius').value, 10) || DEFAULT_BRANCH_RADIUS_M,
       isActive: $('#br-active').value === 'true',
       isHeadOffice: $('#br-headoffice').checked,
     };
@@ -7031,14 +7056,15 @@ async function toggleAdmin(uid_) {
     toast('You cannot change your own role — ask another admin', 'error');
     return;
   }
-  if (emp.isAdmin) {
-    const adminCount = state.employees.filter(e=>e.isAdmin).length;
+  const empIsAdmin = emp.systemRole === 'admin';
+  if (empIsAdmin) {
+    const adminCount = state.employees.filter(e => e.systemRole === 'admin').length;
     if (adminCount <= 1) { toast('At least one admin is required', 'error'); return; }
     if (!confirm(`Demote ${emp.firstName} to employee? They will lose admin access.`)) return;
   } else {
     if (!confirm(`Promote ${emp.firstName} to admin? They will get full access to all data and settings.`)) return;
   }
-  const newRole = emp.isAdmin ? 'employee' : 'admin';
+  const newRole = empIsAdmin ? 'employee' : 'admin';
   const { data, error } = await sb.from('employees').update({ system_role: newRole }).eq('id', emp.id).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(emp, mapEmployeeFromDb(data));
@@ -11578,9 +11604,16 @@ function renderMaintenanceDashboard() {
   const urgent     = all.filter(r => r.priority==='urgent' && r.status!=='resolved' && r.status!=='cancelled');
   const myAssigned = all.filter(r => r.assignedTo === me.id && r.status!=='resolved' && r.status!=='cancelled');
 
-  // Resolved this week
-  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - 6); weekStart.setHours(0,0,0,0);
-  const resolvedThisWeek = all.filter(r => r.status==='resolved' && r.resolvedAt && new Date(r.resolvedAt) >= weekStart).length;
+  // Resolved this week — rolling 7-day window in UTC. resolvedAt is
+  // a timestamptz coming back as an ISO string; the prior code built
+  // a cutoff via `new Date(); setDate(getDate()-6); setHours(0,0,0,0)`
+  // which is LOCAL midnight, so at the app's UTC+3 the cutoff was
+  // skewed by up to 3 hours from what the user expected. Date.now()
+  // is timezone-agnostic milliseconds since epoch; comparing via
+  // getTime() on the parsed resolvedAt is robust to varied ISO
+  // formats ("…+00:00" vs "…Z", with or without ms).
+  const weekCutoffMs = Date.now() - 7*86400000;
+  const resolvedThisWeek = all.filter(r => r.status==='resolved' && r.resolvedAt && new Date(r.resolvedAt).getTime() >= weekCutoffMs).length;
 
   // Triage queue: open + in_progress, sorted by priority then created date
   const priOrder = { urgent:0, high:1, normal:2, low:3 };
