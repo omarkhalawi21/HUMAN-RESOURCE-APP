@@ -1,0 +1,188 @@
+# Nightly encrypted offsite backup of the Supabase Postgres DB.
+#
+# Why this exists
+# ---------------
+# Supabase Free tier ships zero automated backups (confirmed by the
+# Database → Backups page in the dashboard). Without this workflow, a
+# botched migration or an accidental "Reset everything" click means
+# permanent data loss. Pro tier ($25/mo) brings native daily backups —
+# but until then (and even after, as a belt-and-braces second copy
+# outside Supabase) this workflow gives us:
+#
+#   • a daily 03:00 UTC snapshot of the entire public schema
+#   • gzipped, then AES-256 symmetrically encrypted with a passphrase
+#     stored in GitHub Secrets — without it the artifact is opaque
+#   • uploaded as a GitHub Release attached to a dated tag
+#   • last 30 daily releases retained; older ones automatically pruned
+#
+# What you need to set up ONCE in GitHub
+# --------------------------------------
+# Repo → Settings → Secrets and variables → Actions → New secret. Add:
+#
+#   1. SUPABASE_DB_URL
+#      Direct (NOT pooled) Postgres connection string for the
+#      Supabase project. Find it in Supabase Dashboard → Project
+#      Settings → Database → "Connection string" → choose "URI" and
+#      "Direct connection" (port 5432, NOT 6543). pg_dump uses session
+#      features the pooler doesn't support, so the pooled URL will
+#      fail with "prepared statement" or "session"-related errors.
+#      Looks like:
+#        postgresql://postgres.<ref>:<db-password>@aws-0-<region>
+#                    .pooler.supabase.com:5432/postgres
+#
+#   2. BACKUP_PASSPHRASE
+#      A strong passphrase for symmetric AES-256 encryption.
+#      Generate with: openssl rand -base64 48
+#      Store it in your password manager — without it the backup
+#      artifacts cannot be decrypted. If you lose it, every encrypted
+#      backup is dead weight.
+#
+# How to restore
+# --------------
+# See RESTORE.md at the repo root. Walk through the procedure with a
+# fresh side-project Supabase DB at least once BEFORE you need it,
+# so you trust the steps when something is actually on fire.
+
+name: Nightly DB backup
+
+on:
+  schedule:
+    # 03:00 UTC = 06:00 KSA — before the workday starts, so it doesn't
+    # contend with payroll runs / heavy admin activity.
+    - cron: '0 3 * * *'
+  # Allows you to trigger from the Actions tab to test the setup.
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required to create / delete Releases
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Install PostgreSQL 17 client + gpg
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates gnupg lsb-release
+          # PGDG (PostgreSQL global development group) keyring for the
+          # newer pg client packages. Ubuntu 22.04's default
+          # postgresql-client is too old to dump from Supabase's pg16+.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Sanity-check secrets are configured
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set. Add it under Repo → Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          if [ -z "${PASS:-}" ]; then
+            echo "::error::BACKUP_PASSPHRASE secret is not set. Generate one (openssl rand -base64 48) and add it under Repo → Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          # Reject pooled connection string (port 6543) — pg_dump needs direct (5432).
+          if echo "$DB_URL" | grep -q ':6543'; then
+            echo "::error::SUPABASE_DB_URL appears to be the POOLED connection (port 6543). pg_dump needs the DIRECT connection on port 5432. Update the secret with the 'Direct connection' URI from Supabase → Project Settings → Database."
+            exit 1
+          fi
+
+      - name: Compute timestamp
+        id: ts
+        run: echo "stamp=$(date -u +'%Y-%m-%dT%H-%M-%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Dump → gzip → encrypt
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          STAMP="${{ steps.ts.outputs.stamp }}"
+          OUT="hassad-hr-backup-${STAMP}.sql.gz.gpg"
+
+          # --schema=public         : skip auth/storage/realtime — those
+          #                            are Supabase-managed and a restore
+          #                            would conflict.
+          # --no-owner              : ownership info is bound to the source
+          #                            project's 'postgres' role.
+          # --no-privileges (--no-acl)
+          #                         : skip GRANT/REVOKE — RLS policies are
+          #                            re-applied via supabase-rls.sql in
+          #                            the restore flow (see RESTORE.md).
+          # --clean --if-exists     : restore script DROPs existing objects
+          #                            first, so re-importing into a side
+          #                            project Just Works.
+          # --quote-all-identifiers : safe against future reserved words.
+          # --format=plain          : produces an SQL text file pipeable
+          #                            into psql; simpler than custom
+          #                            format for our scale.
+          pg_dump "$DB_URL" \
+            --schema=public \
+            --no-owner --no-privileges \
+            --clean --if-exists \
+            --quote-all-identifiers \
+            --format=plain \
+            | gzip --best \
+            | gpg --batch --yes --symmetric \
+                  --cipher-algo AES256 \
+                  --passphrase "$BACKUP_PASSPHRASE" \
+                  --output "$OUT"
+
+          SIZE=$(du -h "$OUT" | cut -f1)
+          echo "Created $OUT ($SIZE)"
+          echo "out_file=$OUT" >> "$GITHUB_OUTPUT"
+          echo "out_size=$SIZE" >> "$GITHUB_OUTPUT"
+        id: dump
+
+      - name: Create GitHub Release with the encrypted dump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          STAMP="${{ steps.ts.outputs.stamp }}"
+          OUT_FILE="${{ steps.dump.outputs.out_file }}"
+          OUT_SIZE="${{ steps.dump.outputs.out_size }}"
+          gh release create "backup-$STAMP" \
+            --title "DB backup $STAMP" \
+            --notes "Automated nightly backup of the public schema.
+
+          - Size: $OUT_SIZE (gzipped + AES-256 encrypted)
+          - Decrypt with the \`BACKUP_PASSPHRASE\` from GitHub Secrets.
+          - Restore procedure: see RESTORE.md at the repo root.
+
+          Older backups are automatically pruned to the last 30 days." \
+            "$OUT_FILE"
+
+      - name: Prune backups older than the last 30
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # List backup-* releases, newest first, drop the top 30, delete the rest.
+          # `gh release list` columns: TITLE  TYPE  TAG  PUBLISHED
+          # Some `gh` versions emit the tag in a different column — use --json for safety.
+          OLD=$(gh release list --limit 1000 --json tagName \
+                  --jq '.[].tagName | select(startswith("backup-"))' \
+                | sort -r \
+                | tail -n +31)
+          if [ -z "$OLD" ]; then
+            echo "No old backups to prune."
+            exit 0
+          fi
+          echo "Pruning:"
+          echo "$OLD"
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            gh release delete "$tag" --yes --cleanup-tag || true
+          done <<<"$OLD"
