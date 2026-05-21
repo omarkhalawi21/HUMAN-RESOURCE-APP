@@ -4054,6 +4054,18 @@ function resetWeekendOff(which) {
   toast(which==='FriSat' ? 'Fri & Sat set as off-days' : 'Fri set as off-day', 'success');
 }
 function handlePhotoUpload(ev) {
+  // Clear before validating — same shape of bug as Bug #5 fixed for
+  // handleArchiveFile / handleReceiptFile in PR #134, but on the
+  // photo path. If an admin picks a valid PNG (sets _pendingPhoto),
+  // then picks a 3MB JPG (rejected for size) or an .svg (rejected
+  // for MIME), the previous valid pick would otherwise survive and
+  // the next Save would persist the old PNG under the new metadata
+  // they THINK they're saving. Also resets the visible preview tile
+  // so the data state and the UI state stay in sync after any
+  // rejection — including the post-FileReader shape-validation fail.
+  _pendingPhoto = null;
+  const preview = document.getElementById('m-photo-preview');
+  if (preview) preview.innerHTML = '?';
   const file = ev.target.files?.[0];
   if (!file) return;
   if (file.size > 2 * 1024 * 1024) { toast('Image too large (max 2MB)', 'error'); ev.target.value=''; return; }
@@ -4069,11 +4081,11 @@ function handlePhotoUpload(ev) {
     const dataUrl = e.target.result;
     if (!isSafeBase64DataUrl(dataUrl)) {
       toast('Could not read image file', 'error');
-      _pendingPhoto = null;
+      // _pendingPhoto and preview already cleared at function-start;
+      // nothing to undo.
       return;
     }
     _pendingPhoto = dataUrl;
-    const preview = document.getElementById('m-photo-preview');
     if (preview) preview.innerHTML = `<img src="${escapeHTML(_pendingPhoto)}" class="w-full h-full object-cover" alt="">`;
   };
   reader.readAsDataURL(file);
@@ -16443,7 +16455,13 @@ async function handleReceiptFile(ev) {
   const p = document.getElementById('rc-preview');
   if (p) p.innerHTML = '';
   const ocrBtn = document.getElementById('rc-ocr-btn');
-  if (ocrBtn) ocrBtn.disabled = true;
+  if (ocrBtn) {
+    ocrBtn.disabled = true;
+    // Clear the per-file-type tooltip the previous valid pick set;
+    // otherwise a disabled button keeps the stale "Run OCR on the
+    // image" / "Render the first PDF page…" hint.
+    ocrBtn.removeAttribute('title');
+  }
   const f = await readUploadedFile(ev, {
     allowed: RECEIPT_ALLOWED_MIMES,
     errorMsg: 'Unsupported file type. Use an image (PNG/JPG/WebP) or PDF.',
