@@ -1327,8 +1327,27 @@ async function loadAll() {
       sb.from('warnings').select('*').order('issued_at', { ascending: false }),
       sb.from('advances').select('*').order('requested_at', { ascending: false }),
       sb.from('certificates').select('*').order('issued_at', { ascending: false }),
-      sb.from('archive_documents').select('*').order('uploaded_at', { ascending: false }),
-      sb.from('receipts').select('*').order('receipt_date', { ascending: false }),
+      // Archive + receipts: explicit column lists exclude data_url
+      // (and receipts' ocr_text / extracted_data), which hold the
+      // full base64 file blobs. Each blob is hundreds of KB to MB
+      // and they grow unbounded — bulk-loading them shipped MBs to
+      // every user on every sign-in, just for a metadata listing.
+      // Preview / download paths lazy-fetch the blob on demand
+      // (ensureArchiveDataUrl / ensureReceiptContent) and cache it
+      // on the in-memory record. Mirrors the maintenance pattern
+      // (photo_data_url excluded above).
+      sb.from('archive_documents')
+        .select('id, name, category, mime, size, description, uploaded_by, uploaded_at')
+        .order('uploaded_at', { ascending: false }),
+      // `extracted_data` is kept (it's small JSON — line items /
+      // totals / merchant) so download/preview can decide
+      // synchronously whether to take the structured-print branch
+      // or the raw-file branch without losing the user gesture on
+      // an async await. data_url + ocr_text stay out — those are
+      // the heavyweight columns.
+      sb.from('receipts')
+        .select('id, vendor, receipt_date, amount, currency, category, notes, mime, size, extracted_data, uploaded_by, uploaded_at')
+        .order('receipt_date', { ascending: false }),
       // Inventory: SELECT is RLS-restricted to admin/inventory; for other
       // roles the call returns an empty array, which is what we want.
       sb.from('inventory_items').select('*').order('name'),
@@ -9712,8 +9731,45 @@ async function handleArchiveFile(ev) {
   const p = document.getElementById('ar-preview');
   if (p) p.innerHTML = `${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(f.name)}</strong> (${(f.size/1024).toFixed(1)} KB)`;
 }
-function downloadArchiveDoc(id) {
+// Lazy-load the base64 file blob on demand. loadAll strips data_url
+// from the bulk archive_documents fetch to keep sign-in light; this
+// helper fills it in on the in-memory record the first time a
+// preview / download is triggered, and caches it for the rest of
+// the session. Returns the (now-hydrated) record, or null on error.
+async function ensureArchiveDataUrl(id) {
   const d = (state.archive||[]).find(x => x.id===id);
+  if (!d) return null;
+  if (d.dataUrl) return d;
+  const { data, error } = await sb.from('archive_documents')
+    .select('data_url').eq('id', id).single();
+  if (error) { toast('Failed to load document content', 'error'); return null; }
+  d.dataUrl = data?.data_url || '';
+  return d;
+}
+// Same pattern for receipts — data_url + ocr_text are the heavy
+// columns (base64 file blob + raw OCR text) and are only needed by
+// preview / download / re-OCR flows. extracted_data stays bulk-
+// loaded (small JSON) so downloadReceipt can pick its branch
+// synchronously without losing the user gesture on an async await.
+// Cache via a sentinel string so a second call doesn't refetch even
+// when both columns happen to be empty (no OCR + no file attached).
+async function ensureReceiptContent(id) {
+  const r = (state.receipts||[]).find(x => x.id === id);
+  if (!r) return null;
+  // Skip fetch if either heavy column is already populated (freshly
+  // uploaded receipts come back from the INSERT response with both
+  // set; once lazy-loaded the same record gets hydrated in place).
+  if (r._contentLoaded || r.dataUrl || r.ocrText) return r;
+  const { data, error } = await sb.from('receipts')
+    .select('data_url, ocr_text').eq('id', id).single();
+  if (error) { toast('Failed to load receipt content', 'error'); return null; }
+  r.dataUrl  = data?.data_url || '';
+  r.ocrText  = data?.ocr_text || '';
+  r._contentLoaded = true;
+  return r;
+}
+async function downloadArchiveDoc(id) {
+  const d = await ensureArchiveDataUrl(id);
   if (!d) return;
   const safeUrl = safeArchiveDataUrl(d);
   if (!safeUrl) { toast('This document type is not allowed for download.', 'error'); return; }
@@ -9751,11 +9807,12 @@ function archivePreviewShell(title, bodyHtml) {
 }
 
 async function previewArchiveDoc(id) {
-  const d = (state.archive||[]).find(x => x.id===id);
-  if (!d) return;
-  const safeUrl = safeArchiveDataUrl(d);
-  if (!safeUrl) { toast('This document type cannot be previewed.', 'error'); return; }
-  const mime    = (d.mime||'').toLowerCase();
+  const d0 = (state.archive||[]).find(x => x.id===id);
+  if (!d0) return;
+  // Fail fast on disallowed MIME *before* opening a popup we'd just
+  // have to close — the mime check needs no DB roundtrip.
+  if (!isAllowedArchiveMime(d0.mime)) { toast('This document type cannot be previewed.', 'error'); return; }
+  const mime    = (d0.mime||'').toLowerCase();
   const isImage = mime.startsWith('image/');
   const isPdf   = mime.includes('pdf');
   const isText  = mime === 'text/plain';
@@ -9765,12 +9822,27 @@ async function previewArchiveDoc(id) {
   const isDocx  = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
   // Open the window synchronously (inside the click) so the popup blocker
-  // doesn't kill it during the async parse below.
+  // doesn't kill it during the lazy-load + async parse below.
   const win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked.', 'error'); return; }
   try { win.opener = null; } catch(_) {}
+  // Show a holding screen immediately so the new tab isn't blank
+  // while we fetch the data_url (stripped from loadAll).
+  win.document.write(`<title>${escapeHTML(d0.name)}</title><body style="font-family:system-ui;margin:0;padding:40px;color:#64748b;background:#f8fafc">Loading…</body>`);
+  win.document.close();
+
+  // Lazy-fetch data_url from the DB and hydrate the in-memory record.
+  const d = await ensureArchiveDataUrl(id);
+  if (!d) { try { win.close(); } catch(_){} return; }
+  const safeUrl = safeArchiveDataUrl(d);
+  if (!safeUrl) {
+    try { win.close(); } catch(_){}
+    toast('This document type cannot be previewed.', 'error');
+    return;
+  }
 
   if (isImage || isPdf) {
+    win.document.open();
     // safeUrl is base64 (HTML/attribute-safe), still escaped for defense in depth.
     win.document.write(isImage
       ? `<title>${escapeHTML(d.name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safeUrl)}" style="max-width:100%;max-height:100vh"></body>`
@@ -9787,6 +9859,10 @@ async function previewArchiveDoc(id) {
     return;
   }
 
+  // The holding screen written above is already closed; reopen the
+  // doc so this "Loading preview…" replaces it cleanly rather than
+  // appending in some browsers.
+  win.document.open();
   win.document.write(`<title>${escapeHTML(d.name)}</title><body style="font-family:system-ui;margin:0;padding:40px;color:#64748b;background:#f8fafc">Loading preview…</body>`);
   win.document.close();
   try {
@@ -16343,12 +16419,21 @@ function parseReceiptText(text) {
   return out;
 }
 
-function previewReceipt(id) {
-  const r = (state.receipts||[]).find(x => x.id === id);
-  if (!r) return;
-  const url = safeReceiptDataUrl(r);
+async function previewReceipt(id) {
+  // Open the window synchronously (preserves the user gesture) and
+  // show a holding screen while we lazy-fetch data_url + ocr_text +
+  // extracted_data (stripped from loadAll to keep sign-in fast).
   const w = window.open();
   if (!w) { toast('Popup blocked', 'error'); return; }
+  try { w.opener = null; } catch(_) {}
+  w.document.write('<title>Loading…</title><body style="font-family:system-ui;margin:0;padding:40px;color:#64748b;background:#f8fafc">Loading receipt…</body>');
+  w.document.close();
+  const r = await ensureReceiptContent(id);
+  if (!r) { try { w.close(); } catch(_){} return; }
+  const url = safeReceiptDataUrl(r);
+  // Reopen the doc so the subsequent write replaces the holding
+  // screen cleanly across browsers.
+  w.document.open();
   if (r.extractedData && typeof r.extractedData === 'object') {
     w.document.write(renderStructuredReceiptHTML(r, url));
     w.document.close();
@@ -16477,13 +16562,24 @@ function renderStructuredReceiptHTML(r, url) {
 // Default: print the Asprise-style structured preview (user picks "Save as
 // PDF" from the print dialog — that's the file). Legacy receipts without
 // extractedData fall back to downloading the raw photo/PDF.
-function downloadReceipt(id) {
-  const r = (state.receipts||[]).find(x => x.id === id);
-  if (!r) return;
-  if (r.extractedData && typeof r.extractedData === 'object') {
+async function downloadReceipt(id) {
+  const r0 = (state.receipts||[]).find(x => x.id === id);
+  if (!r0) return;
+  // Branch synchronously on extractedData (kept in loadAll so this
+  // decision doesn't need an await — that would burn the user
+  // gesture before window.open() and trip the popup blocker).
+  if (r0.extractedData && typeof r0.extractedData === 'object') {
+    // Open the popup synchronously, then lazy-fetch data_url for
+    // the inline photo link inside the structured receipt.
     const w = window.open();
     if (!w) { toast('Popup blocked — allow popups to download.', 'error'); return; }
+    try { w.opener = null; } catch(_) {}
+    w.document.write('<title>Loading…</title><body style="font-family:system-ui;margin:0;padding:40px;color:#64748b;background:#f8fafc">Loading receipt…</body>');
+    w.document.close();
+    const r = await ensureReceiptContent(id);
+    if (!r) { try { w.close(); } catch(_){} return; }
     const url = safeReceiptDataUrl(r);
+    w.document.open();
     w.document.write(renderStructuredReceiptHTML(r, url));
     w.document.close();
     // Wait one frame so the styled content paints before the print dialog
@@ -16491,6 +16587,9 @@ function downloadReceipt(id) {
     w.onload = () => { try { w.focus(); w.print(); } catch (_) {} };
     return;
   }
+  // Raw-file branch: lazy-fetch the blob then anchor-click for download.
+  const r = await ensureReceiptContent(id);
+  if (!r) return;
   const safeUrl = safeReceiptDataUrl(r);
   if (!safeUrl) { toast('This receipt has no downloadable file.', 'error'); return; }
   const mimeExt = {

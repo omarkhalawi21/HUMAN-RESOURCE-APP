@@ -3305,6 +3305,125 @@ CREATE POLICY "personal_todo_lists_delete_own"
   );
 
 -- =============================================================
+-- 60. LOCKDOWN — narrow open SELECT policies + leave_type CHECK
+--     Pre-merge audit (May 2026) flagged that warnings, advances,
+--     certificates, archive_documents, and employee_extras all had
+--     SELECT policies using USING(true) — every authenticated
+--     employee could read every disciplinary record, advance amount,
+--     IQAMA number, etc. via a single PostgREST call. This is a
+--     PDPL concern for a KSA company.
+--
+--     Each policy below is narrowed to the minimum audience that
+--     matches the existing UI gates:
+--       - warnings / certificates / advances: admin+hr OR self.
+--           (warnings is navigable by all roles; show:true on the
+--           nav means floor staff *should* see their own record —
+--           hence "OR self", not admin/hr-only.)
+--       - archive_documents: admin+hr+operations see all (Archive
+--           page audience); barista+head_barista+roaster see only
+--           the Resources whitelist (sop/training/company_resource/
+--           policy); others see nothing.  Keep
+--           RESOURCES_CATEGORIES in index.html ↔ the category list
+--           below in sync.
+--       - employee_extras: admin+hr see all (employees directory,
+--           renew-documents flow); everyone else sees only their
+--           own row (so dcDefaultBranch() still works for floor
+--           staff). IQAMA + Baladiya numbers are PII and were
+--           previously visible to every authenticated user.
+--
+--     Plus a CHECK constraint on leave_requests.leave_type — without
+--     it, a malformed value makes decide_leave_request() raise on
+--     `leave_<bogus>` and rolls back the approval transaction.
+--
+--     Idempotent: drops both the legacy and the new policy names
+--     before recreating; uses DROP CONSTRAINT IF EXISTS for the
+--     CHECK. Safe to re-paste the whole file.
+-- =============================================================
+
+-- WARNINGS — admin/hr see all; employees see their own record.
+DROP POLICY IF EXISTS "warnings_select_authenticated"  ON public.warnings;
+DROP POLICY IF EXISTS "warnings_select_admin_hr_or_self" ON public.warnings;
+CREATE POLICY "warnings_select_admin_hr_or_self"
+  ON public.warnings FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = warnings.employee_id
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- ADVANCES — admin/hr see all; employees see their own requests.
+DROP POLICY IF EXISTS "advances_select_authenticated"  ON public.advances;
+DROP POLICY IF EXISTS "advances_select_admin_hr_or_self" ON public.advances;
+CREATE POLICY "advances_select_admin_hr_or_self"
+  ON public.advances FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = advances.employee_id
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- CERTIFICATES — admin/hr see all; employees see their own.
+DROP POLICY IF EXISTS "certificates_select_authenticated"  ON public.certificates;
+DROP POLICY IF EXISTS "certificates_select_admin_hr_or_self" ON public.certificates;
+CREATE POLICY "certificates_select_admin_hr_or_self"
+  ON public.certificates FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = certificates.employee_id
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- ARCHIVE DOCUMENTS — admin/hr/operations see all; floor roles
+-- (barista/head_barista/roaster) see only the Resources whitelist.
+-- IMPORTANT: keep the category list below ↔ JS RESOURCES_CATEGORIES
+-- ('sop','training','company_resource','policy') in sync.
+DROP POLICY IF EXISTS "archive_select_authenticated" ON public.archive_documents;
+DROP POLICY IF EXISTS "archive_select_role_scoped"   ON public.archive_documents;
+CREATE POLICY "archive_select_role_scoped"
+  ON public.archive_documents FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr','operations'])
+    OR (
+      public.has_role(ARRAY['barista','head_barista','roaster'])
+      AND category IN ('sop','training','company_resource','policy')
+    )
+  );
+
+-- EMPLOYEE EXTRAS — admin/hr see all; everyone else sees their own
+-- row (dcDefaultBranch() relies on self-read for floor staff).
+DROP POLICY IF EXISTS "employee_extras_select_authenticated"   ON public.employee_extras;
+DROP POLICY IF EXISTS "employee_extras_select_admin_hr_or_self" ON public.employee_extras;
+CREATE POLICY "employee_extras_select_admin_hr_or_self"
+  ON public.employee_extras FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (
+      SELECT 1 FROM public.employees e
+      WHERE e.id = employee_extras.employee_id
+        AND e.user_id = auth.uid()
+    )
+  );
+
+-- LEAVE_REQUESTS — pin leave_type to the three values the JS UI offers
+-- and the leave_balances columns ('annual','sick','personal'). Without
+-- this, a bogus value (anything else) makes decide_leave_request's
+-- dynamic SQL raise on a missing 'leave_<bogus>' column.
+ALTER TABLE public.leave_requests
+  DROP CONSTRAINT IF EXISTS leave_requests_leave_type_chk;
+ALTER TABLE public.leave_requests
+  ADD CONSTRAINT leave_requests_leave_type_chk
+  CHECK (leave_type IN ('annual','sick','personal'));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
