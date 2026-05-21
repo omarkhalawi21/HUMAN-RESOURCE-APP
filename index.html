@@ -933,7 +933,8 @@ function employeeToDb(e) {
     hire_date: e.hireDate, salary: Number(e.salary)||0,
     status: e.status || 'active',
     system_role: sysRole,
-    avatar_color: e.avatarColor, photo: e.photo,
+    // Validate avatarColor on write — stored XSS defence-in-depth.
+    avatar_color: safeAvatarColor(e.avatarColor), photo: e.photo,
   };
 }
 function mapAttendanceFromDb(r) {
@@ -1661,6 +1662,7 @@ async function loadAll() {
     state.bakeryTransfersCache = {};
     state.bakeryIngredients  = (bakeryIngredientsR.data || []).map(mapBakeryIngredientFromDb);
     state.bakeryStockCache   = {};
+    state.bakeryPurchasesCache = {}; // sibling cache; was previously omitted from loadAll's reset (drift), so a re-loadAll left stale entries from the prior session.
     state.empExtras    = {};
     (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   } catch(e) {
@@ -1671,9 +1673,11 @@ async function loadAll() {
   }
 }
 
-// Compatibility shims for old call sites; real persistence is via Supabase mutations.
-function saveState() { /* no-op: data persisted to Supabase per-mutation */ }
-function loadState() { return emptyState(); }
+// Deleted: legacy saveState() / loadState() no-op shims. The app
+// persists to Supabase per-mutation; these never did anything and
+// were a footgun ("call saveState() and the data is durable" — it
+// wasn't). All known callers (setLang, the Clear-attendance button)
+// have been migrated. resetState (below) is the real wipe path.
 async function resetState() {
   if (!isAdmin()) return;
   if (!confirm('Reset all company data? This deletes attendance, leave, payroll, warnings, advances, certificates, archived documents, and any employees without a login account. Schedules and document expiries on remaining employees are kept.')) return;
@@ -1721,7 +1725,8 @@ function diffMinutes(a, b) {
 }
 function minutesToHrs(m) { return (m/60).toFixed(2); }
 
-function seedData() { return emptyState(); }
+// Deleted: legacy seedData() shim — never called, returned an empty
+// state. emptyState() is the real reset path.
 
 state = emptyState();
 
@@ -1909,13 +1914,25 @@ function findRoleMismatches() {
   }
   return out;
 }
+// avatarColor is interpolated raw into a `style="…"` attribute (no
+// escapeHTML), so a malicious value could close the attribute and
+// inject markup — stored XSS company-wide. Validate against the
+// strict hex-colour grammar; anything else (including the empty
+// default fallback) renders as a safe neutral slate. Same helper
+// is also applied at write time in employeeToDb so a poisoned
+// value can't even reach the DB.
+const AVATAR_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+function safeAvatarColor(c) {
+  return AVATAR_COLOR_RE.test(String(c||'')) ? c : '#64748b';
+}
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
+  const bg = safeAvatarColor(emp.avatarColor);
   if (emp.photo) {
-    return `<span class="avatar" style="width:${size}px;height:${size}px;background:${emp.avatarColor||'#64748b'}"><img src="${escapeHTML(emp.photo)}" alt=""></span>`;
+    return `<span class="avatar" style="width:${size}px;height:${size}px;background:${bg}"><img src="${escapeHTML(emp.photo)}" alt=""></span>`;
   }
-  return `<span class="avatar" style="width:${size}px;height:${size}px;background:${emp.avatarColor||'#64748b'};font-size:${size*0.4}px">${escapeHTML(initials)}</span>`;
+  return `<span class="avatar" style="width:${size}px;height:${size}px;background:${bg};font-size:${size*0.4}px">${escapeHTML(initials)}</span>`;
 }
 function statusBadge(status) {
   const map = {
@@ -1934,12 +1951,21 @@ function statusBadge(status) {
   const [cls, label] = map[status] || ['badge-slate', status];
   return `<span class="badge ${cls}">${escapeHTML(label)}</span>`;
 }
-function setLang(lang) {
+async function setLang(lang) {
   state.settings.lang = lang;
   document.documentElement.lang = lang;
   document.documentElement.dir = lang==='ar' ? 'rtl' : 'ltr';
-  saveState();
   render();
+  // Persist to companies.language for admins so the choice survives
+  // a reload (loadAll reads companies.language into state.settings.lang).
+  // Non-admins flip session-only — the topbar toggle still works for
+  // the current session, but loadAll() restores the admin-chosen
+  // default on the next sign-in. (Previously this called saveState(),
+  // which was a no-op shim — the language reverted on every reload.)
+  if (isAdmin() && state.companyId) {
+    const { error } = await sb.from('companies').update({ language: lang }).eq('id', state.companyId);
+    if (error) console.error('persist language failed:', error);
+  }
 }
 
 /* -------------------- ROUTER -------------------- */
@@ -2557,12 +2583,45 @@ function renderDashboard() {
   if (!dashAttFilter.date) dashAttFilter.date = todayISO();
   const admin = canManagePeople();
   const today = todayISO();
+  // Bucket attendance once into a Map keyed by `empId|date` so every
+  // per-employee per-day lookup inside this render is O(1). Previously
+  // each `state.attendance.find(…)` scanned the full attendance window
+  // (up to 540 days × headcount); the dashboard re-renders on every
+  // keystroke into its date/branch filters, so this hit hard.
+  const attByEmpDate = new Map();
+  for (const a of (state.attendance||[])) {
+    attByEmpDate.set(a.employeeId + '|' + a.date, a);
+  }
+  // Document expiry pass — collect counts AND the watchlist items in
+  // ONE loop over employees. Previously the stat card and the
+  // watchlist each scanned all employees + called getEmpExtras +
+  // daysUntil ×2 separately; on a dashboard that re-renders on every
+  // filter keystroke this was visible work for nothing.
+  const docExpiryItems = [];
+  let docExpired = 0, docExp30 = 0, docExpSoon60 = 0;
+  for (const e of (state.employees||[])) {
+    const x = getEmpExtras(e.id);
+    const checks = [
+      { doc: 'IQAMA',    expiry: x.iqama?.expiry },
+      { doc: 'Baladiya', expiry: x.baladiya?.expiry },
+    ];
+    for (const { doc, expiry } of checks) {
+      if (!expiry) continue;
+      const days = daysUntil(expiry);
+      if (days === null) continue;
+      if (days < 0)        docExpired++;
+      else if (days <= 30) docExp30++;
+      else if (days <= 60) docExpSoon60++;
+      if (days <= 60) docExpiryItems.push({ e, doc, expiry, days });
+    }
+  }
+  docExpiryItems.sort((a,b)=>a.days-b.days);
   const presentToday = state.attendance.filter(a => a.date===today && a.status!=='absent');
   const onLeave = state.leaveRequests.filter(r => r.status==='approved' && r.startDate<=today && r.endDate>=today);
   const pending = state.leaveRequests.filter(r => r.status==='pending');
   const totalPayroll = state.payroll.reduce((s,p)=>s+(p.net||0),0);
   const me = currentEmployee();
-  const myToday = state.attendance.find(a => a.employeeId===me.id && a.date===today);
+  const myToday = attByEmpDate.get(me.id + '|' + today);
 
   // Mini chart: last 7 days
   const last7 = [];
@@ -2734,10 +2793,11 @@ function renderDashboard() {
           ? state.employees.filter(e => !((getEmpExtras(e.id).branch||'').trim()))
           : state.employees.filter(e => getEmpExtras(e.id).branch === filterBranch);
 
-      // Build per-employee status for selected date
+      // Build per-employee status for selected date — uses the
+      // attByEmpDate Map built at the top of renderDashboard.
       const dayRows = empsScoped.map(e => {
         const ex = getEmpExtras(e.id);
-        const att = state.attendance.find(a => a.employeeId===e.id && a.date===filterDate);
+        const att = attByEmpDate.get(e.id + '|' + filterDate);
         const onLeave = state.leaveRequests.find(r => r.status==='approved' && r.employeeId===e.id && r.startDate<=filterDate && r.endDate>=filterDate);
         const dow = new Date(filterDate+'T00:00:00').getDay();
         const isOff = ex.schedule && ex.schedule[dow] && ex.schedule[dow].off;
@@ -2761,7 +2821,7 @@ function renderDashboard() {
         const d = new Date(filterDate+'T00:00:00'); d.setDate(d.getDate()-i);
         const iso = d.toISOString().slice(0,10);
         const count = empsScoped.reduce((s,e) => {
-          const a = state.attendance.find(x => x.employeeId===e.id && x.date===iso);
+          const a = attByEmpDate.get(e.id + '|' + iso);
           return s + (a && a.status!=='absent' ? 1 : 0);
         }, 0);
         last7Filtered.push({ date: iso, count, label: d.toLocaleDateString(undefined,{weekday:'short'}) });
@@ -2901,27 +2961,18 @@ function renderDashboard() {
         </a>`;
       })()}
       ${(() => {
-        let exp30=0, expSoon60=0, expired=0;
-        state.employees.forEach(e => {
-          const x = getEmpExtras(e.id);
-          [x.iqama?.expiry, x.baladiya?.expiry].forEach(d => {
-            const days = daysUntil(d);
-            if (days === null) return;
-            if (days < 0) expired++;
-            else if (days <= 30) exp30++;
-            else if (days <= 60) expSoon60++;
-          });
-        });
-        const cls = expired>0 ? 'text-rose-600 bg-rose-50' : exp30>0 ? 'text-amber-600 bg-amber-50' : 'text-emerald-600 bg-emerald-50';
+        // Reuses docExpired / docExp30 / docExpSoon60 computed once
+        // in the single docExpiryItems pass at the top of renderDashboard.
+        const cls = docExpired>0 ? 'text-rose-600 bg-rose-50' : docExp30>0 ? 'text-amber-600 bg-amber-50' : 'text-emerald-600 bg-emerald-50';
         return `
         <a href="#/documents" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block">
           <div class="flex items-center justify-between mb-3">
             <div class="w-11 h-11 rounded-xl ${cls} flex items-center justify-center">${icon('idcard','w-5 h-5')}</div>
-            ${expired>0?`<span class="badge badge-red">${expired} expired</span>`:exp30>0?`<span class="badge badge-amber">${exp30} ≤30d</span>`:`<span class="badge badge-green">All clear</span>`}
+            ${docExpired>0?`<span class="badge badge-red">${docExpired} expired</span>`:docExp30>0?`<span class="badge badge-amber">${docExp30} ≤30d</span>`:`<span class="badge badge-green">All clear</span>`}
           </div>
           <div class="text-[11px] text-slate-500 uppercase tracking-[0.12em] font-semibold">IQAMA / Baladiya</div>
-          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${exp30+expired}</div>
-          <div class="text-xs text-slate-400 mt-1">${expSoon60} expiring in 60d</div>
+          <div class="font-display text-3xl font-semibold text-slate-900 mt-1 tabular-nums">${docExp30+docExpired}</div>
+          <div class="text-xs text-slate-400 mt-1">${docExpSoon60} expiring in 60d</div>
         </a>`;
       })()}
       ${(() => {
@@ -2938,21 +2989,10 @@ function renderDashboard() {
       })()}
     </div>
 
-    <!-- Document expiry watchlist -->
+    <!-- Document expiry watchlist — reuses docExpiryItems computed
+         once at the top of renderDashboard. -->
     ${(() => {
-      const items = [];
-      state.employees.forEach(e => {
-        const x = getEmpExtras(e.id);
-        if (x.iqama?.expiry) {
-          const d = daysUntil(x.iqama.expiry);
-          if (d !== null && d <= 60) items.push({ e, doc:'IQAMA', expiry:x.iqama.expiry, days:d });
-        }
-        if (x.baladiya?.expiry) {
-          const d = daysUntil(x.baladiya.expiry);
-          if (d !== null && d <= 60) items.push({ e, doc:'Baladiya', expiry:x.baladiya.expiry, days:d });
-        }
-      });
-      items.sort((a,b)=>a.days-b.days);
+      const items = docExpiryItems;
       if (items.length === 0) return '';
       return `
       <div class="bg-white rounded-2xl shadow-card p-6 mt-5">
@@ -3728,7 +3768,7 @@ function openEmployeeModal(id) {
   }).join('');
   const form = `
     <div class="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
-      <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${editing?.avatarColor || '#a87035'}">
+      <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${safeAvatarColor(editing?.avatarColor || '#a87035')}">
         ${editing?.photo ? `<img src="${escapeHTML(editing.photo)}" class="w-full h-full object-cover" alt="">` : escapeHTML((editing?.firstName?.[0]||'?')+(editing?.lastName?.[0]||''))}
       </div>
       <div class="flex-1">
@@ -3867,7 +3907,7 @@ function openEmployeeModal(id) {
       systemRole: (sysSel && !sysSel.disabled) ? sysSel.value : (editing?.systemRole || 'employee'),
     };
     if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
-    const dbRow = { ...employeeToDb(data), photo: _pendingPhoto, avatar_color: editing?.avatarColor || pickColor() };
+    const dbRow = { ...employeeToDb(data), photo: _pendingPhoto, avatar_color: safeAvatarColor(editing?.avatarColor || pickColor()) };
     let savedId = editing?.id;
     if (editing) {
       const { data: row, error } = await sb.from('employees').update(dbRow).eq('id', editing.id).select().single();
@@ -5425,15 +5465,28 @@ function renderAnalytics() {
   const leaveCurDays  = leaves.filter(r => r.status==='approved' && inCur(r.startDate||'')).reduce((s,r) => s + (r.days||0), 0);
   const leavePrevDays = leaves.filter(r => r.status==='approved' && inPrev(r.startDate||'')).reduce((s,r) => s + (r.days||0), 0);
 
-  // Per-branch snapshot (today, not period — operational not historical)
+  // Per-branch snapshot (today, not period — operational not historical).
+  // Group employees by branch in ONE pass into a Map, then iterate the
+  // map keys. The prior shape `branchKeys.map(b => activeEmps.filter(e
+  // => empBranch(e) === b))` was O(branches × employees) plus a fresh
+  // getEmpExtras(e.id) call per inner-filter hit; the dashboard hops to
+  // Analytics on every period click so this re-ran constantly.
   const activeEmps = state.employees.filter(e => e.status === 'active');
-  const empBranch = e => (getEmpExtras(e.id).branch || '').trim() || 'Unassigned';
+  const empsByBranch = new Map();
+  for (const e of activeEmps) {
+    const b = (getEmpExtras(e.id).branch || '').trim() || 'Unassigned';
+    let arr = empsByBranch.get(b);
+    if (!arr) { arr = []; empsByBranch.set(b, arr); }
+    arr.push(e);
+  }
   const today = todayISO();
-  const branchKeys = [...new Set(activeEmps.map(empBranch))].sort();
-  const branchRows = branchKeys.map(b => {
-    const emps = activeEmps.filter(e => empBranch(e) === b);
+  // Pre-filter today's present attendance once instead of re-filtering
+  // per branch — the empIds .has() check inside is O(1) per record.
+  const presentToday = state.attendance.filter(a => a.date===today && a.status!=='absent');
+  const branchRows = [...empsByBranch.keys()].sort().map(b => {
+    const emps = empsByBranch.get(b);
     const empIds = new Set(emps.map(e => e.id));
-    const present = state.attendance.filter(a => a.date===today && a.status!=='absent' && empIds.has(a.employeeId)).length;
+    const present = presentToday.reduce((s,a) => s + (empIds.has(a.employeeId) ? 1 : 0), 0);
     const openMaint = maintenance.filter(m => m.status!=='resolved' && m.status!=='cancelled' && (m.branch||'')===b).length;
     const lowItems = (state.inventory||[]).filter(i => isLowStock(i) && (i.branch||'')===b).length;
     return { branch: b, emps: emps.length, present, openMaint, lowItems };
@@ -6199,45 +6252,65 @@ function renderReports() {
             }).join('')}
           </tbody>
         </table></div>
-      ` : reportType==='leave' ? `
+      ` : reportType==='leave' ? (()=>{
+        // Bucket leave requests by employee once instead of re-filtering
+        // state.leaveRequests twice per row (approved + pending). The
+        // attendance branch above already does this via `byEmp`; this
+        // mirrors the pattern.
+        const leaveByEmp = {};
+        for (const r of (state.leaveRequests||[])) {
+          let bucket = leaveByEmp[r.employeeId];
+          if (!bucket) { bucket = leaveByEmp[r.employeeId] = { approvedDays: 0, pending: 0 }; }
+          if (r.status === 'approved' && r.startDate >= reportRange.from && r.endDate <= reportRange.to) bucket.approvedDays += (r.days||0);
+          else if (r.status === 'pending') bucket.pending += 1;
+        }
+        return `
         <div class="p-5 border-b border-slate-100"><h3 class="font-display text-lg font-semibold text-slate-900">Leave Summary</h3></div>
         <div class="overflow-x-auto"><table class="data">
           <thead><tr><th>Employee</th><th>Annual remaining</th><th>Sick remaining</th><th>Personal remaining</th><th>Approved (period)</th><th>Pending</th></tr></thead>
           <tbody>
             ${state.employees.map(e => {
               const b = state.leaveBalances[e.id]||{annual:0,sick:0,personal:0};
-              const approved = state.leaveRequests.filter(r=>r.employeeId===e.id && r.status==='approved' && r.startDate>=reportRange.from && r.endDate<=reportRange.to).reduce((s,r)=>s+r.days,0);
-              const pending  = state.leaveRequests.filter(r=>r.employeeId===e.id && r.status==='pending').length;
+              const lb = leaveByEmp[e.id] || { approvedDays: 0, pending: 0 };
               return `<tr class="hover-row">
                 <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<a href="#/employee/${e.id}" class="font-medium hover:text-brand-700 hover:underline">${escapeHTML(e.firstName+' '+e.lastName)}</a></div></td>
                 <td>${b.annual}</td><td>${b.sick}</td><td>${b.personal}</td>
-                <td><span class="badge badge-green">${approved} d</span></td>
-                <td>${pending?`<span class="badge badge-amber">${pending}</span>`:'—'}</td>
+                <td><span class="badge badge-green">${lb.approvedDays} d</span></td>
+                <td>${lb.pending?`<span class="badge badge-amber">${lb.pending}</span>`:'—'}</td>
               </tr>`;
             }).join('')}
           </tbody>
-        </table></div>
-      ` : `
+        </table></div>`;
+      })() : (()=>{
+        // Bucket payroll cycles by employee once — was 4 separate
+        // .filter()+.reduce() chains per row.
+        const payByEmp = {};
+        for (const p of (state.payroll||[])) {
+          let bucket = payByEmp[p.employeeId];
+          if (!bucket) { bucket = payByEmp[p.employeeId] = { cycles: 0, base: 0, bonus: 0, net: 0 }; }
+          bucket.cycles += 1;
+          bucket.base   += (p.base  || 0);
+          bucket.bonus  += (p.bonus || 0);
+          bucket.net    += (p.net   || 0);
+        }
+        return `
         <div class="p-5 border-b border-slate-100"><h3 class="font-display text-lg font-semibold text-slate-900">Payroll Summary</h3></div>
         <div class="overflow-x-auto"><table class="data">
           <thead><tr><th>Employee</th><th>Cycles</th><th>Total Base</th><th>Total Bonuses</th><th>Total Net</th></tr></thead>
           <tbody>
             ${state.employees.map(e => {
-              const ps = state.payroll.filter(p=>p.employeeId===e.id);
-              const tb = ps.reduce((s,p)=>s+p.base,0);
-              const tbo= ps.reduce((s,p)=>s+(p.bonus||0),0);
-              const tn = ps.reduce((s,p)=>s+p.net,0);
+              const pb = payByEmp[e.id] || { cycles: 0, base: 0, bonus: 0, net: 0 };
               return `<tr class="hover-row">
                 <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<a href="#/employee/${e.id}" class="font-medium hover:text-brand-700 hover:underline">${escapeHTML(e.firstName+' '+e.lastName)}</a></div></td>
-                <td>${ps.length}</td>
-                <td>${fmtMoney(tb)}</td>
-                <td class="text-emerald-600">+${fmtMoney(tbo)}</td>
-                <td class="font-bold">${fmtMoney(tn)}</td>
+                <td>${pb.cycles}</td>
+                <td>${fmtMoney(pb.base)}</td>
+                <td class="text-emerald-600">+${fmtMoney(pb.bonus)}</td>
+                <td class="font-bold">${fmtMoney(pb.net)}</td>
               </tr>`;
             }).join('')}
           </tbody>
-        </table></div>
-      `}
+        </table></div>`;
+      })()}
     </div>
   `;
 }
@@ -6413,7 +6486,14 @@ function renderSettings() {
         <div class="space-y-2 max-h-96 overflow-y-auto">
           ${state.users.map(u => {
             const e = getEmployee(u.employeeId);
-            const isMe = u.id === state.session?.userId;
+            // Bugfix: u.id is `'u-' + emp.id` (constructed when building
+            // state.users from employees), while state.session.userId is
+            // the Supabase auth UUID — they never matched, so the "(you)"
+            // label never appeared and the "demote yourself" button was
+            // erroneously offered on the admin's own row (toggleAdmin
+            // itself correctly bails out, but the button shouldn't show).
+            // Compare via the underlying employee's user_id instead.
+            const isMe = e && e.user_id === state.session?.userId;
             return `
             <div class="flex items-center gap-3 p-3 rounded-lg bg-slate-50">
               ${avatarHTML(e,32)}
@@ -6526,9 +6606,16 @@ function renderSettings() {
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
           <button onclick="if(confirm('Wipe all data and re-seed?')) { resetState(); location.hash='#/dashboard'; render(); toast('Reset to sample data','success'); }" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
-          <button onclick="if(confirm('Clear all attendance records?')) { state.attendance=[]; saveState(); render(); toast('Attendance cleared','success'); }" class="btn btn-ghost">Clear attendance</button>
           <button onclick="downloadBackup()" class="btn btn-ghost">${icon('download','w-4 h-4')} Download backup</button>
         </div>
+        <!-- Removed the "Clear attendance" button: it called saveState()
+             (a no-op), so the in-memory wipe was lost on the next
+             loadAll(). An admin clicking it saw a green success toast
+             while nothing was actually deleted on the server — misleading
+             and dangerous (could lead to an incorrect "we've sanitised
+             the table" assumption before exporting). "Reset everything"
+             covers the legitimate full-wipe case via resetState. -->
+
       </div>
     </div>
   `;
