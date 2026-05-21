@@ -323,6 +323,100 @@ const I18N = {
     severity: "Severity",
     type: "Type",
     reason: "Reason",
+
+    // --- PR B (floor i18n) -------------------------------------
+    // Route page titles — missing keys caused snake_case to render
+    // in the topbar for floor-facing pages (my_work, daily_count,
+    // resources, etc.). Labels mirror navItems.
+    my_work: "My Work",
+    work_management: "Work Management",
+    daily_count: "Daily Count",
+    weekly_count: "Weekly Count",
+    expiry_check: "Expiry Check",
+    bakery_transfers: "Bakery Transfers",
+    bakery_stock: "Bakery Stock",
+    bakery_purchases: "Bakery Purchases",
+    spend_report: "Spend Report",
+    account: "Account",
+    holidays: "Holidays",
+    resources: "Resources",
+    analytics: "Analytics",
+    deductions: "Deductions",
+    // Resources page
+    team_library: "Team Library",
+    resources_intro: "SOPs, training material, policies, and company resources for the floor. Tap a document to preview it or download it for offline reading.",
+    resources_intro_upload: " Anything you upload here lands in the shared Archive too.",
+    upload: "Upload",
+    all: "All",
+    res_cat_sops: "SOPs",
+    res_cat_training: "Training Material",
+    res_cat_company: "Company Resources",
+    res_cat_policies: "Policies",
+    res_empty_none: "No resources yet",
+    res_empty_section: "Nothing in this section yet",
+    res_empty_admin_cta: "Click Upload above to add the first SOP, manual, or training PDF — it'll show up here for the floor.",
+    res_empty_floor_msg: "Ask your admin to upload SOPs, training material, or policies — they'll show up here automatically.",
+    res_empty_browse: "Try another category or check back later.",
+    res_empty_upload_cta: "Upload your first resource",
+    // My Work page
+    my_work_intro: "Tasks assigned to you. Move a task forward by changing its status — it saves instantly.",
+    open: "Open",
+    overdue: "Overdue",
+    done: "Done",
+    todays_checklists: "Today's checklists",
+    view_compliance: "View Compliance",
+    loading_checklist_data: "Loading checklist data…",
+    branches_running_checklists: "branches running today's checklists.",
+    loading: "Loading…",
+    complete: "Complete",
+    no_items_yet: "No items yet.",
+    all_done_shift: "All done — nothing left for this shift.",
+    already_done_today: "already done today",
+    show: "show",
+    hide: "hide",
+    my_lists: "My Lists",
+    new_list: "New list",
+    no_lists_cta: "No lists yet. Click New list to add your first one — name it whatever you want, then add tasks and check them off.",
+    rename: "rename",
+    add_a_task: "Add a task and press Enter",
+    add: "Add",
+    no_items_add: "No items yet — add one below.",
+    all_done_pending: "All done — nothing pending.",
+    nothing_assigned: "Nothing assigned to you",
+    nothing_assigned_sub: "When operations or an admin assigns you a task, it shows up here and you'll get a bell reminder before it's due.",
+    task_col: "Task",
+    department_col: "Department",
+    priority_col: "Priority",
+    due_col: "Due",
+    status_col: "Status",
+    section_overdue: "Overdue",
+    section_to_do: "To do",
+    section_recently_done: "Recently done",
+    // Leave modal
+    leave_days: "Days",
+    leave_start_date: "Start date",
+    leave_end_date: "End date",
+    leave_reason_placeholder: "Optional notes for your manager...",
+    leave_type_annual: "Annual",
+    leave_type_sick: "Sick",
+    leave_type_personal: "Personal",
+    leave_dates_invalid: "End date must be on or after the start date.",
+    leave_submitted: "Leave request submitted",
+    // Attendance clock tile
+    att_today_label: "Today",
+    att_off_label: "Off",
+    att_off_today: "Off today",
+    att_offday_today: "Off-day today",
+    att_hours: "Hours",
+    att_done_for_today: "Done for today",
+    att_location_captured: "Location captured",
+    // Human-friendly error toasts (humanizeError fallbacks)
+    err_generic: "Something went wrong — please try again.",
+    err_network: "Network error. Check your connection and try again.",
+    err_permission: "You don't have permission to do that.",
+    err_duplicate: "That record already exists.",
+    err_not_found: "Record not found.",
+    err_validation: "Some fields are invalid — please review.",
   },
   ar: {
     login_welcome: "مرحبًا بك في",
@@ -401,6 +495,98 @@ const I18N = {
     severity: "الدرجة",
     type: "النوع",
     reason: "السبب",
+
+    // --- PR B (floor i18n) -------------------------------------
+    // Route titles
+    my_work: "مهامي",
+    work_management: "إدارة الأعمال",
+    daily_count: "الجرد اليومي",
+    weekly_count: "الجرد الأسبوعي",
+    expiry_check: "فحص الصلاحية",
+    bakery_transfers: "تحويلات المخبز",
+    bakery_stock: "مخزون المخبز",
+    bakery_purchases: "مشتريات المخبز",
+    spend_report: "تقرير المصروفات",
+    account: "الحساب",
+    holidays: "العطلات",
+    resources: "المراجع",
+    analytics: "التحليلات",
+    deductions: "الخصومات",
+    // Resources page
+    team_library: "مكتبة الفريق",
+    resources_intro: "إجراءات التشغيل القياسية، مواد التدريب، السياسات، وموارد الشركة للفروع. اضغط على المستند لمعاينته أو تنزيله للقراءة دون اتصال.",
+    resources_intro_upload: " أي ملف ترفعه هنا يُضاف إلى الأرشيف المشترك أيضًا.",
+    upload: "رفع",
+    all: "الكل",
+    res_cat_sops: "إجراءات التشغيل",
+    res_cat_training: "مواد التدريب",
+    res_cat_company: "موارد الشركة",
+    res_cat_policies: "السياسات",
+    res_empty_none: "لا توجد موارد بعد",
+    res_empty_section: "لا يوجد شيء في هذا القسم بعد",
+    res_empty_admin_cta: "اضغط رفع أعلاه لإضافة أول إجراء أو دليل أو ملف تدريبي — سيظهر هنا للفروع.",
+    res_empty_floor_msg: "اطلب من المدير رفع إجراءات التشغيل أو مواد التدريب أو السياسات — ستظهر هنا تلقائيًا.",
+    res_empty_browse: "جرّب قسمًا آخر أو عاود الزيارة لاحقًا.",
+    res_empty_upload_cta: "ارفع أول مورد",
+    // My Work page
+    my_work_intro: "المهام الموكلة إليك. غيّر الحالة لتحريك المهمة — يتم الحفظ فورًا.",
+    open: "مفتوحة",
+    overdue: "متأخرة",
+    done: "منجز",
+    todays_checklists: "قوائم التحقق لليوم",
+    view_compliance: "عرض الامتثال",
+    loading_checklist_data: "جاري تحميل بيانات قوائم التحقق…",
+    branches_running_checklists: "من الفروع تنفّذ قوائم التحقق اليوم.",
+    loading: "جاري التحميل…",
+    complete: "مكتمل",
+    no_items_yet: "لا توجد عناصر بعد.",
+    all_done_shift: "تم الانتهاء — لا يوجد شيء متبقٍ لهذه الوردية.",
+    already_done_today: "تم اليوم بالفعل",
+    show: "إظهار",
+    hide: "إخفاء",
+    my_lists: "قوائمي",
+    new_list: "قائمة جديدة",
+    no_lists_cta: "لا توجد قوائم بعد. اضغط قائمة جديدة لإضافة أول قائمة — سمّها كما تشاء، ثم أضف المهام واشطبها.",
+    rename: "إعادة تسمية",
+    add_a_task: "أضف مهمة واضغط Enter",
+    add: "إضافة",
+    no_items_add: "لا توجد عناصر بعد — أضف واحدًا في الأسفل.",
+    all_done_pending: "تم الانتهاء — لا يوجد شيء معلق.",
+    nothing_assigned: "لا توجد مهام موكلة إليك",
+    nothing_assigned_sub: "عند إسناد مهمة إليك من العمليات أو المدير، ستظهر هنا وستتلقى تنبيهًا قبل موعد التسليم.",
+    task_col: "المهمة",
+    department_col: "القسم",
+    priority_col: "الأولوية",
+    due_col: "تاريخ التسليم",
+    status_col: "الحالة",
+    section_overdue: "متأخرة",
+    section_to_do: "قيد التنفيذ",
+    section_recently_done: "أنجزت مؤخرًا",
+    // Leave modal
+    leave_days: "الأيام",
+    leave_start_date: "تاريخ البداية",
+    leave_end_date: "تاريخ النهاية",
+    leave_reason_placeholder: "ملاحظات اختيارية للمدير...",
+    leave_type_annual: "سنوية",
+    leave_type_sick: "مرضية",
+    leave_type_personal: "شخصية",
+    leave_dates_invalid: "يجب أن يكون تاريخ النهاية في يوم البداية أو بعده.",
+    leave_submitted: "تم تقديم طلب الإجازة",
+    // Attendance clock tile
+    att_today_label: "اليوم",
+    att_off_label: "إجازة",
+    att_off_today: "إجازة اليوم",
+    att_offday_today: "يوم إجازة",
+    att_hours: "ساعات",
+    att_done_for_today: "انتهت الوردية",
+    att_location_captured: "الموقع المُسجّل",
+    // Human-friendly error toasts
+    err_generic: "حدث خطأ — حاول مرة أخرى.",
+    err_network: "خطأ في الشبكة. تحقق من الاتصال وحاول مرة أخرى.",
+    err_permission: "ليست لديك صلاحية للقيام بذلك.",
+    err_duplicate: "هذا السجل موجود مسبقًا.",
+    err_not_found: "السجل غير موجود.",
+    err_validation: "بعض الحقول غير صحيحة — يرجى المراجعة.",
   }
 };
 const t = (key) => (I18N[state.settings.lang] && I18N[state.settings.lang][key]) || I18N.en[key] || key;
@@ -1600,6 +1786,35 @@ function toast(msg, type='info') {
   document.body.appendChild(t);
   setTimeout(()=>{ t.style.transition='opacity .2s'; t.style.opacity='0'; setTimeout(()=>t.remove(), 200); }, 2200);
 }
+// Convert a Supabase / Postgres error into a user-friendly string in
+// the active language. The raw `.message` field leaks codes like
+// "PGRST116" or "permission denied for table employees" — useless to
+// a barista. We map a handful of common cases and log the original
+// for the engineer; everything else falls back to a generic "try again"
+// in the active language. Pass either an Error / PostgrestError or a
+// plain string; returns a localised string ready for toast().
+function humanizeError(err, fallbackKey = 'err_generic') {
+  if (err == null) return t(fallbackKey);
+  const raw = typeof err === 'string' ? err : (err.message || err.error_description || err.error || '');
+  const code = (typeof err === 'object' && err.code) || '';
+  const lower = String(raw).toLowerCase();
+  // Log the real error so engineers can diagnose from the console.
+  if (typeof err === 'object') console.error('Supabase error:', err);
+  // PostgREST "no rows" / "multiple rows" when expecting one.
+  if (code === 'PGRST116' || lower.includes('json object requested')) return t('err_not_found');
+  // Permission denied / RLS violation.
+  if (code === '42501' || lower.includes('permission denied') || lower.includes('row-level security')) return t('err_permission');
+  // Unique constraint violation.
+  if (code === '23505' || lower.includes('duplicate key') || lower.includes('already exists')) return t('err_duplicate');
+  // Foreign key / check / not-null violation — surface as validation.
+  if (code === '23503' || code === '23514' || code === '23502'
+      || lower.includes('violates') || lower.includes('check constraint')
+      || lower.includes('null value')) return t('err_validation');
+  // Network / fetch failures (Supabase client wraps as TypeError "Failed to fetch").
+  if (lower.includes('failed to fetch') || lower.includes('network') || (err && err.name === 'TypeError')) return t('err_network');
+  // Anything else: generic toast. The detail is in the console.
+  return t(fallbackKey);
+}
 function getEmployee(id) { return state.employees.find(e => e.id===id); }
 function currentUser() {
   if (!state.session) return null;
@@ -1983,7 +2198,7 @@ function resetPasswordPrompt() {
     if (!email) { toast('Email required', 'error'); return false; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a valid email', 'error'); return false; }
     const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     toast('Reset link sent to ' + email, 'success');
     return true;
   }, { saveLabel: 'Send reset link' });
@@ -2160,8 +2375,8 @@ function renderShell(routeContent) {
         <span class="absolute top-1/2 -translate-y-1/2 ${lang==='ar'?'right-3':'left-3'} text-slate-400">${icon('search','w-4 h-4')}</span>
         <input id="topbar-search" placeholder="${escapeHTML(t('search'))}" class="input ${lang==='ar'?'pr-10':'pl-10'}" oninput="globalSearch(this.value)" />
       </div>
-      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm hidden sm:inline-flex" title="Language">
-        ${icon('globe','w-4 h-4')} ${lang==='en'?'AR':'EN'}
+      <button onclick="setLang('${lang==='en'?'ar':'en'}')" class="btn btn-ghost btn-sm inline-flex !px-2.5 sm:!px-3" title="Language" aria-label="Switch language">
+        ${icon('globe','w-4 h-4')} <span>${lang==='en'?'AR':'EN'}</span>
       </button>
       <div class="relative">
         <button class="relative p-2 rounded-lg hover:bg-slate-100 text-slate-600" onclick="toggleNotifications()" aria-label="Notifications">
@@ -3069,7 +3284,7 @@ function renderEmployees() {
 async function deleteEmployee(id) {
   if (!confirm(t('confirm_delete'))) return;
   const { error } = await sb.from('employees').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.employees = state.employees.filter(e => e.id!==id);
   delete state.leaveBalances[id];
   render();
@@ -3129,7 +3344,7 @@ function openTerminationModal(empId) {
       terminated_by: me.id,
     };
     const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     Object.assign(e, mapEmployeeFromDb(data));
     render();
     toast(`${escapeHTML(fullName)} terminated effective ${fmtDate(date)}`, 'success');
@@ -3142,7 +3357,7 @@ async function reinstateEmployee(empId) {
   if (!confirm(`Reinstate ${e.firstName} ${e.lastName||''}? Their account will be reactivated and they'll be able to log in again.`)) return;
   const updates = { status: 'active', termination_date: null, termination_reason: null, terminated_by: null };
   const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(e, mapEmployeeFromDb(data));
   render();
   toast(`${e.firstName} reinstated`, 'success');
@@ -3656,13 +3871,13 @@ function openEmployeeModal(id) {
     let savedId = editing?.id;
     if (editing) {
       const { data: row, error } = await sb.from('employees').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       const updated = mapEmployeeFromDb(row);
       Object.assign(editing, updated);
       toast('Employee updated', 'success');
     } else {
       const { data: row, error } = await sb.from('employees').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       const newE = mapEmployeeFromDb(row);
       state.employees.push(newE);
       state.leaveBalances[newE.id] = { annual: newE.leave_annual, sick: newE.leave_sick, personal: newE.leave_personal };
@@ -3927,7 +4142,7 @@ function renderAttendance() {
   const todayInfo = todaysShift(me.id);
   const isOffToday = todayInfo.off;
   const offDayLabels = (myEx.offDays||[]).map(i=>dayNames()[i]).join(', ') || '—';
-  const todayHoursLabel = isOffToday ? 'Off today' : `${todayInfo.start}–${todayInfo.end}`;
+  const todayHoursLabel = isOffToday ? t('att_off_today') : `${todayInfo.start}–${todayInfo.end}`;
   const clockTile = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-6">
       <div class="flex items-center justify-between gap-4 flex-wrap">
@@ -3938,9 +4153,9 @@ function renderAttendance() {
             <div class="text-2xl font-bold text-slate-900 mt-1">${escapeHTML(me.firstName+' '+me.lastName)}</div>
             <div class="text-sm text-slate-500">${escapeHTML(me.role)} • ${escapeHTML(me.department)}</div>
             <div class="text-xs text-slate-500 mt-1.5 flex items-center gap-3 flex-wrap">
-              <span class="inline-flex items-center gap-1">${icon('clock','w-3.5 h-3.5')} Today: ${escapeHTML(todayHoursLabel)}</span>
-              <span class="inline-flex items-center gap-1">${icon('calendar','w-3.5 h-3.5')} Off: ${escapeHTML(offDayLabels)}</span>
-              ${isOffToday ? '<span class="badge badge-blue">Off-day today</span>' : ''}
+              <span class="inline-flex items-center gap-1">${icon('clock','w-3.5 h-3.5')} ${escapeHTML(t('att_today_label'))}: ${escapeHTML(todayHoursLabel)}</span>
+              <span class="inline-flex items-center gap-1">${icon('calendar','w-3.5 h-3.5')} ${escapeHTML(t('att_off_label'))}: ${escapeHTML(offDayLabels)}</span>
+              ${isOffToday ? `<span class="badge badge-blue">${escapeHTML(t('att_offday_today'))}</span>` : ''}
             </div>
           </div>
         </div>
@@ -3954,15 +4169,15 @@ function renderAttendance() {
             <div class="text-2xl font-bold text-slate-900">${myToday?.clockOut || '—'}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-slate-500 uppercase tracking-wider">Hours</div>
+            <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('att_hours'))}</div>
             <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn && myToday?.clockOut ? minutesToHrs(diffMinutes(myToday.clockIn, myToday.clockOut))+'h' : '—'}</div>
           </div>
           ${!myToday ? `<button onclick="clockIn()" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
             : !myToday.clockOut ? `<button onclick="clockOut()" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
-            : `<div class="badge badge-green !px-4 !py-2">✓ Done for today</div>`}
+            : `<div class="badge badge-green !px-4 !py-2">✓ ${escapeHTML(t('att_done_for_today'))}</div>`}
         </div>
       </div>
-      ${myToday?.location ? `<div class="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500 flex items-center gap-1.5">${icon('pin','w-4 h-4')} Location captured: ${escapeHTML(myToday.location.label||'')} ${myToday.location.lat ? `(${myToday.location.lat.toFixed(4)}, ${myToday.location.lng.toFixed(4)})` : ''}</div>` : ''}
+      ${myToday?.location ? `<div class="mt-4 pt-4 border-t border-slate-100 text-xs text-slate-500 flex items-center gap-1.5">${icon('pin','w-4 h-4')} ${escapeHTML(t('att_location_captured'))}: ${escapeHTML(myToday.location.label||'')} ${myToday.location.lat ? `(${myToday.location.lat.toFixed(4)}, ${myToday.location.lng.toFixed(4)})` : ''}</div>` : ''}
     </div>
   `;
 
@@ -4233,7 +4448,7 @@ async function clockIn() {
     location_lat: location?.lat || null, location_lng: location?.lng || null, location_label: location?.label || null,
     branch_id: branch?.id || null,
   }).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.attendance.unshift(mapAttendanceFromDb(data));
   render();
   toast(
@@ -4251,7 +4466,7 @@ async function clockOut() {
   if (!rec) { toast('No clock-in found', 'error'); return; }
   const newOut = nowHHMM();
   const { data, error } = await sb.from('attendance').update({ clock_out: newOut }).eq('id', rec.id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(rec, mapAttendanceFromDb(data));
   render();
   toast('Clocked out — have a good rest!', 'success');
@@ -4348,34 +4563,41 @@ function balanceCard(label, remaining, total, color) {
 }
 function openLeaveModal() {
   const me = currentEmployee();
+  const today = todayISO();
+  // Browser-native min=today on the date pickers prevents retroactive
+  // leave submissions silently slipping through (P1 from the audit).
+  // We still validate server-side via the leave_requests CHECK
+  // constraint on leave_type (block 60) — but blocking past dates
+  // here surfaces the issue while the user is filling the form,
+  // not after they hit Save.
   const form = `
     <div class="grid grid-cols-2 gap-4">
-      <div><label class="label">Type</label>
+      <div><label class="label">${escapeHTML(t('type'))}</label>
         <select id="lv-type" class="input">
-          <option value="annual">Annual</option>
-          <option value="sick">Sick</option>
-          <option value="personal">Personal</option>
+          <option value="annual">${escapeHTML(t('leave_type_annual'))}</option>
+          <option value="sick">${escapeHTML(t('leave_type_sick'))}</option>
+          <option value="personal">${escapeHTML(t('leave_type_personal'))}</option>
         </select>
       </div>
-      <div><label class="label">Days</label><input id="lv-days" class="input" type="number" min="1" value="1" readonly></div>
-      <div><label class="label">Start date</label><input id="lv-start" class="input" type="date" value="${todayISO()}" oninput="calcLeaveDays()"></div>
-      <div><label class="label">End date</label><input id="lv-end" class="input" type="date" value="${todayISO()}" oninput="calcLeaveDays()"></div>
-      <div class="col-span-2"><label class="label">Reason</label><textarea id="lv-reason" class="input" rows="3" placeholder="Optional notes for your manager..."></textarea></div>
+      <div><label class="label">${escapeHTML(t('leave_days'))}</label><input id="lv-days" class="input" type="number" min="1" value="1" readonly></div>
+      <div><label class="label">${escapeHTML(t('leave_start_date'))}</label><input id="lv-start" class="input" type="date" min="${today}" value="${today}" oninput="calcLeaveDays()"></div>
+      <div><label class="label">${escapeHTML(t('leave_end_date'))}</label><input id="lv-end" class="input" type="date" min="${today}" value="${today}" oninput="calcLeaveDays()"></div>
+      <div class="col-span-2"><label class="label">${escapeHTML(t('reason'))}</label><textarea id="lv-reason" class="input" rows="3" placeholder="${escapeHTML(t('leave_reason_placeholder'))}"></textarea></div>
     </div>
   `;
   openModal(t('request_leave'), form, async () => {
     const start = $('#lv-start').value, end = $('#lv-end').value;
-    if (!start || !end || end<start) { toast('Invalid dates', 'error'); return false; }
+    if (!start || !end || end<start) { toast(t('leave_dates_invalid'), 'error'); return false; }
     const days = Math.max(1, Math.round((new Date(end) - new Date(start))/86400000)+1);
     const { data, error } = await sb.from('leave_requests').insert({
       employee_id: me.id, leave_type: $('#lv-type').value,
       start_date: start, end_date: end, days, reason: $('#lv-reason').value.trim(),
       status: 'pending'
     }).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     state.leaveRequests.unshift(mapLeaveFromDb(data));
     render();
-    toast('Leave request submitted', 'success');
+    toast(t('leave_submitted'), 'success');
     return true;
   });
   setTimeout(calcLeaveDays, 50);
@@ -4393,7 +4615,7 @@ async function decideLeave(id, decision) {
   // needing direct UPDATE on the employees table (balance decrement happens
   // server-side inside the function).
   const { data, error } = await sb.rpc('decide_leave_request', { p_id: id, p_decision: decision });
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   if (data) Object.assign(r, mapLeaveFromDb(data));
   if (decision==='approved') {
     // Refresh the employee row so in-memory balance matches the DB
@@ -4987,7 +5209,7 @@ function runPayroll() {
     const isDuplicate = state.payroll.some(p => p.period===ym);
     if (isDuplicate && !confirm(`Payroll for ${ym} already exists. This re-run keeps the original payslips and adds a new set with base, holiday overtime and any manual adjustments — advances and registered deductions already taken in the first run are NOT charged again. Continue?`)) return false;
     const { data, error } = await sb.from('payroll').insert(calc.rows).select();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     (data || []).forEach(r => state.payroll.unshift(mapPayrollFromDb(r)));
 
     // Persist advance bookkeeping (installments counter + repaid timestamp)
@@ -6129,7 +6351,7 @@ async function changeMyPassword() {
   const verify = await sb.auth.signInWithPassword({ email, password: cur });
   if (verify.error) { toast('Current password is incorrect', 'error'); return; }
   const { error } = await sb.auth.updateUser({ password: newPw });
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   $('#acc-current').value = '';
   $('#acc-new').value = '';
   $('#acc-confirm').value = '';
@@ -6364,12 +6586,12 @@ function openBranchModal(id) {
     const dbRow = branchToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('branches').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapBranchFromDb(row));
       toast('Branch updated', 'success');
     } else {
       const { data: row, error } = await sb.from('branches').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.branches.push(mapBranchFromDb(row));
       toast('Branch added — geofencing now active for clock-in', 'success');
     }
@@ -6382,7 +6604,7 @@ async function deleteBranch(id) {
   if (!b) return;
   if (!confirm(`Delete "${b.name}"? Existing attendance records linked to this branch will keep their location data.`)) return;
   const { error } = await sb.from('branches').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.branches = state.branches.filter(x => x.id!==id);
   render();
   toast('Branch deleted', 'success');
@@ -6410,7 +6632,7 @@ function handleStampUpload(ev) {
     const dataUrl = e.target.result;
     if (!state.companyId) { toast('Company record not loaded yet', 'error'); return; }
     const { error } = await sb.from('companies').update({ company_stamp: dataUrl }).eq('id', state.companyId);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
     state.companyStamp = dataUrl;
     render();
     toast('Company stamp uploaded — it will appear on all printed documents', 'success');
@@ -6421,7 +6643,7 @@ async function removeCompanyStamp() {
   if (!confirm('Remove the company stamp? Documents will print without it.')) return;
   if (!state.companyId) { toast('Company record not loaded yet', 'error'); return; }
   const { error } = await sb.from('companies').update({ company_stamp: null }).eq('id', state.companyId);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.companyStamp = '';
   render();
   toast('Company stamp removed', 'success');
@@ -6690,7 +6912,7 @@ async function saveSettings() {
     address_line3:       $('#set-addr3')?.value.trim() || null,
   };
   const { error } = await sb.from('companies').update(updates).eq('id', state.companyId);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.settings.companyName = updates.name;
   state.settings.workStart = updates.work_start;
   state.settings.workEnd = updates.work_end;
@@ -6712,7 +6934,7 @@ async function resetUserPassword(uid_) {
   if (!emp) return;
   if (!emp.email) { toast('No email on record', 'error'); return; }
   const { error } = await sb.auth.resetPasswordForEmail(emp.email, { redirectTo: window.location.origin });
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   toast(`Reset link sent to ${emp.email}`, 'success');
 }
 async function toggleAdmin(uid_) {
@@ -6731,7 +6953,7 @@ async function toggleAdmin(uid_) {
   }
   const newRole = emp.isAdmin ? 'employee' : 'admin';
   const { data, error } = await sb.from('employees').update({ system_role: newRole }).eq('id', emp.id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(emp, mapEmployeeFromDb(data));
   render();
   toast(`${emp.firstName} is now ${newRole==='admin'?'an admin':'an employee'}`, 'success');
@@ -7066,7 +7288,7 @@ function openWarningModal() {
     };
     if (!w.employeeId || !w.reason) { toast('Employee and reason are required', 'error'); return false; }
     const { data, error } = await sb.from('warnings').insert(warningToDb(w)).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     const saved = mapWarningFromDb(data);
     state.warnings.unshift(saved);
     render();
@@ -7078,7 +7300,7 @@ function openWarningModal() {
 async function deleteWarning(id) {
   if (!confirm('Delete this warning record? This action cannot be undone.')) return;
   const { error } = await sb.from('warnings').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.warnings = state.warnings.filter(w => w.id !== id);
   render();
   toast('Warning deleted', 'success');
@@ -7591,7 +7813,7 @@ function openAdvanceModal() {
     if (!reason) { toast('Please provide a reason', 'error'); return false; }
     const payload = advanceToDb({ employeeId: empId, amount, reason, status: 'pending', deductFromPayroll: deduct });
     const { data, error } = await sb.from('advances').insert(payload).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     const saved = mapAdvanceFromDb(data);
     state.advances.unshift(saved);
     render();
@@ -7606,7 +7828,7 @@ async function decideAdvance(id, decision) {
   const me = currentEmployee();
   const updates = { status: decision, decided_by: me.id, decided_at: todayISO() };
   const { data, error } = await sb.from('advances').update(updates).eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(a, mapAdvanceFromDb(data));
   render();
   toast(`Advance ${decision}`, 'success');
@@ -7616,7 +7838,7 @@ async function markAdvanceRepaid(id) {
   const a = state.advances.find(x => x.id===id);
   if (!a) return;
   const { data, error } = await sb.from('advances').update({ repaid_at: todayISO() }).eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(a, mapAdvanceFromDb(data));
   render();
   toast('Marked as repaid', 'success');
@@ -7740,7 +7962,7 @@ async function createTodoList(name) {
     sortOrder: (state.todoLists||[]).filter(l=>l.ownerId===me.id).length,
   });
   const { data, error } = await sb.from('personal_todo_lists').insert(row).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.todoLists.push(mapTodoListFromDb(data));
   render();
 }
@@ -7752,7 +7974,7 @@ async function renameTodoList(id, name) {
   const { data, error } = await sb.from('personal_todo_lists')
     .update({ name: trimmed, updated_at: new Date().toISOString() })
     .eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
   render();
 }
@@ -7761,7 +7983,7 @@ async function deleteTodoList(id) {
   if (!list) return;
   if (!confirm(`Delete the list "${list.name}"? Items in it will be lost.`)) return;
   const { error } = await sb.from('personal_todo_lists').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.todoLists = state.todoLists.filter(l=>l.id!==id);
   todoShowDone.delete(id);
   render();
@@ -7778,7 +8000,7 @@ async function addTodoItem(listId, text) {
   const { data, error } = await sb.from('personal_todo_lists')
     .update({ items: newItems, updated_at: new Date().toISOString() })
     .eq('id', listId).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
   render();
 }
@@ -7792,7 +8014,7 @@ async function toggleTodoItem(listId, itemId) {
   const { data, error } = await sb.from('personal_todo_lists')
     .update({ items: newItems, updated_at: new Date().toISOString() })
     .eq('id', listId).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
   render();
 }
@@ -7803,7 +8025,7 @@ async function deleteTodoItem(listId, itemId) {
   const { data, error } = await sb.from('personal_todo_lists')
     .update({ items: newItems, updated_at: new Date().toISOString() })
     .eq('id', listId).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
   render();
 }
@@ -7931,25 +8153,29 @@ function renderWorkTasks() {
           <table class="data">
             <thead><tr><th>Task</th><th>Assignee</th><th>Priority</th><th>Due</th><th>Status</th><th class="!text-end">Actions</th></tr></thead>
             <tbody>
-              ${byDept[dept].map(t => {
-                const e = getEmployee(t.assignedTo);
-                const pr = TASK_PRIORITIES[t.priority] || TASK_PRIORITIES.normal;
+              ${(()=>{ const overdueLbl = t('overdue'); return byDept[dept].map(tk => {
+                const e = getEmployee(tk.assignedTo);
+                const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
+                const isOver = taskOverdue(tk);
                 return `
-                <tr class="hover-row ${taskOverdue(t)?'bg-rose-50/40':''}">
+                <tr class="hover-row ${isOver?'bg-rose-50/40':''}">
                   <td>
-                    <div class="font-medium text-slate-900">${escapeHTML(t.title)}</div>
-                    ${t.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(t.description)}</div>` : ''}
+                    <div class="font-medium text-slate-900 flex items-center gap-2 flex-wrap">
+                      ${isOver?`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3 h-3')} ${escapeHTML(overdueLbl)}</span>`:''}
+                      <span>${escapeHTML(tk.title)}</span>
+                    </div>
+                    ${tk.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(tk.description)}</div>` : ''}
                   </td>
                   <td>${e ? `<div class="flex items-center gap-2">${avatarHTML(e,24)}<span class="text-sm text-slate-700">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></div>` : '<span class="text-xs text-slate-400">Unassigned</span>'}</td>
                   <td><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></td>
-                  <td class="text-sm whitespace-nowrap">${taskDueLabel(t)}</td>
-                  <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${t.id}', this.value)">${statusOpts(t)}</select></td>
+                  <td class="text-sm whitespace-nowrap">${taskDueLabel(tk)}</td>
+                  <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${tk.id}', this.value)">${statusOpts(tk)}</select></td>
                   <td class="!text-end whitespace-nowrap">
-                    <button onclick="openTaskModal('${t.id}')" aria-label="Edit task" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-                    <button onclick="deleteTask('${t.id}')" aria-label="Delete task" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                    <button onclick="openTaskModal('${tk.id}')" aria-label="Edit task" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+                    <button onclick="deleteTask('${tk.id}')" aria-label="Delete task" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                   </td>
                 </tr>`;
-              }).join('')}
+              }).join(''); })()}
             </tbody>
           </table>
         </div>
@@ -8016,12 +8242,12 @@ function openTaskModal(id) {
     const dbRow = taskToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('tasks').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapTaskFromDb(row));
       toast('Task updated', 'success');
     } else {
       const { data: row, error } = await sb.from('tasks').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.tasks.unshift(mapTaskFromDb(row));
       toast('Task created', 'success');
     }
@@ -8036,7 +8262,7 @@ async function changeTaskStatus(id, status) {
   const { data, error } = await sb.from('tasks')
     .update({ status, completed_at: completedAt, updated_at: new Date().toISOString() })
     .eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); render(); return; }
+  if (error) { toast(humanizeError(error), 'error'); render(); return; }
   Object.assign(t, mapTaskFromDb(data));
   render();
   toast(`Marked ${TASK_STATUSES[status].label}`, 'success');
@@ -8047,7 +8273,7 @@ async function deleteTask(id) {
   if (!t) return;
   if (!confirm(`Delete the task "${t.title}"?`)) return;
   const { error } = await sb.from('tasks').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.tasks = state.tasks.filter(x => x.id !== id);
   render();
   toast('Task deleted', 'success');
@@ -8115,14 +8341,14 @@ function renderMyWork() {
       <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
       <div class="relative">
         <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${escapeHTML((me.firstName+' '+(me.lastName||'')).trim())}</div>
-        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">My Work</h2>
-        <p class="text-slate-500 mt-1 text-sm max-w-xl">Tasks assigned to you. Move a task forward by changing its status — it saves instantly.</p>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('my_work'))}</h2>
+        <p class="text-slate-500 mt-1 text-sm max-w-xl">${escapeHTML(t('my_work_intro'))}</p>
       </div>
     </div>
     <div class="grid grid-cols-3 gap-4 mb-5">
-      ${miniStat('Open', mine.filter(t=>t.status!=='done').length, 'check', 'blue')}
-      ${miniStat('Overdue', overdue.length, 'warning', overdue.length?'red':'green')}
-      ${miniStat('Done', mine.filter(t=>t.status==='done').length, 'check', 'green')}
+      ${miniStat(t('open'), mine.filter(tk=>tk.status!=='done').length, 'check', 'blue')}
+      ${miniStat(t('overdue'), overdue.length, 'warning', overdue.length?'red':'green')}
+      ${miniStat(t('done'), mine.filter(tk=>tk.status==='done').length, 'check', 'green')}
     </div>`;
 
   // Branch staff also complete their own branch's checklists right
@@ -8151,14 +8377,14 @@ function renderMyWork() {
       }).length;
       clSection = `<div class="mb-6">
         <div class="flex items-center justify-between gap-2 mb-2 mt-2">
-          <h3 class="font-display text-base font-semibold text-slate-900">Today's checklists</h3>
-          <a href="#/work_management" onclick="workMgmtTab='compliance'" class="text-xs text-brand-600 hover:underline">View Compliance →</a>
+          <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('todays_checklists'))}</h3>
+          <a href="#/work_management" onclick="workMgmtTab='compliance'" class="text-xs text-brand-600 hover:underline">${escapeHTML(t('view_compliance'))} →</a>
         </div>
         <div class="bg-white rounded-2xl shadow-card p-4 flex items-center gap-3 text-sm text-slate-600">
           <span class="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">${icon('check','w-4 h-4')}</span>
           ${anyLoading
-            ? '<span class="text-slate-400">Loading checklist data…</span>'
-            : `<span><strong class="text-slate-900">${branchesRunning}</strong> of ${coffeeBranches.length} branches running today's checklists.</span>`}
+            ? `<span class="text-slate-400">${escapeHTML(t('loading_checklist_data'))}</span>`
+            : `<span><strong class="text-slate-900">${branchesRunning}</strong> / ${coffeeBranches.length} ${escapeHTML(t('branches_running_checklists'))}</span>`}
         </div>
       </div>`;
     }
@@ -8169,11 +8395,20 @@ function renderMyWork() {
     const ckey = dcCacheKey(myBranch, cym);
     const actives = (state.checklists||[]).filter(c=>c.active).slice()
       .sort((a,b)=>(a.sortOrder-b.sortOrder) || (a.title||'').localeCompare(b.title||''));
-    const head = `<div class="flex items-center gap-2 mb-2 mt-2"><h3 class="font-display text-base font-semibold text-slate-900">Today's checklists</h3><span class="badge badge-blue">${escapeHTML(myBranch)}</span></div>`;
+    const head = `<div class="flex items-center gap-2 mb-2 mt-2"><h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('todays_checklists'))}</h3><span class="badge badge-blue">${escapeHTML(myBranch)}</span></div>`;
+    // Pre-translate strings used inside the inner `.map(c => …)` —
+    // i18n's t() function is still accessible by closure here (no
+    // shadowing yet, but precomputing keeps the inner template tight).
+    const cl_complete       = t('complete');
+    const cl_no_items       = t('no_items_yet');
+    const cl_all_done_shift = t('all_done_shift');
+    const cl_already_done   = t('already_done_today');
+    const cl_show           = t('show');
+    const cl_hide           = t('hide');
     if (actives.length) {
       if (!state.checklistRunsCache[ckey]) {
         loadChecklistRuns(myBranch, cym);
-        clSection = `<div class="mb-6">${head}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-400 text-sm">Loading…</div></div>`;
+        clSection = `<div class="mb-6">${head}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-400 text-sm">${escapeHTML(t('loading'))}</div></div>`;
       } else {
         const ccards = actives.map(c => {
           const run = checklistRunFor(c.id, myBranch, ctoday);
@@ -8185,12 +8420,12 @@ function renderMyWork() {
           const cAll = ctotal>0 && cdone===ctotal;
           return `<div class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
             <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
-              <div class="flex items-center gap-2"><h4 class="font-semibold text-slate-900">${escapeHTML(c.title)}</h4>${c.department?`<span class="badge badge-blue">${escapeHTML(c.department)}</span>`:''}${cAll?`<span class="badge badge-green">Complete</span>`:''}</div>
+              <div class="flex items-center gap-2"><h4 class="font-semibold text-slate-900">${escapeHTML(c.title)}</h4>${c.department?`<span class="badge badge-blue">${escapeHTML(c.department)}</span>`:''}${cAll?`<span class="badge badge-green">${escapeHTML(cl_complete)}</span>`:''}</div>
               <div class="text-xs text-slate-500">${cdone}/${ctotal} · ${cpct}%</div>
             </div>
             <div class="h-1.5 bg-slate-100"><div class="h-full ${cAll?'bg-emerald-500':'bg-brand-500'}" style="width:${cpct}%"></div></div>
             <div class="divide-y divide-slate-50">
-              ${ctotal===0?`<div class="p-4 text-sm text-slate-400">No items yet.</div>`:(()=>{
+              ${ctotal===0?`<div class="p-4 text-sm text-slate-400">${escapeHTML(cl_no_items)}</div>`:(()=>{
                 const pend = items.filter(it=>!(st[it.id]&&st[it.id].done));
                 const dn   = items.filter(it=> (st[it.id]&&st[it.id].done));
                 const btn=(it,ch)=>`<button type="button" onclick="toggleChecklistItem('${c.id}','${myBranch}','${ctoday}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50">
@@ -8198,8 +8433,8 @@ function renderMyWork() {
                   <span class="flex-1 text-sm ${ch?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
                 </button>`;
                 const shown=clShowDone.has(c.id);
-                return (pend.length?pend.map(it=>btn(it,false)).join(''):`<div class="p-4 text-sm text-emerald-600">All done — nothing left for this shift.</div>`)
-                  + (dn.length?`<button type="button" onclick="clToggleDone('${c.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${dn.length} already done today · ${shown?'hide':'show'}</button>`+(shown?dn.map(it=>btn(it,true)).join(''):''):'');
+                return (pend.length?pend.map(it=>btn(it,false)).join(''):`<div class="p-4 text-sm text-emerald-600">${escapeHTML(cl_all_done_shift)}</div>`)
+                  + (dn.length?`<button type="button" onclick="clToggleDone('${c.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${dn.length} ${escapeHTML(cl_already_done)} · ${shown?escapeHTML(cl_hide):escapeHTML(cl_show)}</button>`+(shown?dn.map(it=>btn(it,true)).join(''):''):'');
               })()}
             </div>
           </div>`;
@@ -8220,12 +8455,23 @@ function renderMyWork() {
       .slice()
       .sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.createdAt||'').localeCompare(b.createdAt||''));
     const tHead = `<div class="flex items-center justify-between gap-2 mb-2 mt-2">
-      <h3 class="font-display text-base font-semibold text-slate-900">My Lists</h3>
-      <button onclick="promptNewTodoList()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} New list</button>
+      <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('my_lists'))}</h3>
+      <button onclick="promptNewTodoList()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('new_list'))}</button>
     </div>`;
     if (myLists.length === 0) {
-      todoSection = `<div class="mb-6">${tHead}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-500 text-sm">No lists yet. Click <strong>New list</strong> to add your first one — name it whatever you want, then add tasks and check them off.</div></div>`;
+      todoSection = `<div class="mb-6">${tHead}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-500 text-sm">${escapeHTML(t('no_lists_cta'))}</div></div>`;
     } else {
+      // Pre-translate the strings used inside the inner .map(l => …)
+      // so we only call t() once each, not per card.
+      const td_done           = t('done');
+      const td_rename         = t('rename');
+      const td_delete         = t('delete');
+      const td_no_items_add   = t('no_items_add');
+      const td_all_done_pend  = t('all_done_pending');
+      const td_show           = t('show');
+      const td_hide           = t('hide');
+      const td_add_task_ph    = t('add_a_task');
+      const td_add            = t('add');
       // No per-item delete: users either check items off (done items
       // collapse via todoShowDone) or delete the whole list. Keeps the
       // row dense and mirrors how the checklist UI handles "remove".
@@ -8246,26 +8492,26 @@ function renderMyWork() {
           <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
             <div class="flex items-center gap-2 min-w-0">
               <h4 class="font-semibold text-slate-900 truncate">${escapeHTML(l.name)}</h4>
-              ${allDone?'<span class="badge badge-green">Done</span>':''}
+              ${allDone?`<span class="badge badge-green">${escapeHTML(td_done)}</span>`:''}
             </div>
             <div class="flex items-center gap-3 text-xs">
               <span class="text-slate-500 tabular-nums">${doneCount}/${total} · ${pct}%</span>
-              <button onclick="promptRenameTodoList('${l.id}')" class="text-slate-500 hover:text-brand-700 hover:underline">rename</button>
-              <button onclick="deleteTodoList('${l.id}')" class="text-rose-500 hover:underline">delete</button>
+              <button onclick="promptRenameTodoList('${l.id}')" class="text-slate-500 hover:text-brand-700 hover:underline">${escapeHTML(td_rename)}</button>
+              <button onclick="deleteTodoList('${l.id}')" class="text-rose-500 hover:underline">${escapeHTML(td_delete)}</button>
             </div>
           </div>
           <div class="h-1.5 bg-slate-100"><div class="h-full ${allDone?'bg-emerald-500':'bg-brand-500'}" style="width:${pct}%"></div></div>
           <div class="divide-y divide-slate-50">
             ${pending.length
               ? pending.map(it=>itemRow(l.id,it,false)).join('')
-              : `<div class="p-4 text-sm ${total===0?'text-slate-400':'text-emerald-600'}">${total===0?'No items yet — add one below.':'All done — nothing pending.'}</div>`}
+              : `<div class="p-4 text-sm ${total===0?'text-slate-400':'text-emerald-600'}">${escapeHTML(total===0?td_no_items_add:td_all_done_pend)}</div>`}
             ${done.length
-              ? `<button type="button" onclick="todoToggleDone('${l.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${done.length} done · ${shown?'hide':'show'}</button>${shown ? done.map(it=>itemRow(l.id,it,true)).join('') : ''}`
+              ? `<button type="button" onclick="todoToggleDone('${l.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${done.length} ${escapeHTML(td_done)} · ${shown?escapeHTML(td_hide):escapeHTML(td_show)}</button>${shown ? done.map(it=>itemRow(l.id,it,true)).join('') : ''}`
               : ''}
           </div>
           <form class="p-3 border-t border-slate-100 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('input'); addTodoItem('${l.id}', i.value); i.value='';">
-            <input class="input flex-1" placeholder="Add a task and press Enter" maxlength="500" />
-            <button type="submit" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add</button>
+            <input class="input flex-1" placeholder="${escapeHTML(td_add_task_ph)}" maxlength="500" />
+            <button type="submit" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(td_add)}</button>
           </form>
         </div>`;
       }).join('');
@@ -8277,26 +8523,41 @@ function renderMyWork() {
     return header + (clSection || todoSection ? (clSection + todoSection) : `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
-        <div class="font-display text-lg font-semibold text-slate-900">Nothing assigned to you</div>
-        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">When operations or an admin assigns you a task, it shows up here and you'll get a bell reminder before it's due.</div>
+        <div class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('nothing_assigned'))}</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">${escapeHTML(t('nothing_assigned_sub'))}</div>
       </div>`);
   }
 
-  const statusOpts = t => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${t.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
-  const rows = list => list.map(t => {
-    const pr = TASK_PRIORITIES[t.priority] || TASK_PRIORITIES.normal;
+  // Pre-translate strings used inside `rows = list => list.map(tk => …)`
+  // — the `tk` parameter is a task and would shadow our i18n `t()`
+  // function inside the arrow body. Same defensive precompute pattern
+  // applied above for the checklists / My Lists inner maps.
+  const tbl_dept_dash = '—';  // unchanged glyph
+  const task_overdue_label = t('overdue');
+  const statusOpts = tk => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${tk.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
+  const rows = list => list.map(tk => {
+    const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
+    const isOver = taskOverdue(tk);
     return `
-    <tr class="hover-row ${taskOverdue(t)?'bg-rose-50/40':''}">
+    <tr class="hover-row ${isOver?'bg-rose-50/40':''}">
       <td>
-        <div class="font-medium text-slate-900">${escapeHTML(t.title)}</div>
-        ${t.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(t.description)}</div>` : ''}
+        <div class="font-medium text-slate-900 flex items-center gap-2 flex-wrap">
+          ${isOver?`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3 h-3')} ${escapeHTML(task_overdue_label)}</span>`:''}
+          <span>${escapeHTML(tk.title)}</span>
+        </div>
+        ${tk.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(tk.description)}</div>` : ''}
       </td>
-      <td class="text-sm text-slate-600">${escapeHTML(t.department||'—')}</td>
+      <td class="text-sm text-slate-600">${escapeHTML(tk.department||tbl_dept_dash)}</td>
       <td><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></td>
-      <td class="text-sm whitespace-nowrap">${taskDueLabel(t)}</td>
-      <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${t.id}', this.value)">${statusOpts(t)}</select></td>
+      <td class="text-sm whitespace-nowrap">${taskDueLabel(tk)}</td>
+      <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${tk.id}', this.value)">${statusOpts(tk)}</select></td>
     </tr>`;
   }).join('');
+  const tbl_h_task   = t('task_col');
+  const tbl_h_dept   = t('department_col');
+  const tbl_h_prio   = t('priority_col');
+  const tbl_h_due    = t('due_col');
+  const tbl_h_status = t('status_col');
   const section = (title, list, tone) => list.length ? `
     <div class="mb-6">
       <div class="flex items-center gap-2 mb-2">
@@ -8306,7 +8567,7 @@ function renderMyWork() {
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
         <div class="overflow-x-auto">
           <table class="data">
-            <thead><tr><th>Task</th><th>Department</th><th>Priority</th><th>Due</th><th>Status</th></tr></thead>
+            <thead><tr><th>${escapeHTML(tbl_h_task)}</th><th>${escapeHTML(tbl_h_dept)}</th><th>${escapeHTML(tbl_h_prio)}</th><th>${escapeHTML(tbl_h_due)}</th><th>${escapeHTML(tbl_h_status)}</th></tr></thead>
             <tbody>${rows(list)}</tbody>
           </table>
         </div>
@@ -8314,9 +8575,9 @@ function renderMyWork() {
     </div>` : '';
 
   return header
-    + section('Overdue', overdue, 'text-rose-700')
-    + section('To do', active, null)
-    + section('Recently done', done, 'text-slate-500')
+    + section(t('section_overdue'),       overdue, 'text-rose-700')
+    + section(t('section_to_do'),         active,  null)
+    + section(t('section_recently_done'), done,    'text-slate-500')
     + clSection
     + todoSection;
 }
@@ -8469,7 +8730,7 @@ async function toggleChecklistItem(checklistId, branch, date, itemId) {
   };
   const { data, error } = await sb.from('checklist_runs')
     .upsert(payload, { onConflict: 'checklist_id,branch,run_date' }).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   const mapped = mapChecklistRunFromDb(data);
   const arr = state.checklistRunsCache[key] || (state.checklistRunsCache[key] = []);
   const i = arr.findIndex(r => r.checklistId === checklistId && r.branch === branch && r.runDate === date);
@@ -8537,12 +8798,12 @@ function openChecklistModal(id) {
     const dbRow = checklistToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('checklists').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapChecklistFromDb(row));
       toast('Checklist updated', 'success');
     } else {
       const { data: row, error } = await sb.from('checklists').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.checklists.push(mapChecklistFromDb(row));
       toast('Checklist created', 'success');
     }
@@ -8556,7 +8817,7 @@ async function deleteChecklist(id) {
   if (!c) return;
   if (!confirm(`Delete the checklist "${c.title}"? All its saved daily progress will also be removed.`)) return;
   const { error } = await sb.from('checklists').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.checklists = state.checklists.filter(x => x.id !== id);
   // Server cascades checklist_runs; mirror locally so cached months
   // don't keep stale runs for the deleted checklist.
@@ -8920,12 +9181,12 @@ function openDeductionModal(id) {
     });
     if (editing) {
       const { data, error } = await sb.from('deductions').update(payload).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapDeductionFromDb(data));
       toast('Deduction updated', 'success');
     } else {
       const { data, error } = await sb.from('deductions').insert(payload).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       const saved = mapDeductionFromDb(data);
       state.deductions.unshift(saved);
       toast('Deduction registered', 'success');
@@ -8942,7 +9203,7 @@ async function cancelDeduction(id) {
   if (!d || d.status!=='pending') return;
   if (!confirm(`Cancel this ${fmtMoney(d.amount)} deduction? It will NOT be subtracted from payroll. The record is kept (marked Cancelled) for audit.`)) return;
   const { data, error } = await sb.from('deductions').update({ status:'cancelled' }).eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(d, mapDeductionFromDb(data));
   render();
   toast('Deduction cancelled', 'success');
@@ -8953,7 +9214,7 @@ async function deleteDeduction(id) {
   if (d.status==='applied') { toast('Applied deductions cannot be deleted — the payslip already reflects it', 'error'); return; }
   if (!confirm(`Delete this ${fmtMoney(d.amount)} deduction record permanently?`)) return;
   const { error } = await sb.from('deductions').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.deductions = state.deductions.filter(x => x.id !== id);
   render();
   toast('Deduction deleted', 'success');
@@ -9170,7 +9431,7 @@ function openCertificateModal(type) {
     };
     if (!c.employeeId || !c.title) { toast('Recipient and title required', 'error'); return false; }
     const { data, error } = await sb.from('certificates').insert(certificateToDb(c)).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     const saved = mapCertificateFromDb(data);
     state.certificates.unshift(saved);
     render();
@@ -9182,7 +9443,7 @@ function openCertificateModal(type) {
 async function deleteCertificate(id) {
   if (!confirm('Delete this certificate?')) return;
   const { error } = await sb.from('certificates').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.certificates = state.certificates.filter(c => c.id !== id);
   render();
   toast('Certificate deleted', 'success');
@@ -9534,11 +9795,13 @@ function renderResources() {
     .slice()
     .sort((a,b)=> (b.uploadedAt||'').localeCompare(a.uploadedAt||''));
   const filtered = resourcesFilter==='all' ? docs : docs.filter(d=>d.category===resourcesFilter);
+  // Labels go through t() so the Arabic UI shows Arabic chips & card
+  // category badges; icons are language-independent.
   const cats = {
-    'sop':              { label: 'SOPs',                icon: 'shield' },
-    'training':         { label: 'Training Material',   icon: 'file' },
-    'company_resource': { label: 'Company Resources',   icon: 'building' },
-    'policy':           { label: 'Policies',            icon: 'shield' },
+    'sop':              { label: t('res_cat_sops'),     icon: 'shield' },
+    'training':         { label: t('res_cat_training'), icon: 'file' },
+    'company_resource': { label: t('res_cat_company'),  icon: 'building' },
+    'policy':           { label: t('res_cat_policies'), icon: 'shield' },
   };
   const counts = Object.fromEntries(RESOURCES_CATEGORIES.map(k => [k, docs.filter(d=>d.category===k).length]));
 
@@ -9552,16 +9815,16 @@ function renderResources() {
       <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #a87035 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('shield','w-3.5 h-3.5')} Team Library</div>
-          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Resources</h2>
-          <p class="text-slate-500 mt-1 text-sm max-w-xl">SOPs, training material, policies, and company resources for the floor. Tap a document to preview it or download it for offline reading.${canUpload?' Anything you upload here lands in the shared Archive too.':''}</p>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('shield','w-3.5 h-3.5')} ${escapeHTML(t('team_library'))}</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('resources'))}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">${escapeHTML(t('resources_intro'))}${canUpload?escapeHTML(t('resources_intro_upload')):''}</p>
         </div>
-        ${canUpload ? `<button onclick="openResourcesUploadModal()" class="btn btn-primary">${icon('upload','w-4 h-4')} Upload</button>` : ''}
+        ${canUpload ? `<button onclick="openResourcesUploadModal()" class="btn btn-primary">${icon('upload','w-4 h-4')} ${escapeHTML(t('upload'))}</button>` : ''}
       </div>
     </div>
 
     <div class="flex flex-wrap gap-2 mb-5">
-      <button onclick="resourcesFilter='all'; render();" class="btn btn-sm ${resourcesFilter==='all'?'btn-primary':'btn-ghost'}">All <span class="ml-1 opacity-70">${docs.length}</span></button>
+      <button onclick="resourcesFilter='all'; render();" class="btn btn-sm ${resourcesFilter==='all'?'btn-primary':'btn-ghost'}">${escapeHTML(t('all'))} <span class="ml-1 opacity-70">${docs.length}</span></button>
       ${Object.entries(cats).map(([k,c]) => `
         <button onclick="resourcesFilter='${k}'; render();" class="btn btn-sm ${resourcesFilter===k?'btn-primary':'btn-ghost'}">${escapeHTML(c.label)} <span class="ml-1 opacity-70">${counts[k]||0}</span></button>
       `).join('')}
@@ -9570,11 +9833,11 @@ function renderResources() {
     ${filtered.length === 0 ? `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('shield','w-8 h-8')}</div>
-        <h3 class="font-display text-lg font-semibold text-slate-900">${docs.length===0?'No resources yet':'Nothing in this section yet'}</h3>
-        <p class="text-sm text-slate-500 mt-1">${docs.length===0
-          ? (canUpload ? 'Click <strong>Upload</strong> above to add the first SOP, manual, or training PDF — it\'ll show up here for the floor.' : 'Ask your admin to upload SOPs, training material, or policies — they\'ll show up here automatically.')
-          : 'Try another category or check back later.'}</p>
-        ${canUpload && docs.length===0 ? `<button onclick="openResourcesUploadModal()" class="btn btn-primary mt-4">${icon('upload','w-4 h-4')} Upload your first resource</button>` : ''}
+        <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(docs.length===0?t('res_empty_none'):t('res_empty_section'))}</h3>
+        <p class="text-sm text-slate-500 mt-1">${escapeHTML(docs.length===0
+          ? (canUpload ? t('res_empty_admin_cta') : t('res_empty_floor_msg'))
+          : t('res_empty_browse'))}</p>
+        ${canUpload && docs.length===0 ? `<button onclick="openResourcesUploadModal()" class="btn btn-primary mt-4">${icon('upload','w-4 h-4')} ${escapeHTML(t('res_empty_upload_cta'))}</button>` : ''}
       </div>
     ` : `
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -9686,7 +9949,7 @@ function openArchiveUploadModal(opts = {}) {
       dataUrl: _archiveFile.dataUrl, uploadedBy: me.id,
     });
     const { data, error } = await sb.from('archive_documents').insert(payload).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     state.archive.unshift(mapArchiveFromDb(data));
     _archiveFile = null;
     render();
@@ -9895,7 +10158,7 @@ async function previewArchiveDoc(id) {
 async function deleteArchiveDoc(id) {
   if (!confirm('Delete this document permanently?')) return;
   const { error } = await sb.from('archive_documents').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.archive = state.archive.filter(d => d.id !== id);
   render();
   toast('Document deleted', 'success');
@@ -10745,12 +11008,12 @@ function openAssetModal(id) {
     const dbRow = assetToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('assets').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapAssetFromDb(row));
       toast('Asset updated', 'success');
     } else {
       const { data: row, error } = await sb.from('assets').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.assets.push(mapAssetFromDb(row));
       toast('Asset added', 'success');
     }
@@ -10768,7 +11031,7 @@ async function deleteAsset(id) {
     : `Delete asset "${a.name}"?`;
   if (!confirm(msg)) return;
   const { error } = await sb.from('assets').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.assets = state.assets.filter(x => x.id !== id);
   // FK is ON DELETE SET NULL on the server; mirror that locally.
   (state.maintenance||[]).forEach(r => { if (r.assetId === id) r.assetId = null; });
@@ -10881,9 +11144,9 @@ function renderMaintenance() {
             // thumb (pre-migration row) → placeholder button that still
             // fetches the full on click. Neither → nothing.
             const photoBtn = thumbUrl
-              ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-slate-200 hover:border-brand-400 transition" title="View photo"><img src="${thumbUrl}" alt="" class="w-full h-full object-cover"/></button>`
+              ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-slate-200 hover:border-brand-400 transition" title="View photo" aria-label="View maintenance photo"><img src="${thumbUrl}" alt="" class="w-full h-full object-cover"/></button>`
               : r.hasPhoto
-                ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg border border-slate-200 hover:border-brand-400 transition bg-slate-50 text-slate-400 hover:text-brand-600 flex items-center justify-center" title="View photo (not preloaded)">${icon('eye','w-5 h-5')}</button>`
+                ? `<button type="button" onclick="previewMaintenancePhoto('${r.id}')" class="shrink-0 w-14 h-14 rounded-lg border border-slate-200 hover:border-brand-400 transition bg-slate-50 text-slate-400 hover:text-brand-600 flex items-center justify-center" title="View photo (not preloaded)" aria-label="View maintenance photo">${icon('eye','w-5 h-5')}</button>`
                 : '';
             return `
               <div class="px-5 py-4 hover:bg-slate-50">
@@ -10958,7 +11221,7 @@ function maintenanceThumbUrl(r) {
 function maintenancePhotoPreviewHTML(src, alt) {
   return `<div class="relative inline-block">
     <img src="${src}" alt="${escapeHTML(alt)}" class="max-h-40 rounded-lg border border-slate-200" />
-    <button type="button" onclick="clearMaintenancePhoto()" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm text-slate-600 hover:text-rose-600 flex items-center justify-center" title="Remove photo">${icon('close','w-3.5 h-3.5')}</button>
+    <button type="button" onclick="clearMaintenancePhoto()" class="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm text-slate-600 hover:text-rose-600 flex items-center justify-center" title="Remove photo" aria-label="Remove photo">${icon('close','w-3.5 h-3.5')}</button>
   </div>`;
 }
 // Generate a small JPEG thumbnail from an image blob. Used at upload time
@@ -11169,12 +11432,12 @@ function openMaintenanceModal(id) {
         delete dbRow.photo_data_url; delete dbRow.photo_thumb_data_url;
       }
       const { data: row, error } = await sb.from('maintenance_requests').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapMaintenanceFromDb(row));
       toast('Request updated', 'success');
     } else {
       const { data: row, error } = await sb.from('maintenance_requests').insert(maintenanceToDb(data)).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.maintenance.unshift(mapMaintenanceFromDb(row));
       toast('Request submitted', 'success');
     }
@@ -11187,7 +11450,7 @@ async function changeMaintenanceStatus(id, newStatus) {
   const r = (state.maintenance||[]).find(x => x.id === id);
   if (!r) return;
   const { data, error } = await sb.from('maintenance_requests').update({ status: newStatus }).eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(r, mapMaintenanceFromDb(data));
   render();
   toast(`Marked ${MAINT_STATUSES[newStatus]?.label || newStatus}`, 'success');
@@ -11201,7 +11464,7 @@ async function resolveMaintenance(id) {
   const { data, error } = await sb.from('maintenance_requests')
     .update({ status: 'resolved', resolution: note || null })
     .eq('id', id).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(r, mapMaintenanceFromDb(data));
   render();
   toast('Marked resolved', 'success');
@@ -11212,7 +11475,7 @@ async function deleteMaintenance(id) {
   if (!r) return;
   if (!confirm(`Delete this request? "${r.title}"`)) return;
   const { error } = await sb.from('maintenance_requests').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.maintenance = state.maintenance.filter(x => x.id !== id);
   render();
   toast('Request deleted', 'success');
@@ -11608,7 +11871,7 @@ function dcRenderIncoming(branch) {
             </div>
             <input id="it-q-${t.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(String(t.dispatchedQty))}" class="input !w-20 !h-10 !text-center tabular-nums" title="Quantity actually received">
             <button onclick="confirmIncoming('${t.id}')" class="btn btn-primary btn-sm">${icon('check','w-4 h-4')} Confirm</button>
-            <button onclick="rejectIncoming('${t.id}')" class="btn btn-ghost btn-sm" title="Discard — not received">${icon('trash','w-4 h-4')}</button>
+            <button onclick="rejectIncoming('${t.id}')" class="btn btn-ghost btn-sm" title="Discard — not received" aria-label="Discard incoming transfer">${icon('trash','w-4 h-4')}</button>
           </div>`;
         }).join('')}
       </div>
@@ -11673,7 +11936,7 @@ async function rejectIncoming(id) {
     status: 'rejected', confirmed_by: me?.id || null, confirmed_at: new Date().toISOString(),
   }).eq('id', id);
   _itBusy.delete(id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.incomingTransfers = state.incomingTransfers.filter(x => x.id !== id);
   toast('Incoming rejected', 'success');
   render();
@@ -12044,12 +12307,12 @@ async function saveDailyCounts() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('daily_counts').delete().in('id', toDeleteIds);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('daily_counts')
       .upsert(toUpsert, { onConflict: 'item_id,branch,count_date' });
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   // Refresh the month cache + reset the flow so the saved values
   // re-seed the draft on the next render.
@@ -12098,12 +12361,12 @@ function openDailyCountItemModal(editing) {
     };
     if (editing) {
       const { data, error } = await sb.from('daily_count_items').update(row).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapDailyCountItemFromDb(data));
       toast('Item updated', 'success');
     } else {
       const { data, error } = await sb.from('daily_count_items').insert(row).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.dailyCountItems.push(mapDailyCountItemFromDb(data));
       toast('Item added', 'success');
     }
@@ -12115,7 +12378,7 @@ function openDailyCountItemModal(editing) {
 async function deleteDailyCountItem(id) {
   if (!confirm('Delete this item and all its recorded counts? This cannot be undone.')) return;
   const { error } = await sb.from('daily_count_items').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.dailyCountItems = state.dailyCountItems.filter(i => i.id !== id);
   state.dailyCountsCache = {}; // counts cascade-deleted; drop stale cache
   closeModal();
@@ -12539,12 +12802,12 @@ async function saveWeeklyCounts() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('weekly_counts').delete().in('id', toDeleteIds);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('weekly_counts')
       .upsert(toUpsert, { onConflict: 'item_id,branch,week_start' });
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   delete state.weeklyCountsCache[key];
   weeklyCountState.draft = null;
@@ -12588,12 +12851,12 @@ function openWeeklyCountItemModal(editing) {
     };
     if (editing) {
       const { data, error } = await sb.from('weekly_count_items').update(row).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapWeeklyCountItemFromDb(data));
       toast('Item updated', 'success');
     } else {
       const { data, error } = await sb.from('weekly_count_items').insert(row).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.weeklyCountItems.push(mapWeeklyCountItemFromDb(data));
       toast('Item added', 'success');
     }
@@ -12605,7 +12868,7 @@ function openWeeklyCountItemModal(editing) {
 async function deleteWeeklyCountItem(id) {
   if (!confirm('Delete this item and all its recorded counts? This cannot be undone.')) return;
   const { error } = await sb.from('weekly_count_items').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.weeklyCountItems = state.weeklyCountItems.filter(i => i.id !== id);
   state.weeklyCountsCache = {}; // counts cascade-deleted; drop stale cache
   closeModal();
@@ -12869,12 +13132,12 @@ async function saveExpiryChecks() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('expiry_checks').delete().in('id', toDeleteIds);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('expiry_checks')
       .upsert(toUpsert, { onConflict: 'item_id,branch,week_start' });
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   delete state.expiryChecksCache[key];
   expiryCheckState.draft = null;
@@ -12908,12 +13171,12 @@ function openExpiryCheckItemModal(editing) {
     };
     if (editing) {
       const { data, error } = await sb.from('expiry_check_items').update(row).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapExpiryCheckItemFromDb(data));
       toast('Item updated', 'success');
     } else {
       const { data, error } = await sb.from('expiry_check_items').insert(row).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.expiryCheckItems.push(mapExpiryCheckItemFromDb(data));
       toast('Item added', 'success');
     }
@@ -12925,7 +13188,7 @@ function openExpiryCheckItemModal(editing) {
 async function deleteExpiryCheckItem(id) {
   if (!confirm('Delete this item and all its recorded checks? This cannot be undone.')) return;
   const { error } = await sb.from('expiry_check_items').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.expiryCheckItems = state.expiryCheckItems.filter(i => i.id !== id);
   state.expiryChecksCache = {}; // checks cascade-deleted; drop stale cache
   closeModal();
@@ -13163,12 +13426,12 @@ async function saveBakeryTransfers() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('bakery_transfers').delete().in('id', toDeleteIds);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('bakery_transfers')
       .upsert(toUpsert, { onConflict: 'product_id,branch,transfer_date' });
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   delete state.bakeryTransfersCache[ym];
   bakeryTransfersState.draft = null;
@@ -13198,12 +13461,12 @@ function openBakeryProductModal(editing) {
     const row = { name, sort_order: Number($('#bp-sort').value) || 0, active: $('#bp-active').checked };
     if (editing) {
       const { data, error } = await sb.from('bakery_products').update(row).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapBakeryProductFromDb(data));
       toast('Product updated', 'success');
     } else {
       const { data, error } = await sb.from('bakery_products').insert(row).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.bakeryProducts.push(mapBakeryProductFromDb(data));
       toast('Product added', 'success');
     }
@@ -13215,7 +13478,7 @@ function openBakeryProductModal(editing) {
 async function deleteBakeryProduct(id) {
   if (!confirm('Delete this product and all its recorded transfers? This cannot be undone.')) return;
   const { error } = await sb.from('bakery_products').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.bakeryProducts = state.bakeryProducts.filter(p => p.id !== id);
   state.bakeryTransfersCache = {}; // transfers cascade-deleted; drop stale cache
   closeModal();
@@ -13433,12 +13696,12 @@ async function saveBakeryStock() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('bakery_stock').delete().in('id', toDeleteIds);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('bakery_stock')
       .upsert(toUpsert, { onConflict: 'ingredient_id,stock_date' });
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   delete state.bakeryStockCache[ym];
   bakeryStockState.draft = null;
@@ -13468,12 +13731,12 @@ function openBakeryIngredientModal(editing) {
     const row = { name, sort_order: Number($('#bi-sort').value) || 0, active: $('#bi-active').checked };
     if (editing) {
       const { data, error } = await sb.from('bakery_ingredients').update(row).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapBakeryIngredientFromDb(data));
       toast('Ingredient updated', 'success');
     } else {
       const { data, error } = await sb.from('bakery_ingredients').insert(row).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.bakeryIngredients.push(mapBakeryIngredientFromDb(data));
       toast('Ingredient added', 'success');
     }
@@ -13485,7 +13748,7 @@ function openBakeryIngredientModal(editing) {
 async function deleteBakeryIngredient(id) {
   if (!confirm('Delete this ingredient and all its recorded usage? This cannot be undone.')) return;
   const { error } = await sb.from('bakery_ingredients').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.bakeryIngredients = state.bakeryIngredients.filter(i => i.id !== id);
   state.bakeryStockCache = {};     // usage cascade-deleted; drop stale cache
   state.bakeryPurchasesCache = {}; // purchases cascade-deleted too
@@ -13666,12 +13929,12 @@ async function saveBakeryPurchases() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('bakery_ingredient_purchases').delete().in('id', toDeleteIds);
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('bakery_ingredient_purchases')
       .upsert(toUpsert, { onConflict: 'ingredient_id,ym' });
-    if (error) { toast(error.message, 'error'); return; }
+    if (error) { toast(humanizeError(error), 'error'); return; }
   }
   delete state.bakeryPurchasesCache[ym];
   bakeryPurchasesState.draft = null;
@@ -14074,12 +14337,12 @@ function openSupplierModal(id) {
     const dbRow = supplierToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('suppliers').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapSupplierFromDb(row));
       toast('Supplier updated', 'success');
     } else {
       const { data: row, error } = await sb.from('suppliers').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.suppliers.push(mapSupplierFromDb(row));
       toast('Supplier added', 'success');
     }
@@ -14097,7 +14360,7 @@ async function deleteSupplier(id) {
     : `Delete supplier "${s.name}"?`;
   if (!confirm(msg)) return;
   const { error } = await sb.from('suppliers').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.suppliers = state.suppliers.filter(x => x.id !== id);
   // The FK is ON DELETE SET NULL on the server; mirror that locally so
   // the UI doesn't keep pointing at a now-gone supplier.
@@ -14211,7 +14474,7 @@ async function deleteHoliday(id) {
   if (!h) return;
   if (!confirm(`Delete the holiday "${h.name}" on ${fmtDate(h.date)}?\n\nFuture payroll runs will no longer pay holiday overtime for this date. Payslips already issued are not affected.`)) return;
   const { error } = await sb.from('holidays').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.holidays = state.holidays.filter(x => x.id !== id);
   toast('Holiday deleted', 'success');
   render();
@@ -14325,12 +14588,12 @@ function renderInventory() {
                   ${(() => { const sup = supplierLabelForItem(it); return `<div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${sup?' &middot; '+escapeHTML(sup):''}${it.branch?' &middot; '+escapeHTML(it.branch):''}</div>`; })()}
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                  <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
+                  <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" aria-label="Decrease ${escapeHTML(it.name||'item')} by 1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
                   <div class="text-right min-w-[80px] tabular-nums">
                     <div class="font-semibold ${low?'text-rose-600':'text-slate-900'}">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
                     ${Number(it.reorderThreshold) > 0 ? `<div class="text-[10px] text-slate-400">reorder &le; ${Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2})}</div>` : ''}
                   </div>
-                  <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
+                  <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" aria-label="Increase ${escapeHTML(it.name||'item')} by 1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
                 </div>
                 <div class="flex gap-1 shrink-0">
                   <button onclick="openInventoryHistoryModal('${it.id}')" title="History" aria-label="View movement history" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('clock','w-4 h-4')}</button>
@@ -14463,12 +14726,12 @@ function openInventoryItemModal(id, defaults = {}) {
     const dbRow = inventoryItemToDb(data);
     if (editing) {
       const { data: row, error } = await sb.from('inventory_items').update(dbRow).eq('id', editing.id).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapInventoryItemFromDb(row));
       toast('Item updated', 'success');
     } else {
       const { data: row, error } = await sb.from('inventory_items').insert(dbRow).select().single();
-      if (error) { toast(error.message, 'error'); return false; }
+      if (error) { toast(humanizeError(error), 'error'); return false; }
       state.inventory.push(mapInventoryItemFromDb(row));
       toast('Item added', 'success');
     }
@@ -15275,7 +15538,7 @@ async function deleteInventoryItem(id) {
   if (!it) return;
   if (!confirm(`Delete "${it.name}" from inventory? This cannot be undone.`)) return;
   const { error } = await sb.from('inventory_items').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.inventory = state.inventory.filter(i => i.id !== id);
   render();
   toast('Item deleted', 'success');
@@ -15381,12 +15644,12 @@ function renderRoaster() {
               ${(() => { const sup = supplierLabelForItem(it); return `<div class="text-xs text-slate-500 truncate">${escapeHTML(cat.label)}${sup?' &middot; '+escapeHTML(sup):''}${it.updatedAt?' &middot; updated '+escapeHTML(fmtDate(it.updatedAt.slice(0,10))):''}</div>`; })()}
             </div>
             <div class="flex items-center gap-1 shrink-0">
-              <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
+              <button onclick="adjustInventoryQuantity('${it.id}', -1)" title="-1" aria-label="Decrease ${escapeHTML(it.name||'item')} by 1" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('minus','w-4 h-4')}</button>
               <div class="text-right min-w-[80px] tabular-nums">
                 <div class="font-semibold ${low?'text-rose-600':'text-slate-900'}">${Number(it.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} <span class="text-xs text-slate-500 font-normal">${escapeHTML(it.unit||'units')}</span></div>
                 ${Number(it.reorderThreshold) > 0 ? `<div class="text-[10px] text-slate-400">reorder &le; ${Number(it.reorderThreshold).toLocaleString(undefined,{maximumFractionDigits:2})}</div>` : ''}
               </div>
-              <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
+              <button onclick="adjustInventoryQuantity('${it.id}', 1)" title="+1" aria-label="Increase ${escapeHTML(it.name||'item')} by 1" class="text-slate-500 hover:text-emerald-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
             </div>
             <div class="flex gap-1 shrink-0">
               <button onclick="openInventoryHistoryModal('${it.id}')" title="History" aria-label="View movement history" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('clock','w-4 h-4')}</button>
@@ -15997,7 +16260,7 @@ function openReceiptModal() {
       uploadedBy: me?.id,
     });
     const { data, error } = await sb.from('receipts').insert(payload).select().single();
-    if (error) { toast(error.message, 'error'); return false; }
+    if (error) { toast(humanizeError(error), 'error'); return false; }
     state.receipts.unshift(mapReceiptFromDb(data));
     _receiptFile = null;
     render();
@@ -16608,7 +16871,7 @@ async function downloadReceipt(id) {
 async function deleteReceipt(id) {
   if (!confirm('Delete this receipt permanently?')) return;
   const { error } = await sb.from('receipts').delete().eq('id', id);
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   state.receipts = state.receipts.filter(r => r.id !== id);
   render();
   toast('Receipt deleted', 'success');
@@ -16917,7 +17180,7 @@ async function approvePendingEmployee(empId) {
     .update({ status: 'active' })
     .eq('id', empId)
     .select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(e, mapEmployeeFromDb(data));
   render();
   toast(`${e.firstName} approved`, 'success');
@@ -16938,7 +17201,7 @@ async function rejectPendingEmployee(empId) {
     terminated_by: me.id,
   };
   const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
-  if (error) { toast(error.message, 'error'); return; }
+  if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(e, mapEmployeeFromDb(data));
   render();
   toast(`${e.firstName} rejected`, 'success');
