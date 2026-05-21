@@ -183,7 +183,12 @@ jobs:
           STAMP="${{ steps.ts.outputs.stamp }}"
           OUT_FILE="${{ steps.dump.outputs.out_file }}"
           OUT_SIZE="${{ steps.dump.outputs.out_size }}"
+          # `--repo` is required because the workflow doesn't do an
+          # actions/checkout, so `gh` has no git remote to infer the
+          # target repo from. GITHUB_REPOSITORY is a built-in env var
+          # like "omarkhalawi21/HUMAN-RESOURCE-APP".
           gh release create "backup-$STAMP" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "DB backup $STAMP" \
             --notes "Automated nightly backup of the public schema.
 
@@ -199,10 +204,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # `--repo` flag for the same reason as the create step above.
           # List backup-* releases, newest first, drop the top 30, delete the rest.
-          # `gh release list` columns: TITLE  TYPE  TAG  PUBLISHED
-          # Some `gh` versions emit the tag in a different column — use --json for safety.
-          OLD=$(gh release list --limit 1000 --json tagName \
+          OLD=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName \
                   --jq '.[].tagName | select(startswith("backup-"))' \
                 | sort -r \
                 | tail -n +31)
@@ -214,5 +218,5 @@ jobs:
           echo "$OLD"
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
-            gh release delete "$tag" --yes --cleanup-tag || true
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           done <<<"$OLD"
