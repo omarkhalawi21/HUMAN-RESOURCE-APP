@@ -1704,9 +1704,22 @@ async function loadAll() {
 // were a footgun ("call saveState() and the data is durable" — it
 // wasn't). All known callers (setLang, the Clear-attendance button)
 // have been migrated. resetState (below) is the real wipe path.
-async function resetState() {
+// Two-layer API:
+//   resetState()         — the public entry point. Single browser confirm()
+//                          kept for back-compat with console use ("just call
+//                          resetState() to wipe everything"). Floor staff
+//                          never reach this; only admins do.
+//   _resetStateImpl()    — the actual destructive work. NO confirm — gating
+//                          is the caller's responsibility. The UI button in
+//                          Settings → Danger zone goes through
+//                          openResetEverythingModal() which provides a
+//                          typed-"RESET HASSAD" confirmation, then calls
+//                          this directly. The double-confirm() shape it
+//                          used to have was easy to muscle-memory-Enter
+//                          through; the typed-phrase modal makes the brain
+//                          engage before the wipe runs.
+async function _resetStateImpl() {
   if (!isAdmin()) return;
-  if (!confirm('Reset all company data? This deletes attendance, leave, payroll, warnings, advances, certificates, archived documents, and any employees without a login account. Schedules and document expiries on remaining employees are kept.')) return;
   const NIL = '00000000-0000-0000-0000-000000000000';
   // Wipe transactional/historical tables (all use `id` as the PK column).
   // employee_extras is intentionally NOT in this list — it's configuration
@@ -1717,7 +1730,108 @@ async function resetState() {
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
   await loadAll(); render();
+}
+async function resetState() {
+  if (!isAdmin()) return;
+  if (!confirm('Reset all company data? This deletes attendance, leave, payroll, warnings, advances, certificates, archived documents, and any employees without a login account. Schedules and document expiries on remaining employees are kept.')) return;
+  await _resetStateImpl();
   toast('Company data reset','success');
+}
+
+// The Settings → Danger zone "Reset everything" entry-point. Builds an
+// in-app modal listing the row counts about to be deleted, with a
+// typed-phrase ("RESET HASSAD") confirmation gating the Save button.
+// Pattern matches GitHub/Stripe destructive-action UX: the user MUST
+// read and type, breaking the muscle-memory Enter-Enter rhythm that
+// the old double-`confirm()` flow let slip through.
+const RESET_CONFIRM_PHRASE = 'RESET HASSAD';
+function openResetEverythingModal() {
+  if (!isAdmin()) { toast('Admins only', 'error'); return; }
+  // Snapshot counts from in-memory state. Some of these (attendance,
+  // inventory_movements) are bulk-load-capped, so the actual DB count
+  // may be higher than shown — flagged in the modal copy. The wipe
+  // deletes everything regardless of what's loaded.
+  const c = {
+    attendance:         (state.attendance||[]).length,
+    leaveRequests:      (state.leaveRequests||[]).length,
+    payroll:            (state.payroll||[]).length,
+    warnings:           (state.warnings||[]).length,
+    advances:           (state.advances||[]).length,
+    deductions:         (state.deductions||[]).length,
+    certificates:       (state.certificates||[]).length,
+    archive:            (state.archive||[]).length,
+    receipts:           (state.receipts||[]).length,
+    inventory:          (state.inventory||[]).length,
+    inventoryMovements: (state.inventoryMovements||[]).length,
+    maintenance:        (state.maintenance||[]).length,
+    tasks:              (state.tasks||[]).length,
+    checklists:         (state.checklists||[]).length,
+  };
+  const totalVisible = Object.values(c).reduce((s,n) => s+n, 0);
+
+  const body = `
+    <div class="space-y-4">
+      <div class="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-900">
+        <div class="font-semibold flex items-center gap-2 mb-2">
+          ${icon('warning','w-5 h-5')} This permanently deletes operational data
+        </div>
+        <p>Employees with active login accounts stay (along with their schedules and document expiries). Everything else listed below is wiped immediately.</p>
+        <p class="mt-2"><strong>There is no in-app undo.</strong> Recovery is only possible by restoring from the encrypted nightly backup in the repo's Releases — see <code class="bg-rose-100 px-1 rounded">RESTORE.md</code>. The most recent backup is from last night at 03:00 UTC.</p>
+      </div>
+      <div class="bg-slate-50 rounded-xl p-4 text-sm">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Records about to be deleted (${totalVisible} visible in memory)</div>
+        <ul class="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-700">
+          <li>${c.attendance.toLocaleString()} attendance entries</li>
+          <li>${c.leaveRequests} leave requests</li>
+          <li>${c.payroll} payslips across all runs</li>
+          <li>${c.warnings} warnings</li>
+          <li>${c.advances} salary advances</li>
+          <li>${c.deductions} deductions</li>
+          <li>${c.certificates} certificates</li>
+          <li>${c.archive} archive documents</li>
+          <li>${c.receipts} receipts</li>
+          <li>${c.inventory} inventory items</li>
+          <li>${c.inventoryMovements.toLocaleString()}+ inventory movements</li>
+          <li>${c.maintenance} maintenance requests</li>
+          <li>${c.tasks} tasks</li>
+          <li>${c.checklists} checklists + all their runs</li>
+        </ul>
+        <p class="text-xs text-slate-400 mt-2">Some figures show only what's loaded into memory (attendance is capped at 540 days, inventory movements at 2,000). The wipe touches the entire DB regardless of cap.</p>
+      </div>
+      <div>
+        <label class="label label-required">To proceed, type <code class="bg-slate-100 px-1.5 py-0.5 rounded text-rose-700 font-bold tracking-wider">${RESET_CONFIRM_PHRASE}</code> below</label>
+        <input id="reset-confirm-input" class="input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+          placeholder="${RESET_CONFIRM_PHRASE}"
+          oninput="(function(el){ const btn = document.querySelector('#modal-root .btn-primary'); if (btn) btn.disabled = (el.value !== '${RESET_CONFIRM_PHRASE}'); })(this);" />
+        <div class="text-xs text-slate-500 mt-1">Case-sensitive. The Reset button activates only when this matches exactly.</div>
+      </div>
+    </div>
+  `;
+  openModal('Reset all operational data', body, async () => {
+    const typed = document.getElementById('reset-confirm-input')?.value || '';
+    if (typed !== RESET_CONFIRM_PHRASE) {
+      // Defence in depth — the Save button is disabled when the phrase
+      // doesn't match, but if anyone ever bypasses that (DevTools etc.)
+      // refuse the actual write here too.
+      toast(`You must type ${RESET_CONFIRM_PHRASE} exactly to confirm.`, 'error');
+      return false;
+    }
+    await _resetStateImpl();
+    location.hash = '#/dashboard';
+    render();
+    toast('Reset complete — all operational data wiped.', 'success');
+    return true;
+  }, { saveLabel: 'Reset everything' });
+
+  // Modal mounts synchronously; disable Save on next tick so the
+  // initially-empty input gates the button from the start. Without
+  // this the user could click Save before typing anything (the
+  // save handler would still reject, but the UX is clearer if the
+  // button visibly stays disabled until you type).
+  setTimeout(() => {
+    const btn = document.querySelector('#modal-root .btn-primary');
+    if (btn) btn.disabled = true;
+  }, 0);
 }
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
@@ -6873,7 +6987,7 @@ function renderSettings() {
         <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Danger zone</h3>
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
-          <button onclick="if(confirm('Wipe all data and re-seed?')) { resetState(); location.hash='#/dashboard'; render(); toast('Reset to sample data','success'); }" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
+          <button onclick="openResetEverythingModal()" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
           <button onclick="downloadBackup()" class="btn btn-ghost">${icon('download','w-4 h-4')} Download backup</button>
         </div>
         <!-- Removed the "Clear attendance" button: it called saveState()
