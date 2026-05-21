@@ -68,8 +68,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl ca-certificates gnupg lsb-release
           # PGDG (PostgreSQL global development group) keyring for the
-          # newer pg client packages. Ubuntu 22.04's default
-          # postgresql-client is too old to dump from Supabase's pg16+.
+          # newer pg client packages. Ubuntu 24.04's default
+          # postgresql-client is pg16 — too old to dump from Supabase's
+          # pg17.x (pg_dump requires client version >= server version).
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
             https://www.postgresql.org/media/keys/ACCC4CF8.asc
@@ -77,6 +78,32 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17
+
+      - name: Resolve absolute path to pg_dump 17+ and verify version
+        id: pgdump
+        run: |
+          set -euo pipefail
+          # Ubuntu's update-alternatives points /usr/bin/pg_dump at the
+          # OLDEST installed pg client, so apt installing pg17 alongside
+          # the OS's pg16 leaves /usr/bin/pg_dump as the v16 binary —
+          # which then refuses to dump a v17 server ("server version
+          # mismatch", which is exactly what bit us on first run).
+          # Pick the newest pg binary directly from the PGDG bin paths.
+          PG_DUMP=$(ls -d /usr/lib/postgresql/*/bin/pg_dump 2>/dev/null | sort -V | tail -1)
+          if [ -z "$PG_DUMP" ]; then
+            echo "::error::No pg_dump found under /usr/lib/postgresql/*/bin/. The postgresql-client-17 install step must have failed silently."
+            exit 1
+          fi
+          echo "Using $PG_DUMP"
+          "$PG_DUMP" --version
+          # Refuse to run with anything older than pg17 — Supabase server
+          # is on 17.x and a 16.x client will hard-fail mid-dump anyway.
+          MAJOR=$("$PG_DUMP" --version | awk '{print $3}' | cut -d. -f1)
+          if [ "$MAJOR" -lt 17 ]; then
+            echo "::error::pg_dump major version $MAJOR is older than the Supabase server (17). Cannot proceed."
+            exit 1
+          fi
+          echo "pg_dump=$PG_DUMP" >> "$GITHUB_OUTPUT"
 
       - name: Sanity-check secrets are configured
         env:
@@ -127,7 +154,10 @@ jobs:
           # --format=plain          : produces an SQL text file pipeable
           #                            into psql; simpler than custom
           #                            format for our scale.
-          pg_dump "$DB_URL" \
+          # Use the absolute path resolved in the previous step — bypasses
+          # the update-alternatives wiring that pointed /usr/bin/pg_dump
+          # at the wrong (v16) binary.
+          "${{ steps.pgdump.outputs.pg_dump }}" "$DB_URL" \
             --schema=public \
             --no-owner --no-privileges \
             --clean --if-exists \
