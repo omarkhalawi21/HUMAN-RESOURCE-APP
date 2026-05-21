@@ -40,6 +40,10 @@ The Supabase publishable key in `index.html` is safe to ship **only because Row 
 
 `supabase-rls.sql` is the source of truth — re-run it any time you change schema. The policies cover: admin-only mutations on employees/payroll/branches/warnings/certificates/archive, self-only inserts on attendance and leave requests, and a database trigger that prevents anyone from changing their own admin status.
 
+## Backups
+
+`.github/workflows/backup.yml` takes a nightly AES-256-encrypted dump of the `public` schema and attaches it as a GitHub Release artifact. Last 30 days retained automatically. **Two repo secrets required** — `SUPABASE_DB_URL` (direct connection, port 5432) and `BACKUP_PASSPHRASE` — see the workflow file's header for setup. Restore procedure documented in [RESTORE.md](RESTORE.md) — walk through it once before launch.
+
 ## Tech
 
 - Plain HTML + CSS + vanilla JavaScript, single file
