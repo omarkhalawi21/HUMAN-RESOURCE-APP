@@ -4760,6 +4760,15 @@ function renderPayroll() {
   const admin = canManagePeople();
   const me = currentEmployee();
   const baseRecords = admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id);
+  // Bucket employees by id once — getEmployee is a linear .find() on
+  // state.employees and was previously called twice per payroll row
+  // inside the filter predicate, twice per sort compare (so O(n log n)
+  // × 2 lookups), and twice more in the render loop. At 240 payroll
+  // rows × 30 employees that's tens of thousands of redundant scans
+  // per render, on a page that re-runs on every filter keystroke.
+  const empById = new Map();
+  for (const e of (state.employees||[])) empById.set(e.id, e);
+  const empOf = id => empById.get(id);
 
   // Apply filters
   const filtered = baseRecords.filter(p => {
@@ -4767,7 +4776,7 @@ function renderPayroll() {
     if (payrollFilter.status !== 'all' && p.status !== payrollFilter.status) return false;
     if (payrollFilter.from && p.period < payrollFilter.from) return false;
     if (payrollFilter.to   && p.period > payrollFilter.to)   return false;
-    const e = getEmployee(p.employeeId);
+    const e = empOf(p.employeeId);
     if (!e) return false;
     if (payrollFilter.department !== 'all' && e.department !== payrollFilter.department) return false;
     if (payrollFilter.branch !== 'all') {
@@ -4786,11 +4795,11 @@ function renderPayroll() {
 
   // Sort
   const sortFns = {
-    period_desc: (a,b) => b.period.localeCompare(a.period) || (getEmployee(a.employeeId)?.firstName||'').localeCompare(getEmployee(b.employeeId)?.firstName||''),
+    period_desc: (a,b) => b.period.localeCompare(a.period) || (empOf(a.employeeId)?.firstName||'').localeCompare(empOf(b.employeeId)?.firstName||''),
     period_asc:  (a,b) => a.period.localeCompare(b.period),
     net_desc:    (a,b) => (b.net||0)-(a.net||0),
     net_asc:     (a,b) => (a.net||0)-(b.net||0),
-    name_asc:    (a,b) => (getEmployee(a.employeeId)?.firstName||'').localeCompare(getEmployee(b.employeeId)?.firstName||''),
+    name_asc:    (a,b) => (empOf(a.employeeId)?.firstName||'').localeCompare(empOf(b.employeeId)?.firstName||''),
   };
   filtered.sort(sortFns[payrollFilter.sort] || sortFns.period_desc);
 
@@ -4946,7 +4955,7 @@ function renderPayroll() {
           <tbody>
             ${filtered.length===0 ? `<tr><td colspan="${admin?10:8}" class="text-center text-slate-400 !py-10">No payslips match these filters. Try widening the period range or clearing filters.</td></tr>` :
               filtered.slice(0,500).map(p => {
-                const e = getEmployee(p.employeeId);
+                const e = empOf(p.employeeId);
                 const ex = e ? getEmpExtras(e.id) : null;
                 return `
                 <tr class="hover-row">
@@ -8801,7 +8810,7 @@ function renderWorkChecklists() {
       </div>
       <div class="relative flex flex-wrap items-center gap-3 mt-4">
         <select class="input !w-auto !py-1.5 text-sm" onchange="checklistView.branch=this.value; render();">
-          ${SUGGESTED_BRANCHES.map(b=>`<option value="${b}" ${branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+          ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
         </select>
         <select class="input !w-auto !py-1.5 text-sm" onchange="checklistView.dept=this.value; render();">
           <option value="all" ${dept==='all'?'selected':''}>All departments</option>
@@ -9054,7 +9063,7 @@ function renderWorkCompliance() {
       </div>
       <div class="relative flex flex-wrap items-center gap-3 mt-4">
         <select class="input !w-auto !py-1.5 text-sm" onchange="complianceView.branch=this.value; render();">
-          ${SUGGESTED_BRANCHES.map(b=>`<option value="${b}" ${branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+          ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
         </select>
         <input type="month" class="input !w-auto !py-1.5 text-sm" value="${escapeHTML(ym)}" onchange="complianceView.ym=this.value||todayISO().slice(0,7); render();">
       </div>
@@ -11923,7 +11932,7 @@ function renderDailyCount() {
   const canManage = hasRole('admin','head_barista');
 
   const branchSel = `<select class="pill" onchange="dailyCountState.branch=this.value; dailyCountState.step=0; dailyCountState.draft=null; render();">
-    ${SUGGESTED_BRANCHES.map(b => `<option value="${b}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+    ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
   </select>`;
   const header = `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -12483,12 +12492,29 @@ async function saveDailyCounts() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('daily_counts').delete().in('id', toDeleteIds);
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      // Partial-failure recovery — the delete may have committed a
+      // subset of rows server-side. Drop the stale cache + reload so
+      // the UI reflects the DB ground truth instead of values the
+      // user *thought* they saved.
+      delete state.dailyCountsCache[key];
+      await loadDailyCounts(branch, ym);
+      return;
+    }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('daily_counts')
       .upsert(toUpsert, { onConflict: 'item_id,branch,count_date' });
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      // The delete above already succeeded; the upsert didn't. Some
+      // rows the user intended to update may now be missing. Refresh
+      // so they see what actually persisted (and what to re-enter).
+      delete state.dailyCountsCache[key];
+      await loadDailyCounts(branch, ym);
+      return;
+    }
   }
   // Refresh the month cache + reset the flow so the saved values
   // re-seed the draft on the next render.
@@ -12708,7 +12734,7 @@ function renderWeeklyCount() {
   const canManage = hasRole('admin','head_barista');
 
   const branchSel = `<select class="pill" onchange="wcCaptureInputs(); weeklyCountState.branch=this.value; weeklyCountState.draft=null; render();">
-    ${SUGGESTED_BRANCHES.map(b => `<option value="${b}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+    ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
   </select>`;
   const header = `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -12978,12 +13004,23 @@ async function saveWeeklyCounts() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('weekly_counts').delete().in('id', toDeleteIds);
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      // Partial-failure recovery — see saveDailyCounts for rationale.
+      delete state.weeklyCountsCache[key];
+      await loadWeeklyCounts(branch, ym);
+      return;
+    }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('weekly_counts')
       .upsert(toUpsert, { onConflict: 'item_id,branch,week_start' });
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      delete state.weeklyCountsCache[key];
+      await loadWeeklyCounts(branch, ym);
+      return;
+    }
   }
   delete state.weeklyCountsCache[key];
   weeklyCountState.draft = null;
@@ -13141,7 +13178,7 @@ function renderExpiryCheck() {
   const canManage = hasRole('admin','head_barista');
 
   const branchSel = `<select class="pill" onchange="ecCaptureInputs(); expiryCheckState.branch=this.value; expiryCheckState.draft=null; render();">
-    ${SUGGESTED_BRANCHES.map(b => `<option value="${b}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+    ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
   </select>`;
   const header = `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -13308,12 +13345,23 @@ async function saveExpiryChecks() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('expiry_checks').delete().in('id', toDeleteIds);
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      // Partial-failure recovery — see saveDailyCounts for rationale.
+      delete state.expiryChecksCache[key];
+      await loadExpiryChecks(branch, ym);
+      return;
+    }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('expiry_checks')
       .upsert(toUpsert, { onConflict: 'item_id,branch,week_start' });
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      delete state.expiryChecksCache[key];
+      await loadExpiryChecks(branch, ym);
+      return;
+    }
   }
   delete state.expiryChecksCache[key];
   expiryCheckState.draft = null;
@@ -13602,12 +13650,23 @@ async function saveBakeryTransfers() {
   if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('bakery_transfers').delete().in('id', toDeleteIds);
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      // Partial-failure recovery — see saveDailyCounts for rationale.
+      delete state.bakeryTransfersCache[ym];
+      await loadBakeryTransfers(ym);
+      return;
+    }
   }
   if (toUpsert.length) {
     const { error } = await sb.from('bakery_transfers')
       .upsert(toUpsert, { onConflict: 'product_id,branch,transfer_date' });
-    if (error) { toast(humanizeError(error), 'error'); return; }
+    if (error) {
+      toast(humanizeError(error), 'error');
+      delete state.bakeryTransfersCache[ym];
+      await loadBakeryTransfers(ym);
+      return;
+    }
   }
   delete state.bakeryTransfersCache[ym];
   bakeryTransfersState.draft = null;
