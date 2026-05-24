@@ -6988,7 +6988,19 @@ function renderSettings() {
         <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
         <div class="flex flex-wrap gap-3">
           <button onclick="openResetEverythingModal()" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
-          <button onclick="downloadBackup()" class="btn btn-ghost">${icon('download','w-4 h-4')} Download backup</button>
+          <button onclick="downloadBackup()" class="btn btn-ghost">${icon('download','w-4 h-4')} Download admin snapshot</button>
+        </div>
+        <!-- Snapshot vs. backup clarity — easy to mistake the JSON
+             this button produces for disaster recovery, and earlier
+             today we almost did. Make the limit explicit so the next
+             admin who clicks it knows what they're getting. -->
+        <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 mt-3 text-xs text-amber-900 flex items-start gap-2">
+          ${icon('warning','w-4 h-4 shrink-0 mt-0.5')}
+          <div>
+            <strong>"Download admin snapshot"</strong> exports the data currently loaded in this browser tab as a JSON file — useful for ad-hoc admin reference.
+            <strong>It is NOT disaster recovery.</strong>
+            Real backups are the encrypted nightly artifacts in this repo's <strong>Releases</strong> page (see <code class="bg-amber-100 px-1 rounded">RESTORE.md</code>).
+          </div>
         </div>
         <!-- Removed the "Clear attendance" button: it called saveState()
              (a no-op), so the in-memory wipe was lost on the next
@@ -7435,24 +7447,41 @@ async function toggleAdmin(uid_) {
   render();
   toast(`${emp.firstName} is now ${newRole==='admin'?'an admin':'an employee'}`, 'success');
 }
+// "Download admin snapshot" — exports state from THIS browser tab as
+// JSON for ad-hoc admin reference. Deliberately not called "backup"
+// because it isn't one: PR A stripped data_url from the bulk loads
+// (archive docs / receipts no longer carry their file content) and
+// the on-demand caches (counts/transfers) aren't in state at all
+// unless the user navigated to those pages this session. The previous
+// dialog framing this as "a full backup" was actively misleading —
+// admins thought they had disaster recovery when they didn't. Real
+// disaster recovery lives in the repo's nightly GitHub Releases
+// (workflow at .github/workflows/backup.yml, restore in RESTORE.md).
 function downloadBackup() {
   if (!isAdmin()) { toast('Admins only', 'error'); return; }
   if (!confirm(
-    'Download a full backup?\n\n' +
-    'This file contains all employee records, attendance, leave, payroll, ' +
-    'warnings, salary advances, certificates, and uploaded documents in ' +
-    'plain text. Anyone with the file can read everything. ' +
-    'Save it only to a secure location.'
+    'Download admin snapshot?\n\n' +
+    'This is a PARTIAL export of what\'s currently loaded in this browser tab. It does NOT contain:\n\n' +
+    '  • The actual file content of archive documents (PDFs, contracts, training material) — only their metadata\n' +
+    '  • The actual receipt images / OCR text — only their metadata\n' +
+    '  • Attendance older than 540 days\n' +
+    '  • Monthly count caches (daily/weekly/expiry counts, bakery transfers/stock/purchases) — those load on demand only\n\n' +
+    'It\'s a quick admin reference, NOT a disaster-recovery backup. For real backups: this repo\'s Releases page (encrypted nightly snapshot) — see RESTORE.md.\n\n' +
+    'Anyone with this file can read everything that IS in it. Save it only to a secure location.\n\n' +
+    'Continue?'
   )) return;
-  // Strip the active session so a leaked backup can't be used to impersonate.
+  // Strip the active session so a leaked snapshot can't be used to impersonate.
   const { session, ...safe } = state;
   const blob = new Blob([JSON.stringify(safe, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `pulsehr-backup-${todayISO()}.json`;
+  // Renamed from the legacy "pulsehr-backup-" prefix (leftover from a
+  // previous app name) to make the snapshot-vs-backup distinction
+  // visible in the filename itself.
+  a.href = url; a.download = `hassad-admin-snapshot-${todayISO()}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  toast('Backup downloaded — store it securely', 'success');
+  toast('Snapshot downloaded — note: this is NOT a full backup. Real backups are in the repo Releases page.', 'success');
 }
 
 /* Export the dashboard's attendance snapshot for the selected date + branch */
