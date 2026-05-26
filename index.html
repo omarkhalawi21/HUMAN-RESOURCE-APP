@@ -1640,6 +1640,15 @@ async function loadAll() {
         addressLine3: c.addressLine3,
       };
       state.companyStamp = c.companyStamp || '';
+      // Keep the per-device login-screen cache in sync with the
+      // company-wide default so admin-driven language changes also
+      // affect this device's next cold-start login screen. Without
+      // this, the localStorage hint would only track per-user
+      // toggles — an admin's Settings → Save Language change
+      // wouldn't propagate to other tablets' login screens.
+      if (state.settings.lang === 'en' || state.settings.lang === 'ar') {
+        try { localStorage.setItem('hassad_lang', state.settings.lang); } catch (_) {}
+      }
     }
     state.employees = (employeesR.data || []).map(mapEmployeeFromDb);
     state.attendance = (attendanceR.data || []).map(mapAttendanceFromDb);
@@ -1869,6 +1878,26 @@ function minutesToHrs(m) { return (m/60).toFixed(2); }
 // state. emptyState() is the real reset path.
 
 state = emptyState();
+// Hydrate the language preference from localStorage BEFORE the first
+// render so the login screen (which paints before loadAll runs and
+// pulls companies.language) lands in the last-used language. Without
+// this, an Arabic-only barista at a coffee branch sees an English
+// login screen on every cold visit, even if the company default is
+// Arabic — confusing on a shared tablet across shifts.
+//
+// setLang and loadAll both write this key, so the cache stays in sync
+// with the active session's choice; on next cold start, that's the
+// language we paint first.
+//
+// Whitelisted to the two supported languages so a tampered or stale
+// value can't break the i18n function. Wrapped in try/catch because
+// localStorage throws in Safari private browsing.
+try {
+  const cached = localStorage.getItem('hassad_lang');
+  if (cached === 'en' || cached === 'ar') {
+    state.settings.lang = cached;
+  }
+} catch (_) { /* localStorage unavailable — fall back to default */ }
 
 /* -------------------- HELPERS -------------------- */
 const $ = (sel) => document.querySelector(sel);
@@ -2105,6 +2134,12 @@ async function setLang(lang) {
   state.settings.lang = lang;
   document.documentElement.lang = lang;
   document.documentElement.dir = lang==='ar' ? 'rtl' : 'ltr';
+  // Cache the choice as a per-device first-paint hint. The hydrate
+  // block right after `state = emptyState()` reads this so the next
+  // cold visit's LOGIN screen (which paints before loadAll runs)
+  // shows in the user's last language. Best-effort — silently
+  // ignored if localStorage throws (Safari private mode etc.).
+  try { localStorage.setItem('hassad_lang', lang); } catch (_) {}
   render();
   // Persist to companies.language for admins so the choice survives
   // a reload (loadAll reads companies.language into state.settings.lang).
