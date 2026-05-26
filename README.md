@@ -44,6 +44,10 @@ The Supabase publishable key in `index.html` is safe to ship **only because Row 
 
 `.github/workflows/backup.yml` takes a nightly AES-256-encrypted dump of the `public` schema and attaches it as a GitHub Release artifact. Last 30 days retained automatically. **Two repo secrets required** — `SUPABASE_DB_URL` (direct connection, port 5432) and `BACKUP_PASSPHRASE` — see the workflow file's header for setup. Restore procedure documented in [RESTORE.md](RESTORE.md) — walk through it once before launch.
 
+## Launching
+
+For a fresh deployment, the engineering side (above) is necessary but not sufficient — there's also a one-time data-entry pass to seed branches, holidays, count items, employees, SOPs, etc. The full pre-launch checklist (with the order of operations) is in [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md). Print it, tick boxes as you go.
+
 ## Tech
 
 - Plain HTML + CSS + vanilla JavaScript, single file
