@@ -2424,7 +2424,11 @@ function resetPasswordPrompt() {
     const email = $('#rp-email').value.trim();
     if (!email) { toast('Email required', 'error'); return false; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a valid email', 'error'); return false; }
-    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    // Intentionally omit redirectTo — Supabase falls back to the Site URL
+    // configured in Dashboard → Auth → URL Configuration, which is the
+    // full deployed path (e.g. https://<host>/HUMAN-RESOURCE-APP/).
+    // window.location.origin would strip the repo path and 404 on GitHub Pages.
+    const { error } = await sb.auth.resetPasswordForEmail(email);
     if (error) { toast(humanizeError(error), 'error'); return false; }
     toast('Reset link sent to ' + email, 'success');
     return true;
@@ -7456,7 +7460,9 @@ async function resetUserPassword(uid_) {
   const emp = state.employees.find(e => 'u-'+e.id === uid_);
   if (!emp) return;
   if (!emp.email) { toast('No email on record', 'error'); return; }
-  const { error } = await sb.auth.resetPasswordForEmail(emp.email, { redirectTo: window.location.origin });
+  // Intentionally omit redirectTo — see the matching note in the user-facing
+  // "Reset password" modal handler. Supabase falls back to Site URL.
+  const { error } = await sb.auth.resetPasswordForEmail(emp.email);
   if (error) { toast(humanizeError(error), 'error'); return; }
   toast(`Reset link sent to ${emp.email}`, 'success');
 }
