@@ -6856,6 +6856,60 @@ async function changeMyPassword() {
   toast('Password updated successfully', 'success');
 }
 
+/* -------------------- PASSWORD RECOVERY FLOW --------------------
+   When a user clicks a Supabase password-reset email link, the recovery
+   token in the URL hash gets exchanged for an authenticated session
+   automatically by the Supabase JS client. Without this prompt, the
+   user lands straight in the dashboard — the "reset" never actually
+   changes their password. This modal forces a new-password entry to
+   complete the flow.
+
+   Triggered from two places (belt-and-braces):
+   - bootstrap() when window.location.hash carries type=recovery
+     (catches the case where the SDK has already processed the token
+     before our onAuthStateChange listener attached)
+   - the PASSWORD_RECOVERY branch in onAuthStateChange (catches the
+     case where the event fires after we've subscribed)
+
+   The modal is dismissible — if the user closes it they remain signed
+   in via the recovery session, but at least the prompt was offered.
+   They can still change their password later via Account → Change
+   Password. */
+function openPasswordResetModal() {
+  // Avoid stacking — if it's already open (e.g. both triggers fire), bail.
+  if (document.querySelector('#modal-root [data-recovery-modal]')) return;
+  const body = `
+    <div class="space-y-4" data-recovery-modal>
+      <p class="text-sm text-slate-600">
+        You clicked a password reset link. Enter a new password to complete the reset.
+      </p>
+      <div>
+        <label class="label">New password</label>
+        <input id="pr-new" type="password" class="input" autocomplete="new-password" minlength="6">
+      </div>
+      <div>
+        <label class="label">Confirm new password</label>
+        <input id="pr-confirm" type="password" class="input" autocomplete="new-password" minlength="6">
+      </div>
+    </div>
+  `;
+  openModal('Set a new password', body, async () => {
+    const newPw = document.getElementById('pr-new').value;
+    const confirmPw = document.getElementById('pr-confirm').value;
+    if (!newPw || newPw.length < 6) { toast('Password must be at least 6 characters', 'error'); return false; }
+    if (newPw !== confirmPw) { toast('Passwords do not match', 'error'); return false; }
+    const { error } = await sb.auth.updateUser({ password: newPw });
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    // Strip recovery params from the URL so a refresh doesn't re-trigger
+    // this modal — the session is now a normal logged-in session.
+    if (history.replaceState) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    toast('Password updated successfully', 'success');
+    return true;
+  }, { saveLabel: 'Set password' });
+}
+
 /* -------------------- SETTINGS -------------------- */
 function renderSettings() {
   const s = state.settings;
@@ -18093,8 +18147,27 @@ async function bootstrap() {
   } catch(e) { console.error('Bootstrap error:', e); }
   render();
 
+  // If the user arrived via a password-reset email link, the URL hash
+  // carries type=recovery and the Supabase JS client has already
+  // exchanged the recovery token for a session above. Force a "set new
+  // password" prompt so the reset actually completes — otherwise they'd
+  // be silently logged in without changing anything. See openPasswordResetModal.
+  try {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    if (hashParams.get('type') === 'recovery') {
+      openPasswordResetModal();
+    }
+  } catch(_) { /* malformed hash — ignore */ }
+
   // React to login/logout in another tab or via session expiry
   sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      // Belt-and-braces: also catch the event itself in case the SDK
+      // fires it after our handler attaches (instead of, or in addition
+      // to, processing it during the bootstrap getSession call above).
+      openPasswordResetModal();
+      return;
+    }
     if (event === 'SIGNED_OUT') {
       state = emptyState();
       location.hash = '';
