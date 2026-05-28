@@ -18130,6 +18130,18 @@ function render() {
 
 /* -------------------- INIT -------------------- */
 async function bootstrap() {
+  // Snapshot the URL hash BEFORE anything else — the Supabase SDK's
+  // getSession() call below auto-detects the recovery token in the URL
+  // and STRIPS the hash as part of that. If we read window.location.hash
+  // after getSession, it's already gone. So we grab what we need first.
+  let arrivedFromRecoveryLink = false;
+  let recoveryLinkErrorCode = null;
+  try {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    arrivedFromRecoveryLink = hashParams.get('type') === 'recovery';
+    recoveryLinkErrorCode = hashParams.get('error_code'); // e.g. 'otp_expired'
+  } catch(_) { /* malformed — ignore */ }
+
   // Show a quick splash
   $('#app').innerHTML = `
     <div class="min-h-screen flex items-center justify-center" style="background:#fbf7f1">
@@ -18147,17 +18159,16 @@ async function bootstrap() {
   } catch(e) { console.error('Bootstrap error:', e); }
   render();
 
-  // If the user arrived via a password-reset email link, the URL hash
-  // carries type=recovery and the Supabase JS client has already
-  // exchanged the recovery token for a session above. Force a "set new
-  // password" prompt so the reset actually completes — otherwise they'd
-  // be silently logged in without changing anything. See openPasswordResetModal.
-  try {
-    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    if (hashParams.get('type') === 'recovery') {
-      openPasswordResetModal();
-    }
-  } catch(_) { /* malformed hash — ignore */ }
+  // Force the "set new password" prompt if we arrived via a reset link.
+  // The flag was captured up top BEFORE Supabase stripped the hash.
+  if (arrivedFromRecoveryLink) {
+    openPasswordResetModal();
+  } else if (recoveryLinkErrorCode === 'otp_expired') {
+    // The user clicked an expired or already-used reset link. Without
+    // this nudge they'd silently land on the login screen with no clue
+    // why "Reset Password" didn't seem to do anything.
+    toast('That reset link expired or was already used. Click "Forgot password?" to request a new one.', 'error');
+  }
 
   // React to login/logout in another tab or via session expiry
   sb.auth.onAuthStateChange(async (event, session) => {
