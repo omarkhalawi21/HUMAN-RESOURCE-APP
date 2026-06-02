@@ -1716,8 +1716,12 @@ async function loadAll() {
 // Two-layer API:
 //   resetState()         — the public entry point. Single browser confirm()
 //                          kept for back-compat with console use ("just call
-//                          resetState() to wipe everything"). Floor staff
-//                          never reach this; only admins do.
+//                          resetState() to wipe everything"). Now gated
+//                          behind _dangerModeEnabled() — page must be loaded
+//                          with ?danger=1 in the query string for this to
+//                          run, matching the UI-button gating in
+//                          openResetEverythingModal(). Floor staff never
+//                          reach this; only admins do.
 //   _resetStateImpl()    — the actual destructive work. NO confirm — gating
 //                          is the caller's responsibility. The UI button in
 //                          Settings → Danger zone goes through
@@ -1742,6 +1746,12 @@ async function _resetStateImpl() {
 }
 async function resetState() {
   if (!isAdmin()) return;
+  // Same gate as openResetEverythingModal() — refuse silently outside
+  // danger mode. The button is hidden, the modal entry-point is gated,
+  // and now the legacy console entry-point is gated too. To use this
+  // from the console, the page must currently be loaded with ?danger=1
+  // in the query string.
+  if (!_dangerModeEnabled()) return;
   if (!confirm('Reset all company data? This deletes attendance, leave, payroll, warnings, advances, certificates, archived documents, and any employees without a login account. Schedules and document expiries on remaining employees are kept.')) return;
   await _resetStateImpl();
   toast('Company data reset','success');
