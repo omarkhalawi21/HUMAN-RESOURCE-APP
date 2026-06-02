@@ -3543,6 +3543,7 @@ function renderEmployees() {
                   ` : `
                     <button onclick="openEmployeeModal('${e.id}')" aria-label="Edit ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
                     <button onclick="deleteEmployee('${e.id}')" aria-label="Delete ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+                    ${_dangerModeEnabled() ? `<button onclick="forceDeleteEmployee('${e.id}')" aria-label="Force delete ${escapeHTML(e.firstName+' '+e.lastName)}" title="Force delete (cascade-wipes all their records). ?danger=1 only." class="text-rose-600 hover:text-rose-700 p-1.5 rounded hover:bg-rose-50">${icon('warning','w-4 h-4')}</button>` : ''}
                   `}
                 </td>
               </tr>`;}).join('')}
@@ -3553,13 +3554,84 @@ function renderEmployees() {
   `;
 }
 async function deleteEmployee(id) {
+  const emp = getEmployee(id);
+  if (!emp) return;
+  const name = (emp.firstName + ' ' + (emp.lastName||'')).trim();
   if (!confirm(t('confirm_delete'))) return;
   const { error } = await sb.from('employees').delete().eq('id', id);
-  if (error) { toast(humanizeError(error), 'error'); return; }
+  if (error) {
+    // FK violation = the employee has historical records (attendance,
+    // payroll, leave, etc.) that block a hard delete. humanizeError maps
+    // 23503 to the generic "Some fields are invalid" string which is
+    // accurate for INSERTs/UPDATEs (you picked a bad FK) but actively
+    // misleading for DELETEs (the FK is fine; the problem is child rows
+    // still reference this row). Override that mapping here.
+    const code = error.code || '';
+    const lower = String(error.message || '').toLowerCase();
+    if (code === '23503' || lower.includes('foreign key') || lower.includes('still referenced')) {
+      const force = _dangerModeEnabled()
+        ? ' Or use the red "Force delete" button (visible because ?danger=1 is set) to wipe them AND all their records.'
+        : '';
+      toast(`Can't delete ${name}: they have attendance, payroll, or other records. Open their profile and click Terminate instead to preserve history.${force}`, 'error');
+      return;
+    }
+    toast(humanizeError(error), 'error');
+    return;
+  }
   state.employees = state.employees.filter(e => e.id!==id);
   delete state.leaveBalances[id];
   render();
-  toast('Employee removed', 'success');
+  toast(`${name} removed`, 'success');
+}
+
+// Surgical cascade-delete for one employee + ALL their dependent rows
+// across every FK-related table. Gated behind ?danger=1 because it's
+// irreversible and bypasses the legal-retention reason for Terminate.
+// Intended use: cleaning up test/demo accounts before launch, NOT a
+// substitute for Terminate on real employees (Terminate exists for a
+// reason — KSA labor law expects 5 years of records retention).
+async function forceDeleteEmployee(id) {
+  if (!isAdmin()) { toast('Admins only', 'error'); return; }
+  if (!_dangerModeEnabled()) return; // defence-in-depth, button is hidden
+  const emp = getEmployee(id);
+  if (!emp) return;
+  const me = currentEmployee();
+  if (me && me.id === emp.id) { toast('You cannot force-delete your own account', 'error'); return; }
+  const name = (emp.firstName + ' ' + (emp.lastName||'')).trim();
+  const typed = prompt(
+    `FORCE DELETE ${name}\n\n` +
+    `This permanently deletes them AND all their:\n` +
+    `  • attendance entries\n` +
+    `  • leave requests\n` +
+    `  • payroll history\n` +
+    `  • warnings, advances, deductions\n` +
+    `  • certificates\n` +
+    `  • employee_extras (schedule, document expiries)\n\n` +
+    `There is no undo. KSA labor law expects this data retained for 5 years on real employees — use Terminate instead for those.\n\n` +
+    `Type the first name "${emp.firstName}" to confirm:`
+  );
+  if (typed !== emp.firstName) { toast('Name did not match — cancelled', 'error'); return; }
+  // Delete dependent rows first, in the order least likely to have
+  // further FK references. employee_extras last so its FK ON DELETE
+  // CASCADE (if configured) doesn't fire mid-loop.
+  const dependentTables = [
+    'attendance','leave_requests','payroll',
+    'warnings','advances','deductions',
+    'certificates','employee_extras',
+  ];
+  for (const tbl of dependentTables) {
+    const { error } = await sb.from(tbl).delete().eq('employee_id', id);
+    if (error) {
+      toast(`Cleanup failed on ${tbl}: ${humanizeError(error)}`, 'error');
+      return;
+    }
+  }
+  const { error: empErr } = await sb.from('employees').delete().eq('id', id);
+  if (empErr) { toast(humanizeError(empErr), 'error'); return; }
+  state.employees = state.employees.filter(e => e.id!==id);
+  delete state.leaveBalances[id];
+  render();
+  toast(`${name} force-deleted (employee + all related records)`, 'success');
 }
 
 /* -------------------- TERMINATION (offboarding) --------------------
