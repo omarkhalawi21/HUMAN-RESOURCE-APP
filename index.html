@@ -6871,10 +6871,14 @@ async function changeMyPassword() {
    - the PASSWORD_RECOVERY branch in onAuthStateChange (catches the
      case where the event fires after we've subscribed)
 
-   The modal is dismissible — if the user closes it they remain signed
-   in via the recovery session, but at least the prompt was offered.
-   They can still change their password later via Account → Change
-   Password. */
+   Enforcement: closing the modal without saving (X button, Cancel,
+   backdrop, ESC — all routed through closeModal) signs the user out
+   of the temp recovery session and bounces them back to the login
+   screen. This prevents the silent-login bug from re-entering through
+   the dismiss path: a recovery session that never updates the password
+   is effectively a free login on a one-time-use token. _isPasswordRecoveryFlow
+   is the gate closeModal() checks. */
+let _isPasswordRecoveryFlow = false;
 function openPasswordResetModal() {
   // Avoid stacking — if it's already open (e.g. both triggers fire), bail.
   if (document.querySelector('#modal-root [data-recovery-modal]')) return;
@@ -6891,6 +6895,9 @@ function openPasswordResetModal() {
         <label class="label">Confirm new password</label>
         <input id="pr-confirm" type="password" class="input" autocomplete="new-password" minlength="6">
       </div>
+      <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-2">
+        Closing this without saving will cancel the reset and sign you out — you'll need to request a new reset link to try again.
+      </p>
     </div>
   `;
   openModal('Set a new password', body, async () => {
@@ -6900,6 +6907,11 @@ function openPasswordResetModal() {
     if (newPw !== confirmPw) { toast('Passwords do not match', 'error'); return false; }
     const { error } = await sb.auth.updateUser({ password: newPw });
     if (error) { toast(humanizeError(error), 'error'); return false; }
+    // Success path — clear the flag BEFORE returning true (which causes
+    // submitModal to call closeModal). If we left the flag set, closeModal
+    // would think the user bailed and sign them out right after they
+    // succeeded.
+    _isPasswordRecoveryFlow = false;
     // Strip recovery params from the URL so a refresh doesn't re-trigger
     // this modal — the session is now a normal logged-in session.
     if (history.replaceState) {
@@ -6908,6 +6920,10 @@ function openPasswordResetModal() {
     toast('Password updated successfully', 'success');
     return true;
   }, { saveLabel: 'Set password' });
+  // Set the flag AFTER openModal — openModal calls closeModal on any
+  // pre-existing modal, which would otherwise wrongly trigger the
+  // bail-out branch below.
+  _isPasswordRecoveryFlow = true;
 }
 
 /* -------------------- SETTINGS -------------------- */
@@ -17791,6 +17807,22 @@ function getModalFocusables(root) {
   )).filter(el => el.offsetParent !== null);
 }
 function closeModal() {
+  // If the user is mid-recovery and bailing out (X / Cancel / backdrop /
+  // ESC all funnel through this function), sign them out of the temp
+  // recovery session. The recovery token is one-time-use, so leaving
+  // them authenticated without a new password = silent-login bug we
+  // just fixed re-entering through the dismiss path. They can request
+  // a fresh reset link if they actually wanted to change the password.
+  const bailingFromRecovery = _isPasswordRecoveryFlow;
+  if (bailingFromRecovery) {
+    _isPasswordRecoveryFlow = false;
+    sb.auth.signOut().catch(() => { /* network — best effort */ });
+    // Reset client state defensively in case signOut's SIGNED_OUT event
+    // is delayed or never arrives. Idempotent with the onAuthStateChange
+    // handler that will also reset it.
+    state = emptyState();
+    location.hash = '';
+  }
   document.getElementById('modal-root')?.remove();
   modalOnSave = null;
   // Reset transient form state so it can't bleed into the next modal.
@@ -17809,6 +17841,13 @@ function closeModal() {
     try { _modalPrevFocus.focus(); } catch(_) {}
   }
   _modalPrevFocus = null;
+  // If we bailed from the recovery flow above, finish the bounce: render
+  // the (now-empty) state, which paints the login screen, and surface a
+  // toast explaining what happened.
+  if (bailingFromRecovery) {
+    render();
+    toast('Password reset cancelled — request a new link to try again', 'error');
+  }
 }
 async function submitModal() {
   if (!modalOnSave) return closeModal();
