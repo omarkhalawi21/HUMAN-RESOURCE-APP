@@ -1747,6 +1747,23 @@ async function resetState() {
   toast('Company data reset','success');
 }
 
+// Danger-mode gate. Hides the "Reset everything" entry-point from the
+// Settings UI unless the URL carries ?danger=1 — admins doing normal
+// day-to-day work don't see a "wipe all data" button at all. When they
+// genuinely need it (botched migration, dev wipe, etc.) they paste the
+// flagged URL: https://hr.example.com/?danger=1#/settings
+//
+// Defence-in-depth: also checked at the top of openResetEverythingModal
+// below, so a stray onclick or a DevTools-paste of the function name
+// silently refuses outside danger mode.
+function _dangerModeEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).get('danger') === '1';
+  } catch(_) {
+    return false;
+  }
+}
+
 // The Settings → Danger zone "Reset everything" entry-point. Builds an
 // in-app modal listing the row counts about to be deleted, with a
 // typed-phrase ("RESET HASSAD") confirmation gating the Save button.
@@ -1756,6 +1773,11 @@ async function resetState() {
 const RESET_CONFIRM_PHRASE = 'RESET HASSAD';
 function openResetEverythingModal() {
   if (!isAdmin()) { toast('Admins only', 'error'); return; }
+  // Defence-in-depth: the button is hidden when danger mode is off, but
+  // if anyone calls this function directly (console, bookmarklet, stray
+  // event listener) we refuse here too. No toast — silent refusal is
+  // the right answer for an undocumented power-user URL flag.
+  if (!_dangerModeEnabled()) return;
   // Snapshot counts from in-memory state. Some of these (attendance,
   // inventory_movements) are bulk-load-capped, so the actual DB count
   // may be higher than shown — flagged in the modal copy. The wipe
@@ -7097,10 +7119,10 @@ function renderSettings() {
       </div>
 
       <div class="bg-white rounded-2xl shadow-card p-6 lg:col-span-2">
-        <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">Danger zone</h3>
-        <p class="text-sm text-slate-500 mb-5">Reset all data or clear specific sections.</p>
+        <h3 class="font-display text-lg font-semibold text-slate-900 mb-1">${_dangerModeEnabled() ? 'Danger zone' : 'Admin tools'}</h3>
+        <p class="text-sm text-slate-500 mb-5">${_dangerModeEnabled() ? 'Reset all data or download a snapshot.' : 'Download a snapshot of the data loaded in this tab.'}</p>
         <div class="flex flex-wrap gap-3">
-          <button onclick="openResetEverythingModal()" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>
+          ${_dangerModeEnabled() ? `<button onclick="openResetEverythingModal()" class="btn btn-danger">${icon('trash','w-4 h-4')} Reset everything</button>` : ''}
           <button onclick="downloadBackup()" class="btn btn-ghost">${icon('download','w-4 h-4')} Download admin snapshot</button>
         </div>
         <!-- Snapshot vs. backup clarity — easy to mistake the JSON
