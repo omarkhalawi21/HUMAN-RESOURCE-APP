@@ -1,4 +1,4 @@
-# Hassad HR — Launch checklist
+# Hassad — Launch checklist
 
 Everything HR / Operations / Admin needs to do **before flipping the app to live use**, in roughly the order it should happen. Tick boxes as you go.
 

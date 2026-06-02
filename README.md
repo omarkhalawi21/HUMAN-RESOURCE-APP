@@ -1,6 +1,6 @@
-# Hassad HR
+# Hassad
 
-Single-file employee management web app for Hassad Coffee Roasters. Attendance, leave, payroll, warnings, advances, certificates, IQAMA/Baladiya tracking, and printable HR documents.
+Single-file operations web app for Hassad Coffee Roasters. Attendance, leave, payroll, warnings, advances, certificates, inventory counts, bakery transfers, checklists, maintenance, receipts/OCR, resources (SOPs & training), IQAMA/Baladiya tracking, and printable company documents.
 
 ## Features
 
