@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; object-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; frame-src 'self' data:; base-uri 'self'; form-action 'self';" />
-<title>Hassad Coffee Roasters — HR</title>
+<title>Hassad Coffee Roasters</title>
 <link rel="icon" type="image/png" href="logo.png" />
 <!-- Self-hosted Tailwind, pre-built via `npm run build`. Source: tailwind.input.css + tailwind.config.js. -->
 <link rel="stylesheet" href="tailwind.css" />
@@ -2198,8 +2198,8 @@ function renderLogin() {
     ? 'حصاد كل فنجان<br>يبدأ من هنا.'
     : 'Every cup begins<br/>with the harvest.';
   const subline = isAr
-    ? 'منصة الموارد البشرية لمحمصة حصاد — لتنظيم فريقك بأناقة.'
-    : 'The HR platform for Hassad Coffee Roasters — your team, beautifully organized.';
+    ? 'منصة محمصة حصاد — لتنظيم فريقك بأناقة.'
+    : 'The platform for Hassad Coffee Roasters — your team, beautifully organized.';
   return `
   <div class="min-h-screen w-full flex flex-col md:flex-row relative overflow-hidden bg-[#fbf7f1]">
 
@@ -7437,9 +7437,9 @@ function renderHelp() {
     ${guideStyles}
     <article class="guide-prose bg-white rounded-2xl shadow-card p-8 md:p-10">
       <header class="mb-6 pb-6 border-b border-brand-100">
-        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('file','w-3.5 h-3.5')} Hassad HR</div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('file','w-3.5 h-3.5')} Hassad Coffee Roasters</div>
         <h1 class="font-display text-3xl md:text-4xl font-semibold text-slate-900 mt-1">User Guide</h1>
-        <p class="mt-2 text-slate-500">Practical reference for the HR person running the app day-to-day.</p>
+        <p class="mt-2 text-slate-500">Practical reference for the team running the app day-to-day.</p>
       </header>
 
       <h2 id="guide-sign-in">Signing in</h2>
@@ -7544,7 +7544,7 @@ function renderHelp() {
       <p>For payroll evidence, use <strong>Payroll &rarr; Open Report</strong> for the period in question.</p>
 
       <h2 id="guide-compliance">PDPL compliance &mdash; onboarding new employees</h2>
-      <p>Saudi <strong>Personal Data Protection Law (PDPL)</strong> (enforceable September 2024) requires written consent before processing employee personal data. We've prepared two bilingual templates you must use for every new hire <strong>before</strong> adding them to the HR system. Click to open a printable version on company letterhead:</p>
+      <p>Saudi <strong>Personal Data Protection Law (PDPL)</strong> (enforceable September 2024) requires written consent before processing employee personal data. We've prepared two bilingual templates you must use for every new hire <strong>before</strong> adding them to the system. Click to open a printable version on company letterhead:</p>
       <div class="flex flex-wrap gap-3 my-4">
         <button onclick="printPrivacyNotice()" class="btn btn-primary">${icon('file','w-4 h-4')} Print Privacy Notice</button>
         <button onclick="printConsentForm()" class="btn btn-primary">${icon('file','w-4 h-4')} Print Consent Form</button>
@@ -7562,7 +7562,7 @@ function renderHelp() {
           <li>Counter-sign as the HR representative. Stamp it with the company stamp.</li>
           <li>Scan the signed original. Upload the scan to <strong>Archive &rarr; Upload Document</strong> (category: <em>Policy</em>, name: &ldquo;Consent &mdash; [Employee Name] &mdash; [Date]&rdquo;).</li>
           <li>File the paper original in the employee's personnel folder.</li>
-          <li><strong>Only now</strong> add them to the HR system via Employees &rarr; Add Employee.</li>
+          <li><strong>Only now</strong> add them to the system via Employees &rarr; Add Employee.</li>
         </ol>
       </div>
       <p><strong>If an employee declines</strong> any of the optional consents (GPS / cross-border / photo): the system can still work for them. Disable GPS at clock-in via <strong>Settings &rarr; Capture location on clock-in</strong> (this is global &mdash; consider keeping it on but documenting that this employee opted out manually). Cross-border declination means you can't use the cloud-based system for them at all &mdash; speak to legal counsel before proceeding.</p>
@@ -8106,7 +8106,7 @@ function printPrivacyNotice() {
     </table>
 
     <h2>6. Where your data is stored (cross-border transfer)</h2>
-    <p>Our HR system uses <strong>Supabase</strong>, a cloud database whose servers may be located in the European Union or United States. This means your personal data may be transferred outside the Kingdom of Saudi Arabia. The transfer is necessary to provide the HR system. Supabase implements industry-standard security (encryption in transit and at rest, access controls, audit logging). By signing the consent form you authorize this transfer.</p>
+    <p>Our system uses <strong>Supabase</strong>, a cloud database whose servers may be located in the European Union or United States. This means your personal data may be transferred outside the Kingdom of Saudi Arabia. The transfer is necessary to provide the service. Supabase implements industry-standard security (encryption in transit and at rest, access controls, audit logging). By signing the consent form you authorize this transfer.</p>
 
     <h2>7. Your rights under PDPL</h2>
     <ul>
@@ -8265,7 +8265,7 @@ function printConsentForm() {
 
     <div class="checkbox-row"><span class="cb"></span><strong>GPS location capture</strong> when I clock in or out, used solely to confirm I am physically at my assigned branch. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
     <div class="checkbox-row"><span class="cb"></span><strong>Cross-border storage</strong> of my personal data on Supabase servers, which may be located in the EU or US, with the security safeguards described in the Privacy Notice. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
-    <div class="checkbox-row"><span class="cb"></span><strong>Storage of my photograph</strong> in the HR system for visual identification within the staff directory. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
+    <div class="checkbox-row"><span class="cb"></span><strong>Storage of my photograph</strong> in the system for visual identification within the staff directory. &nbsp; Initials: <span class="blank-line" style="min-width:120px"></span></div>
 
     <p><strong>4. I understand that:</strong></p>
     <ul>
@@ -18038,7 +18038,7 @@ function renderNotAuthorizedGate() {
       </div>
       <h1 class="font-display text-2xl md:text-3xl font-semibold text-slate-900">Not authorized</h1>
       <p class="mt-3 text-sm text-slate-600 leading-relaxed">
-        Your account was created, but you&rsquo;re not registered as an employee of <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong>. The HR system is invite-only.
+        Your account was created, but you&rsquo;re not registered as an employee of <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong>. Access is invite-only.
       </p>
       <p class="mt-3 text-sm text-slate-600 leading-relaxed">
         If you should have access, please ask your HR contact to add you to the system using the email address you signed up with: <strong>${escapeHTML(state.session?.email || '')}</strong>. You can then log back in.
@@ -18062,7 +18062,7 @@ function renderTerminatedGate() {
       </div>
       <h1 class="font-display text-2xl md:text-3xl font-semibold text-slate-900">Account deactivated</h1>
       <p class="mt-3 text-sm text-slate-600 leading-relaxed">
-        Hi ${escapeHTML(me?.firstName || '')}, your employment with <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong> ended on ${fmtDate(me?.terminationDate)}. You no longer have access to the HR system.
+        Hi ${escapeHTML(me?.firstName || '')}, your employment with <strong>${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)}</strong> ended on ${fmtDate(me?.terminationDate)}. You no longer have access to the system.
       </p>
       ${me?.terminationReason ? `<p class="mt-2 text-sm text-slate-500"><strong>Reason on file:</strong> ${escapeHTML(me.terminationReason)}</p>` : ''}
       ${tb ? `<p class="mt-2 text-xs text-slate-400">Actioned by ${escapeHTML((tb.firstName + ' ' + (tb.lastName||'')).trim())}.</p>` : ''}
@@ -18106,7 +18106,7 @@ function renderConsentGate() {
         ${isAr ? 'مرحباً' : 'One quick step'}, ${escapeHTML(me?.firstName||'')}.
       </h1>
       <p class="mt-3 text-sm text-slate-600 leading-relaxed">
-        Before you can use the HR system, please review how we handle your personal data and confirm your consent. This is required by the Saudi Personal Data Protection Law (PDPL). Your answers are recorded with a timestamp.
+        Before you can use the system, please review how we handle your personal data and confirm your consent. This is required by the Saudi Personal Data Protection Law (PDPL). Your answers are recorded with a timestamp.
       </p>
 
       <div class="mt-6">
@@ -18130,7 +18130,7 @@ function renderConsentGate() {
           <input id="cg-xb" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0" oninput="updateConsentSubmit()">
           <div class="text-sm">
             <div class="font-semibold text-slate-900">I consent to my data being stored on cloud servers outside Saudi Arabia <span class="text-rose-600">*</span></div>
-            <div class="text-slate-500 text-xs mt-0.5">Required. Our HR system uses Supabase (EU/US). Without this we cannot provide the service.</div>
+            <div class="text-slate-500 text-xs mt-0.5">Required. Our system uses Supabase (EU/US). Without this we cannot provide the service.</div>
           </div>
         </label>
 
@@ -18146,7 +18146,7 @@ function renderConsentGate() {
           <input id="cg-photo" type="checkbox" class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0" oninput="updateConsentSubmit()">
           <div class="text-sm">
             <div class="font-semibold text-slate-900">Store my photograph in the staff directory <span class="text-rose-600">*</span></div>
-            <div class="text-slate-500 text-xs mt-0.5">Required. Used for visual identification across the HR system.</div>
+            <div class="text-slate-500 text-xs mt-0.5">Required. Used for visual identification across the system.</div>
           </div>
         </label>
 
