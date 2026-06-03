@@ -21,7 +21,7 @@ Single-file operations web app for Hassad Coffee Roasters. Attendance, leave, pa
 
 Static HTML file deployed to GitHub Pages. Backend is Supabase (Auth + Postgres) for core tables (employees, attendance, leave, payroll, branches, warnings, advances, certificates, archive, employee extras, company stamp).
 
-**Live**: https://omarkhalawi21.github.io/HUMAN-RESOURCE-APP/
+**Live**: https://app.hasadco.sa/ (custom domain via Souq T2 → GitHub Pages, HTTPS via Let's Encrypt). Legacy URL `https://omarkhalawi21.github.io/HUMAN-RESOURCE-APP/` still serves the same content during the cutover window.
 
 **Local development**: open `index.html` in any modern browser. Connects to the same Supabase project.
 
