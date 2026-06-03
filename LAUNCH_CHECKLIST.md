@@ -16,7 +16,7 @@ This complements the existing docs:
 
 The engineering side is done. Spot-check before launch:
 
-- [ ] **Latest app deployed** — `main` branch is what `omarkhalawi21.github.io/HUMAN-RESOURCE-APP/` serves (GitHub Pages auto-deploys on every merge to `main`). Open the URL, hard-refresh (Cmd+Shift+R), confirm you see the current build.
+- [ ] **Latest app deployed** — `main` branch is what `app.hasadco.sa` serves (GitHub Pages auto-deploys on every merge to `main`; the legacy `omarkhalawi21.github.io/HUMAN-RESOURCE-APP/` URL still serves the same content). Open the URL, hard-refresh (Cmd+Shift+R), confirm you see the current build.
 - [ ] **SQL migrations are live on prod Supabase** — blocks 49–60 applied & verified. Run this diagnostic in the prod project's SQL editor; expect all 5 `true`:
   ```sql
   SELECT
