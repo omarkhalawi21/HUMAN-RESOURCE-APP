@@ -3595,6 +3595,7 @@ function renderEmployees() {
                     <button onclick="approvePendingEmployee('${e.id}')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} Approve</button>
                     <button onclick="rejectPendingEmployee('${e.id}')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} Reject</button>
                   ` : `
+                    ${!e.user_id ? `<button onclick="inviteEmployeeById('${e.id}')" aria-label="Send login invitation to ${escapeHTML(e.firstName+' '+e.lastName)}" title="Send login invitation (creates auth account + emails magic link)" class="text-slate-500 hover:text-brand-700 p-1.5 rounded hover:bg-slate-100">${icon('check','w-4 h-4')}</button>` : ''}
                     <button onclick="openEmployeeModal('${e.id}')" aria-label="Edit ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
                     <button onclick="deleteEmployee('${e.id}')" aria-label="Delete ${escapeHTML(e.firstName+' '+e.lastName)}" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
                     ${_dangerModeEnabled() ? `<button onclick="forceDeleteEmployee('${e.id}')" aria-label="Force delete ${escapeHTML(e.firstName+' '+e.lastName)}" title="Force delete (cascade-wipes all their records). ?danger=1 only." class="text-rose-600 hover:text-rose-700 p-1.5 rounded hover:bg-rose-50">${icon('warning','w-4 h-4')}</button>` : ''}
@@ -7667,22 +7668,23 @@ async function saveSettings() {
   toast('Settings saved', 'success');
 }
 async function resetUserPassword(uid_) {
-  // We can't directly reset another user's password from the client.
-  // Instead, send them a Supabase reset-password email.
+  // The Settings → Auth Users "reset pw" button funnels here. We do the
+  // right thing based on whether the target employee already has an auth
+  // account or not:
+  //   - has user_id  → standard sb.auth.resetPasswordForEmail()
+  //   - no user_id   → send an invitation via the Edge Function (creates
+  //                    auth.users + emails them a magic link)
+  // Both flows ultimately produce an email from team@hasadco.sa via our
+  // Resend SMTP. The user gets the right outcome regardless of state.
   const emp = state.employees.find(e => 'u-'+e.id === uid_);
   if (!emp) return;
   if (!emp.email) { toast('No email on record', 'error'); return; }
 
-  // If the employee was admin-added via the directory but has never signed
-  // up themselves (no auth.users row → user_id is null), calling
-  // resetPasswordForEmail() is a silent no-op: Supabase refuses to disclose
-  // whether an email exists in auth.users (anti-enumeration), so no email
-  // is sent, no error is returned, and the admin is left wondering why the
-  // user never got the email. Surface this explicitly with the two paths
-  // forward and a copy-email helper.
   if (!emp.user_id) {
-    showNotYetSignedUpHelp(emp);
-    return;
+    // No auth account yet — sb.auth.resetPasswordForEmail() would silently
+    // do nothing (Supabase refuses to disclose whether an email exists in
+    // auth.users — anti-enumeration). Route to the invite flow instead.
+    return inviteEmployee(emp);
   }
 
   // Pass redirectTo explicitly built from origin + pathname — see the
@@ -7693,44 +7695,93 @@ async function resetUserPassword(uid_) {
   toast(`Reset link sent to ${emp.email}`, 'success');
 }
 
-// Helper modal for the "employee in directory but no login account yet"
-// case. Tells the admin both supported paths and gives them a one-click
-// copy of the email to paste into Supabase Dashboard.
-function showNotYetSignedUpHelp(emp) {
+// Directory-row entry point (the check-icon button next to Edit on
+// employees who don't have a login account yet). Same behavior as
+// inviteEmployee() but accepts an id so the inline button can call it
+// without exposing the full employee object in the markup.
+function inviteEmployeeById(id) {
+  const emp = state.employees.find(e => e.id === id);
+  if (emp) inviteEmployee(emp);
+}
+
+// Sends a login invitation to a pre-added employee via the invite-user
+// Supabase Edge Function. The function (a) checks the caller is admin/hr,
+// (b) calls auth.admin.inviteUserByEmail() with the service_role key.
+// Result: an email goes to the employee from team@hasadco.sa with a
+// magic-link "Accept invitation" button. When they click it and set a
+// password, our handle_new_user trigger links their new auth account
+// to this employees row by matching email (set-once user_id, fixed in
+// SQL block 62).
+async function inviteEmployee(emp) {
+  if (!canManagePeople()) { toast('Admin or HR only', 'error'); return; }
+  if (!emp || !emp.email) { toast('No email on record', 'error'); return; }
+  const fullName = (emp.firstName + ' ' + (emp.lastName||'')).trim() || emp.email;
+  if (!confirm(
+    `Send a login invitation to ${fullName} at ${emp.email}?\n\n` +
+    `They'll receive an email from team@hasadco.sa with a button to ` +
+    `accept the invitation, set their own password, and sign in. ` +
+    `Their account is auto-linked to this directory row.`
+  )) return;
+
+  try {
+    const { data, error } = await sb.functions.invoke('invite-user', {
+      body: {
+        email: emp.email,
+        redirectTo: window.location.origin + window.location.pathname,
+      },
+    });
+    if (error) {
+      // Edge Function returned non-2xx OR couldn't be reached. If the
+      // function isn't deployed yet, fall back to the manual help modal
+      // so the admin at least has a working path.
+      const status = error.context?.status;
+      if (status === 404) {
+        toast('Invite function not deployed — see manual steps', 'error');
+        showInviteFallbackHelp(emp);
+        return;
+      }
+      // Other status: data may still have a structured error message
+      // from our function (e.g. "Admin or HR access required").
+      const msg = (error.context?.body && JSON.parse(error.context.body).error) || error.message || 'Invite failed';
+      toast(msg, 'error');
+      return;
+    }
+    if (data?.error) {
+      toast(`Invite failed: ${data.error}`, 'error');
+      return;
+    }
+    toast(`Invitation sent to ${emp.email} — email arrives from team@hasadco.sa`, 'success');
+  } catch (e) {
+    console.error('inviteEmployee error:', e);
+    toast(`Invite failed: ${e.message || 'Network error'}`, 'error');
+    showInviteFallbackHelp(emp);
+  }
+}
+
+// Manual fallback shown ONLY when the Edge Function isn't deployed or
+// the network call fails entirely. Spells out the Supabase Dashboard
+// path so admin isn't stuck. Same content as the previous always-shown
+// help modal, demoted to a backup since the happy path is now the
+// one-click invite.
+function showInviteFallbackHelp(emp) {
   const fullName = (emp.firstName + ' ' + (emp.lastName||'')).trim();
   const body = `
     <div class="space-y-4">
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
-        <div class="font-semibold mb-1">${icon('warning','w-4 h-4 inline')} ${escapeHTML(fullName)} doesn&rsquo;t have a login account yet</div>
+        <div class="font-semibold mb-1">${icon('warning','w-4 h-4 inline')} In-app invite isn&rsquo;t available right now</div>
         <div class="text-amber-800 text-xs leading-relaxed">
-          They&rsquo;re in the employee directory, but they haven&rsquo;t created their <code class="bg-amber-100 px-1 rounded">auth.users</code> account. Password reset only works for accounts that already exist &mdash; Supabase silently does nothing if the email isn&rsquo;t in auth (anti-enumeration). That&rsquo;s why nobody ever receives the email.
+          The Supabase Edge Function (<code class="bg-amber-100 px-1 rounded">invite-user</code>) that normally sends the invitation isn&rsquo;t reachable. You can do it manually from the Supabase Dashboard in the meantime &mdash; same end result.
         </div>
       </div>
-
-      <div>
-        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Two ways to onboard them</div>
-        <div class="space-y-3">
-
-          <div class="border border-slate-200 rounded-xl p-4">
-            <div class="font-semibold text-slate-800 mb-1">Option A &mdash; You send them an invite (recommended)</div>
-            <ol class="text-xs text-slate-600 list-decimal ms-5 space-y-1 leading-relaxed">
-              <li>Open <strong>Supabase Dashboard &rarr; Authentication &rarr; Users</strong>.</li>
-              <li>Click <strong>&ldquo;Add user&rdquo; &rarr; &ldquo;Send invitation&rdquo;</strong>.</li>
-              <li>Paste the email below and confirm.</li>
-            </ol>
-            <div class="text-xs text-slate-500 mt-2">Supabase creates the auth account, sends a welcome email through Resend (from <code class="bg-slate-100 px-1 rounded">team@hasadco.sa</code>), and our trigger auto-links it to this directory row.</div>
-          </div>
-
-          <div class="border border-slate-200 rounded-xl p-4">
-            <div class="font-semibold text-slate-800 mb-1">Option B &mdash; They sign up themselves</div>
-            <div class="text-xs text-slate-600 leading-relaxed">
-              Tell them to go to <a href="${escapeHTML(window.location.origin + window.location.pathname)}" target="_blank" rel="noopener" class="text-brand-700 hover:underline">${escapeHTML(window.location.host + window.location.pathname)}</a> and click <strong>&ldquo;Create one&rdquo;</strong> at the bottom of the login screen. They must use the same email below. Our trigger links them automatically.
-            </div>
-          </div>
-
-        </div>
+      <div class="border border-slate-200 rounded-xl p-4">
+        <div class="font-semibold text-slate-800 mb-1">Manual fallback: invite via Supabase Dashboard</div>
+        <ol class="text-xs text-slate-600 list-decimal ms-5 space-y-1 leading-relaxed">
+          <li>Open <strong>Supabase Dashboard &rarr; Authentication &rarr; Users</strong>.</li>
+          <li>Click <strong>&ldquo;Add user&rdquo; &rarr; &ldquo;Send invitation&rdquo;</strong>.</li>
+          <li>Paste the email below and confirm.</li>
+        </ol>
+        <div class="text-xs text-slate-500 mt-2">Supabase will email them from <code class="bg-slate-100 px-1 rounded">team@hasadco.sa</code> via Resend. The login trigger auto-links them to <strong>${escapeHTML(fullName)}</strong>&rsquo;s directory row.</div>
       </div>
-
       <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center gap-3">
         <div class="flex-1 min-w-0">
           <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Their email</div>
@@ -7740,10 +7791,7 @@ function showNotYetSignedUpHelp(emp) {
       </div>
     </div>
   `;
-  openModal('How to onboard this employee', body, async () => {
-    // No save action — this modal is informational. Close on click.
-    return true;
-  }, { saveLabel: 'Got it' });
+  openModal('Invite this employee', body, async () => true, { saveLabel: 'Got it' });
 }
 async function toggleAdmin(uid_) {
   const emp = state.employees.find(e => 'u-'+e.id === uid_);
