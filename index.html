@@ -767,6 +767,42 @@ function expiryStatus(dateStr) {
 const DAY_NAMES_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_NAMES_AR = ['أحد','إثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
 function dayNames() { return state.settings.lang === 'ar' ? DAY_NAMES_AR : DAY_NAMES_EN; }
+/* Open a popup window for a printable document.
+
+   Why this helper exists:
+   The previous pattern was window.open('') + document.write(html) +
+   document.close(). It rendered correctly on screen (the print preview
+   showed the letter content), but in Safari the popup's document
+   state gets discarded *after* window.print() is called. The print
+   preview reads the live DOM (works), but the actual PDF save reads
+   a re-rendered state that's been wiped — so users get a blank PDF.
+   Discovered on 2026-06-05 while printing a warning letter.
+
+   The fix: navigate the popup to a Blob URL containing the HTML. The
+   popup is now a real loaded document (same as visiting any URL), and
+   Safari's print machinery treats it normally. Same behavior on Chrome
+   and Firefox; no downside.
+
+   Returns the window reference (caller can call .focus() if needed),
+   or null if the popup was blocked. Caller is expected to handle the
+   null case (the toast is shown here). */
+function openPrintWindow(html) {
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if (!win) {
+    URL.revokeObjectURL(url);
+    toast('Pop-up blocked. Allow pop-ups for this site.', 'error');
+    return null;
+  }
+  try { win.opener = null; } catch(_) {}
+  // Revoke the blob URL after the popup has had time to load + print.
+  // 60s is huge overkill but harmless — the URL only exists in memory
+  // and gets cleaned up when the popup closes anyway. Belt-and-braces.
+  setTimeout(() => { try { URL.revokeObjectURL(url); } catch(_) {} }, 60000);
+  return win;
+}
+
 function logoURL() {
   // Absolute URL so it loads correctly inside a popup window with about:blank
   try { return new URL('logo.png', window.location.href).href; }
@@ -4496,10 +4532,7 @@ function printAttendanceEvidence() {
     <div class="doc-footer">Computer-generated attendance evidence &middot; ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 function renderAttendance() {
   const me = currentEmployee();
@@ -5367,10 +5400,7 @@ function generatePayrollReport(period) {
     <div class="doc-footer">Payroll report for ${escapeHTML(monthName)} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 function openPayslip(payrollId) {
   const p = state.payroll.find(x => x.id===payrollId);
@@ -5437,11 +5467,7 @@ function openPayslip(payrollId) {
     <div class="doc-footer">Payslip number PS-${escapeHTML(p.id.slice(-6).toUpperCase())} &middot; Computer-generated, signature not required</div>
   </div>
   </body></html>`;
-  const w = window.open('', '_blank');
-  if (!w) { toast('Pop-up blocked. Allow pop-ups for this site.', 'error'); return; }
-  try { w.opener = null; } catch(_) {}
-  w.document.write(html);
-  w.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 // Transient: per-employee manual adjustment lines entered in the Run
@@ -8240,10 +8266,7 @@ function printPrivacyNotice() {
     <div class="doc-footer">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)} &middot; إشعار خصوصية الموظفين &middot; ${fmtDate(todayISO())}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 function printConsentForm() {
@@ -8359,10 +8382,7 @@ function printConsentForm() {
     <div class="doc-footer">${escapeHTML(state.settings.legalName || LETTERHEAD_DEFAULTS.legalName)} &middot; نموذج موافقة الموظف &middot; ${fmtDate(todayISO())}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 function printWarningLetter(id) {
@@ -8400,10 +8420,7 @@ function printWarningLetter(id) {
     <div class="doc-footer">Document reference WL-${escapeHTML(w.id.slice(-6).toUpperCase())} &middot; Confidential personnel record</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 /* -------------------- SALARY ADVANCES -------------------- */
@@ -8631,10 +8648,7 @@ function printAdvanceSlip(id) {
     <div class="doc-footer">Slip reference ADV-${escapeHTML(a.id.slice(-6).toUpperCase())} &middot; Confidential financial document</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 /* -------------------- WORK MANAGEMENT (tasks) -------------------- */
@@ -9748,10 +9762,7 @@ function printComplianceReport() {
     <div class="doc-footer">Compliance report &middot; ${escapeHTML(branch)} ${escapeHTML(monthLabel(ym))} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 /* -------------------- DEDUCTIONS -------------------- */
@@ -10004,10 +10015,7 @@ function printDeductionSlip(id) {
     <div class="doc-footer">Slip reference DED-${escapeHTML(d.id.slice(-6).toUpperCase())} &middot; Confidential financial document</div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 /* -------------------- CERTIFICATES -------------------- */
@@ -10264,10 +10272,7 @@ function printCertificate(id) {
     </div>
   </div>
   </body></html>`;
-  const win = window.open('', '_blank');
-  if (!win) { toast('Pop-up blocked. Allow pop-ups.', 'error'); return; }
-  try { win.opener = null; } catch(_) {}
-  win.document.write(html); win.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 /* -------------------- DOCUMENTS (IQAMA & Baladiya tracker) -------------------- */
@@ -16188,11 +16193,7 @@ function printWeeklyInventoryReport() {
   </div>
   </body></html>`;
 
-  const w = window.open('', '_blank');
-  if (!w) { toast('Popup blocked — allow popups to print', 'error'); return; }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 // Faisaliyah cafe pickup. Slim modal for the most common roaster
@@ -17849,11 +17850,7 @@ function printReceiptsReport() {
   </div>
   </body></html>`;
 
-  const w = window.open('', '_blank');
-  if (!w) { toast('Popup blocked — allow popups to print', 'error'); return; }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  if (!openPrintWindow(html)) return;
 }
 
 /* -------------------- MODAL SYSTEM -------------------- */
