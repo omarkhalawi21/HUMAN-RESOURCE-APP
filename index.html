@@ -7672,12 +7672,78 @@ async function resetUserPassword(uid_) {
   const emp = state.employees.find(e => 'u-'+e.id === uid_);
   if (!emp) return;
   if (!emp.email) { toast('No email on record', 'error'); return; }
+
+  // If the employee was admin-added via the directory but has never signed
+  // up themselves (no auth.users row → user_id is null), calling
+  // resetPasswordForEmail() is a silent no-op: Supabase refuses to disclose
+  // whether an email exists in auth.users (anti-enumeration), so no email
+  // is sent, no error is returned, and the admin is left wondering why the
+  // user never got the email. Surface this explicitly with the two paths
+  // forward and a copy-email helper.
+  if (!emp.user_id) {
+    showNotYetSignedUpHelp(emp);
+    return;
+  }
+
   // Pass redirectTo explicitly built from origin + pathname — see the
   // matching note in the user-facing "Reset password" modal handler for why.
   const redirectTo = window.location.origin + window.location.pathname;
   const { error } = await sb.auth.resetPasswordForEmail(emp.email, { redirectTo });
   if (error) { toast(humanizeError(error), 'error'); return; }
   toast(`Reset link sent to ${emp.email}`, 'success');
+}
+
+// Helper modal for the "employee in directory but no login account yet"
+// case. Tells the admin both supported paths and gives them a one-click
+// copy of the email to paste into Supabase Dashboard.
+function showNotYetSignedUpHelp(emp) {
+  const fullName = (emp.firstName + ' ' + (emp.lastName||'')).trim();
+  const body = `
+    <div class="space-y-4">
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
+        <div class="font-semibold mb-1">${icon('warning','w-4 h-4 inline')} ${escapeHTML(fullName)} doesn&rsquo;t have a login account yet</div>
+        <div class="text-amber-800 text-xs leading-relaxed">
+          They&rsquo;re in the employee directory, but they haven&rsquo;t created their <code class="bg-amber-100 px-1 rounded">auth.users</code> account. Password reset only works for accounts that already exist &mdash; Supabase silently does nothing if the email isn&rsquo;t in auth (anti-enumeration). That&rsquo;s why nobody ever receives the email.
+        </div>
+      </div>
+
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Two ways to onboard them</div>
+        <div class="space-y-3">
+
+          <div class="border border-slate-200 rounded-xl p-4">
+            <div class="font-semibold text-slate-800 mb-1">Option A &mdash; You send them an invite (recommended)</div>
+            <ol class="text-xs text-slate-600 list-decimal ms-5 space-y-1 leading-relaxed">
+              <li>Open <strong>Supabase Dashboard &rarr; Authentication &rarr; Users</strong>.</li>
+              <li>Click <strong>&ldquo;Add user&rdquo; &rarr; &ldquo;Send invitation&rdquo;</strong>.</li>
+              <li>Paste the email below and confirm.</li>
+            </ol>
+            <div class="text-xs text-slate-500 mt-2">Supabase creates the auth account, sends a welcome email through Resend (from <code class="bg-slate-100 px-1 rounded">team@hasadco.sa</code>), and our trigger auto-links it to this directory row.</div>
+          </div>
+
+          <div class="border border-slate-200 rounded-xl p-4">
+            <div class="font-semibold text-slate-800 mb-1">Option B &mdash; They sign up themselves</div>
+            <div class="text-xs text-slate-600 leading-relaxed">
+              Tell them to go to <a href="${escapeHTML(window.location.origin + window.location.pathname)}" target="_blank" rel="noopener" class="text-brand-700 hover:underline">${escapeHTML(window.location.host + window.location.pathname)}</a> and click <strong>&ldquo;Create one&rdquo;</strong> at the bottom of the login screen. They must use the same email below. Our trigger links them automatically.
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Their email</div>
+          <div class="text-sm font-mono text-slate-800 truncate">${escapeHTML(emp.email)}</div>
+        </div>
+        <button type="button" onclick="(function(btn){ navigator.clipboard.writeText('${emp.email.replace(/'/g,"\\'")}').then(() => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1400); }).catch(() => toast('Copy failed — select and copy manually', 'error')); })(this)" class="btn btn-primary btn-sm shrink-0">${icon('file','w-3.5 h-3.5')} Copy</button>
+      </div>
+    </div>
+  `;
+  openModal('How to onboard this employee', body, async () => {
+    // No save action — this modal is informational. Close on click.
+    return true;
+  }, { saveLabel: 'Got it' });
 }
 async function toggleAdmin(uid_) {
   const emp = state.employees.find(e => 'u-'+e.id === uid_);
