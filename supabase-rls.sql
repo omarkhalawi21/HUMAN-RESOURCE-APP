@@ -3444,6 +3444,78 @@ ALTER TABLE public.warnings
   ADD COLUMN IF NOT EXISTS national_id text;
 
 -- =============================================================
+-- 62. EMPLOYEE LINKING FIX — relax user_id immutability to set-once
+-- =============================================================
+-- Bug found 2026-06-05 while inviting admin-pre-added employees:
+-- Supabase Dashboard "Invite user" failed with
+--    "Failed to invite user: user_id is immutable"
+-- The same flow that lets a pre-added employee sign up via
+-- app.hasadco.sa was also silently broken.
+--
+-- Root cause: the enforce_employee_update_rules trigger throws
+-- `user_id is immutable` on ANY user_id change. That includes the
+-- legitimate NULL → UUID transition that handle_new_user performs
+-- when linking a freshly-created auth.users row to its pre-existing
+-- employees row (the whole point of the "admin pre-adds, employee
+-- signs up later" flow):
+--
+--   handle_new_user (AFTER INSERT on auth.users) does:
+--     UPDATE public.employees
+--        SET user_id = NEW.id, ...
+--      WHERE id = invited_emp_id;  -- OLD.user_id is NULL
+--
+-- That UPDATE trips the BEFORE-UPDATE immutability trigger which
+-- raises, the surrounding transaction rolls back, and the entire
+-- auth.users row is rolled back with it. Net result: no login
+-- account, invite/signup fails, admin sees the cryptic error.
+--
+-- Only the all-NEW-employee path worked (Omar, TEVIN at first
+-- signup): there's no pre-existing employees row, handle_new_user
+-- INSERTs one — INSERT doesn't fire the BEFORE-UPDATE trigger.
+--
+-- Fix: redefine the trigger function with set-once semantics.
+--   NULL  → UUID   ALLOWED  (the linking case — the bug)
+--   UUID  → UUID'  BLOCKED  (no post-hoc rewiring)
+--   UUID  → NULL   BLOCKED  (no unlinking)
+--
+-- The trigger is BEFORE UPDATE so it still runs on every employees
+-- UPDATE — only the rejection condition is loosened. Self-role
+-- protection (a separate check in the same function) is unchanged.
+--
+-- This idempotently supersedes both earlier definitions of the
+-- function (lines ~171 and ~1800 in this file).
+CREATE OR REPLACE FUNCTION public.enforce_employee_update_rules()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Self-role-change protection unchanged.
+  IF NEW.user_id = auth.uid()
+     AND NEW.system_role IS DISTINCT FROM OLD.system_role THEN
+    RAISE EXCEPTION 'You cannot change your own role';
+  END IF;
+
+  -- Set-once semantics on user_id. NULL → UUID is the linker case
+  -- and is now allowed; everything else (UUID → different UUID,
+  -- UUID → NULL) still throws.
+  IF OLD.user_id IS NOT NULL
+     AND NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+    RAISE EXCEPTION 'user_id is immutable once set';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- Re-attach the trigger to be safe (CREATE OR REPLACE FUNCTION
+-- doesn't touch the trigger binding, but the trigger may have been
+-- dropped during an earlier troubleshooting attempt). Idempotent.
+DROP TRIGGER IF EXISTS enforce_employee_update_rules_trigger ON public.employees;
+CREATE TRIGGER enforce_employee_update_rules_trigger
+  BEFORE UPDATE ON public.employees
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_employee_update_rules();
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
