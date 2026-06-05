@@ -6,6 +6,19 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; object-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; frame-src 'self' data:; base-uri 'self'; form-action 'self';" />
 <title>Hassad Coffee Roasters</title>
 <link rel="icon" type="image/png" href="logo.png" />
+<!-- Home-screen icon + short label for iOS Safari "Add to Home Screen".
+     Without these, iOS uses a webpage screenshot as the icon (the grey "H"
+     placeholder a user reported), and the long page title gets truncated
+     to "HassadCoffeeR…". apple-mobile-web-app-title overrides the title
+     specifically for the home-screen label so we get the brand short-form
+     instead. apple-touch-icon — iOS doesn't care about exact size at the
+     link level; the 4500×4500 source gets downscaled and rounded-corner-
+     ed by the OS automatically. theme-color also nicely tints the mobile
+     browser address bar to match the coffee-brown brand. -->
+<link rel="apple-touch-icon" href="logo.png" />
+<meta name="apple-mobile-web-app-title" content="Hassad" />
+<meta name="application-name" content="Hassad" />
+<meta name="theme-color" content="#7a3b14" />
 <!-- Self-hosted Tailwind, pre-built via `npm run build`. Source: tailwind.input.css + tailwind.config.js. -->
 <link rel="stylesheet" href="tailwind.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
