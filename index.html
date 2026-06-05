@@ -1067,6 +1067,10 @@ function mapWarningFromDb(r) {
     severity: r.severity, type: r.type||'',
     date: r.date, reason: r.reason||'', notes: r.notes||'',
     issuedBy: r.issued_by, issuedAt: r.issued_at,
+    // Optional per-warning override of the National ID / Residency
+    // Number printed on the letter. Falls back to employee.iqama
+    // in printWarningLetter when null. See SQL block 61.
+    nationalId: r.national_id||'',
   };
 }
 function warningToDb(w) {
@@ -1074,6 +1078,7 @@ function warningToDb(w) {
     employee_id: w.employeeId, severity: w.severity, type: w.type||null,
     date: w.date||null, reason: w.reason||null, notes: w.notes||null,
     issued_by: w.issuedBy||null,
+    national_id: (w.nationalId||'').trim() || null,
   };
 }
 function mapAdvanceFromDb(r) {
@@ -7986,15 +7991,37 @@ function renderWarnings() {
     </div>
   `;
 }
+// Auto-fills the National ID field in the warning modal from the
+// currently-selected employee's IQAMA. Runs on initial render and
+// whenever the employee dropdown changes. If the admin has typed
+// their own value, it's overwritten on employee change — acceptable
+// trade-off because the typical flow is pick-employee-first, then
+// fields cascade. Admin can re-edit after auto-fill if needed.
+function autoFillWarningNationalId() {
+  const empId = document.getElementById('w-emp')?.value;
+  const field = document.getElementById('w-national-id');
+  if (!field || !empId) return;
+  const ex = getEmpExtras(empId);
+  field.value = ex?.iqama?.number || '';
+}
 function openWarningModal() {
   const me = currentEmployee();
+  // Pre-compute the first employee's iqama so the field isn't empty
+  // on initial render before the user touches the dropdown.
+  const firstEmp = state.employees[0];
+  const initialNationalId = firstEmp ? (getEmpExtras(firstEmp.id)?.iqama?.number || '') : '';
   const form = `
     <div class="grid grid-cols-2 gap-4">
       <div class="col-span-2">
         <label class="label">Employee</label>
-        <select id="w-emp" class="input">
+        <select id="w-emp" class="input" onchange="autoFillWarningNationalId()">
           ${state.employees.map(e=>`<option value="${e.id}">${escapeHTML(e.firstName+' '+e.lastName)} — ${escapeHTML(e.role)}</option>`).join('')}
         </select>
+      </div>
+      <div class="col-span-2">
+        <label class="label">National ID / Residency Number</label>
+        <input id="w-national-id" class="input" value="${escapeHTML(initialNationalId)}" placeholder="Auto-fills from the employee profile — edit if needed">
+        <div class="text-xs text-slate-500 mt-1">This appears on the printed warning letter. Leave blank to print &mdash; on the letter.</div>
       </div>
       <div>
         <label class="label">Severity</label>
@@ -8039,6 +8066,7 @@ function openWarningModal() {
       date:       $('#w-date').value || todayISO(),
       reason:     $('#w-reason').value.trim(),
       notes:      $('#w-notes').value.trim(),
+      nationalId: $('#w-national-id').value.trim(),
       issuedBy:   me.id,
     };
     if (!w.employeeId || !w.reason) { toast('Employee and reason are required', 'error'); return false; }
@@ -8390,7 +8418,9 @@ function printWarningLetter(id) {
   if (!w) return;
   const e = getEmployee(w.employeeId);
   const ex = getEmpExtras(e.id);
-  const nationalId = ex.iqama?.number || '—';
+  // Per-warning override (admin-typed in the form) takes precedence,
+  // then the profile IQAMA, then a dash. See SQL block 61.
+  const nationalId = (w.nationalId||'').trim() || ex.iqama?.number || '—';
   const sevAction  = { verbal:'Verbal Warning', written:'Written Warning', final:'Final Written Warning' }[w.severity] || 'Warning';
   const fullName   = (e.firstName + ' ' + (e.lastName||'')).trim();
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Warning Letter — ${escapeHTML(fullName)}</title>
