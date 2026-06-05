@@ -3424,6 +3424,26 @@ ALTER TABLE public.leave_requests
   CHECK (leave_type IN ('annual','sick','personal'));
 
 -- =============================================================
+-- 61. WARNINGS — admin-editable National ID per warning
+-- =============================================================
+-- The printable warning letter prints a "National ID / Residency
+-- Number" field that previously pulled exclusively from the
+-- employee's IQAMA in their profile (employee_extras.iqama). Two
+-- real-world issues with that:
+--   (a) Sometimes the IQAMA hasn't been entered in the profile
+--       when the first warning needs issuing — admin had to bail
+--       out, update the profile, then come back, just to get the
+--       ID on the printed letter.
+--   (b) Admin may want to override per-warning (an old contract,
+--       a different ID type for the specific incident's paper
+--       trail, etc.).
+-- This column carries an override. The printed letter falls back
+-- to the employee profile when this is null, then to "—".
+-- Added 2026-06-05.
+ALTER TABLE public.warnings
+  ADD COLUMN IF NOT EXISTS national_id text;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
