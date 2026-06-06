@@ -1162,6 +1162,9 @@ function mapTodoListFromDb(r) {
     id: r.id, ownerId: r.owner_id, name: r.name||'',
     items: Array.isArray(r.items) ? r.items : [],
     sortOrder: Number(r.sort_order)||0,
+    // SQL block 63: recurrence + last reset
+    recurrence: r.recurrence || 'once',
+    lastResetDate: r.last_reset_date || null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -1170,6 +1173,8 @@ function todoListToDb(t) {
     owner_id: t.ownerId, name: t.name||'',
     items: Array.isArray(t.items) ? t.items : [],
     sort_order: Number(t.sortOrder)||0,
+    recurrence: t.recurrence || 'once',
+    last_reset_date: t.lastResetDate || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -8835,18 +8840,120 @@ function todoToggleDone(id) {
 function canUsePersonalTodos() {
   return hasRole('admin','operations','accounting','hr','marketing');
 }
+// Recurring lists (daily/weekly/monthly auto-uncheck) are admin-only.
+// Non-admin head-office roles still see and create one-shot 'once' lists
+// exactly as before. See SQL block 63 for the schema side.
+function canUseRecurringTodos() {
+  return isAdmin();
+}
 function todoGenId() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(_) {}
   return 'ti_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
 }
-async function createTodoList(name) {
+
+// Returns the canonical "period anchor" date for a recurrence on a given
+// YYYY-MM-DD date. Two dates belong to the SAME period iff their anchors
+// match. Used both to detect when a recurring list is stale AND to render
+// items as virtually-unchecked before the DB catches up.
+function todoPeriodAnchor(dateISO, recurrence) {
+  if (!dateISO) return null;
+  if (recurrence === 'daily') return dateISO;
+  if (recurrence === 'weekly') {
+    // ISO week: Monday is the anchor.
+    const d = new Date(dateISO + 'T00:00:00');
+    const wd = d.getDay();                 // 0 (Sun) .. 6 (Sat)
+    const daysFromMonday = wd === 0 ? 6 : wd - 1;
+    d.setDate(d.getDate() - daysFromMonday);
+    return d.toISOString().slice(0, 10);
+  }
+  if (recurrence === 'monthly') return dateISO.slice(0, 7) + '-01';
+  return null; // 'once' or unknown — never resets
+}
+
+// Returns the items as they SHOULD render right now, taking the
+// recurrence reset into account even if the DB row hasn't been updated
+// yet. For 'once' lists this is just list.items unchanged. For recurring
+// lists, if the current period anchor differs from the row's last
+// recorded one, every item is presented unchecked. The actual DB write
+// happens asynchronously via syncRecurringTodoResets().
+function todoEffectiveItems(list) {
+  const items = Array.isArray(list.items) ? list.items : [];
+  if (!list.recurrence || list.recurrence === 'once') return items;
+  const today = todayISO();
+  const currentAnchor = todoPeriodAnchor(today, list.recurrence);
+  const rowAnchor     = todoPeriodAnchor(list.lastResetDate || '', list.recurrence);
+  if (currentAnchor !== rowAnchor) {
+    return items.map(it => ({ ...it, done: false, doneAt: null }));
+  }
+  return items;
+}
+
+// Side-effect background pass: for every owned recurring list whose
+// last_reset_date is stale relative to the current period anchor, push
+// an UPDATE that unchecks all items and stamps last_reset_date=today.
+// Returns true if any list was updated, so the caller can re-render
+// (in practice the virtual-reset already shows the correct items, so
+// this only matters for persistence after a page refresh).
+async function syncRecurringTodoResets() {
+  const me = currentEmployee();
+  if (!me) return false;
+  const today = todayISO();
+  const stale = (state.todoLists || []).filter(l => {
+    if (l.ownerId !== me.id) return false;
+    if (!l.recurrence || l.recurrence === 'once') return false;
+    const cur = todoPeriodAnchor(today, l.recurrence);
+    const had = todoPeriodAnchor(l.lastResetDate || '', l.recurrence);
+    return cur !== had;
+  });
+  if (stale.length === 0) return false;
+  let anyChanged = false;
+  for (const list of stale) {
+    const newItems = (list.items || []).map(it => ({
+      ...it, done: false, doneAt: null,
+    }));
+    const { error } = await sb.from('personal_todo_lists')
+      .update({
+        items: newItems,
+        last_reset_date: today,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', list.id);
+    if (error) {
+      console.error('Recurring reset failed for list', list.id, error);
+      continue;
+    }
+    list.items         = newItems;
+    list.lastResetDate = today;
+    anyChanged = true;
+  }
+  return anyChanged;
+}
+
+// Pretty label for the recurrence badge on a list card.
+function todoRecurrenceLabel(rec) {
+  if (rec === 'daily')   return 'Resets daily';
+  if (rec === 'weekly')  return 'Resets weekly';
+  if (rec === 'monthly') return 'Resets monthly';
+  return '';
+}
+
+async function createTodoList(name, recurrence) {
   const me = currentEmployee();
   if (!me) { toast('Not signed in', 'error'); return; }
   const trimmed = (name||'').trim();
   if (!trimmed) { toast('List name required', 'error'); return; }
+  // Defence-in-depth: a non-admin can't smuggle in a recurring list
+  // by tampering with the modal markup. Falls back to 'once' silently.
+  const safeRecurrence = canUseRecurringTodos() && ['daily','weekly','monthly'].includes(recurrence)
+    ? recurrence
+    : 'once';
   const row = todoListToDb({
     ownerId: me.id, name: trimmed, items: [],
     sortOrder: (state.todoLists||[]).filter(l=>l.ownerId===me.id).length,
+    recurrence: safeRecurrence,
+    // Anchor the reset to today so the FIRST period (today/this week/
+    // this month) shows items normally rather than instant-uncheck.
+    lastResetDate: safeRecurrence === 'once' ? null : todayISO(),
   });
   const { data, error } = await sb.from('personal_todo_lists').insert(row).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
@@ -8875,17 +8982,40 @@ async function deleteTodoList(id) {
   todoShowDone.delete(id);
   render();
 }
+// Builds the update payload for a list mutation. If the list is a stale
+// recurring list (user kept their session open past the period flip),
+// start from the virtually-reset items so we don't accidentally persist
+// yesterday's checked state, and stamp last_reset_date=today so this
+// write doubles as the reset's persistence step. For one-shot lists
+// or in-period recurring lists, behaves identically to list.items.
+function todoListUpdatePayload(list, newItems) {
+  const payload = {
+    items: newItems,
+    updated_at: new Date().toISOString(),
+  };
+  if (list.recurrence && list.recurrence !== 'once') {
+    const today = todayISO();
+    const cur = todoPeriodAnchor(today, list.recurrence);
+    const had = todoPeriodAnchor(list.lastResetDate || '', list.recurrence);
+    if (cur !== had) payload.last_reset_date = today;
+  }
+  return payload;
+}
+
 async function addTodoItem(listId, text) {
   const list = (state.todoLists||[]).find(l=>l.id===listId);
   if (!list) return;
   const trimmed = (text||'').trim();
   if (!trimmed) return;
-  const newItems = [...(list.items||[]), {
+  // Start from effective items so a stale recurring list's stale "done"
+  // ticks are wiped as part of this write, not persisted further.
+  const base = todoEffectiveItems(list);
+  const newItems = [...base, {
     id: todoGenId(), text: trimmed, done: false, doneAt: null,
     createdAt: new Date().toISOString(),
   }];
   const { data, error } = await sb.from('personal_todo_lists')
-    .update({ items: newItems, updated_at: new Date().toISOString() })
+    .update(todoListUpdatePayload(list, newItems))
     .eq('id', listId).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
@@ -8894,12 +9024,14 @@ async function addTodoItem(listId, text) {
 async function toggleTodoItem(listId, itemId) {
   const list = (state.todoLists||[]).find(l=>l.id===listId);
   if (!list) return;
-  const newItems = (list.items||[]).map(it => it.id===itemId
+  // Start from effective items — see addTodoItem for the why.
+  const base = todoEffectiveItems(list);
+  const newItems = base.map(it => it.id===itemId
     ? { ...it, done: !it.done, doneAt: !it.done ? new Date().toISOString() : null }
     : it
   );
   const { data, error } = await sb.from('personal_todo_lists')
-    .update({ items: newItems, updated_at: new Date().toISOString() })
+    .update(todoListUpdatePayload(list, newItems))
     .eq('id', listId).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
@@ -8908,18 +9040,51 @@ async function toggleTodoItem(listId, itemId) {
 async function deleteTodoItem(listId, itemId) {
   const list = (state.todoLists||[]).find(l=>l.id===listId);
   if (!list) return;
-  const newItems = (list.items||[]).filter(it => it.id !== itemId);
+  // Start from effective items — see addTodoItem for the why.
+  const base = todoEffectiveItems(list);
+  const newItems = base.filter(it => it.id !== itemId);
   const { data, error } = await sb.from('personal_todo_lists')
-    .update({ items: newItems, updated_at: new Date().toISOString() })
+    .update(todoListUpdatePayload(list, newItems))
     .eq('id', listId).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
   Object.assign(list, mapTodoListFromDb(data));
   render();
 }
 function promptNewTodoList() {
-  const name = prompt('Name your list (e.g. "Today", "Errands", "Project ideas"):');
-  if (name == null) return;
-  createTodoList(name);
+  // Admins get a recurrence dropdown so they can build "daily duties"
+  // style lists that uncheck themselves at the period boundary. Non-
+  // admin head-office roles get the same simple single-field flow they
+  // had before — they only ever make one-shot lists.
+  const showRecurrence = canUseRecurringTodos();
+  const body = `
+    <div class="space-y-4">
+      <div>
+        <label class="label label-required">List name</label>
+        <input id="tdl-name" class="input" placeholder='e.g. "Daily opening duties", "Errands", "Project ideas"' maxlength="120" autofocus>
+      </div>
+      ${showRecurrence ? `
+      <div>
+        <label class="label">Recurrence</label>
+        <select id="tdl-recurrence" class="input">
+          <option value="once" selected>Once — items stay checked permanently</option>
+          <option value="daily">Daily — uncheck every morning, same items reappear</option>
+          <option value="weekly">Weekly — uncheck every Monday</option>
+          <option value="monthly">Monthly — uncheck on the 1st of every month</option>
+        </select>
+        <div class="text-xs text-slate-500 mt-1">Pick <strong>Daily</strong> for routine duties you do every day. Items themselves stay; only the ticks reset.</div>
+      </div>
+      ` : ''}
+    </div>
+  `;
+  openModal('New list', body, async () => {
+    const name = (document.getElementById('tdl-name')?.value || '').trim();
+    if (!name) { toast('List name required', 'error'); return false; }
+    const recurrence = showRecurrence
+      ? (document.getElementById('tdl-recurrence')?.value || 'once')
+      : 'once';
+    await createTodoList(name, recurrence);
+    return true;
+  }, { saveLabel: 'Create list' });
 }
 function promptRenameTodoList(id) {
   const list = (state.todoLists||[]).find(l=>l.id===id);
@@ -9367,7 +9532,11 @@ function renderMyWork() {
         <span class="flex-1 text-sm ${ch?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
       </button>`;
       const cards = myLists.map(l => {
-        const items = Array.isArray(l.items) ? l.items : [];
+        // Use todoEffectiveItems() — recurring lists virtual-reset
+        // themselves at period boundaries even before the DB catches
+        // up. The async syncRecurringTodoResets() (fired below) brings
+        // persistence in sync so a refresh shows the same state.
+        const items = todoEffectiveItems(l);
         const doneCount = items.filter(it=>it.done).length;
         const total = items.length;
         const pct = total ? Math.round(doneCount/total*100) : 0;
@@ -9375,10 +9544,12 @@ function renderMyWork() {
         const pending = items.filter(it=>!it.done);
         const done = items.filter(it=>it.done);
         const shown = todoShowDone.has(l.id);
+        const recurrenceLbl = todoRecurrenceLabel(l.recurrence);
         return `<div class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
           <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
             <div class="flex items-center gap-2 min-w-0">
               <h4 class="font-semibold text-slate-900 truncate">${escapeHTML(l.name)}</h4>
+              ${recurrenceLbl ? `<span class="badge badge-blue !text-[10px] !px-1.5 !py-0.5" title="Items will uncheck themselves at the start of the next ${l.recurrence==='daily'?'day':l.recurrence==='weekly'?'week (Monday)':'month (1st)'}">${icon('refresh','w-3 h-3 inline')} ${escapeHTML(recurrenceLbl)}</span>` : ''}
               ${allDone?`<span class="badge badge-green">${escapeHTML(td_done)}</span>`:''}
             </div>
             <div class="flex items-center gap-3 text-xs">
@@ -18442,6 +18613,12 @@ async function bootstrap() {
     if (session?.user) {
       state.session = { userId: session.user.id, email: session.user.email, loggedAt: new Date().toISOString() };
       await loadAll();
+      // Bring any stale recurring lists in sync now that we have the
+      // user + their data loaded. The render below uses
+      // todoEffectiveItems() so the UI is already correct; this just
+      // persists the reset to the DB so the next page-load reflects
+      // it. Fire-and-forget — never block bootstrap on this.
+      syncRecurringTodoResets().catch(e => console.error('Reset sync failed:', e));
     }
   } catch(e) { console.error('Bootstrap error:', e); }
   render();

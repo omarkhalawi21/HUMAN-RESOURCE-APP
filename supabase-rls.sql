@@ -3516,6 +3516,40 @@ CREATE TRIGGER enforce_employee_update_rules_trigger
   FOR EACH ROW EXECUTE FUNCTION public.enforce_employee_update_rules();
 
 -- =============================================================
+-- 63. PERSONAL TO-DO LISTS — recurrence (daily/weekly/monthly)
+-- =============================================================
+-- Admins wanted "a list of duties I do daily — items uncheck themselves
+-- overnight, same items reappear unchecked tomorrow." Same pattern works
+-- for weekly chores (Monday reset) and monthly cycles (1st reset). Items
+-- and their text stay; only the `done` flag resets at period boundaries.
+-- Added 2026-06-05.
+--
+-- Implementation:
+-- - `recurrence` text: 'once' (default = current behavior) | 'daily' |
+--   'weekly' | 'monthly'. CHECK enforces valid values.
+-- - `last_reset_date` date: tracks when the items were last reset. The
+--   client checks this on render and (a) virtual-resets items for the
+--   display, (b) fires an async DB write to bring the row in sync.
+-- - Reset boundary by recurrence:
+--     daily   → calendar day flip (local timezone)
+--     weekly  → ISO Monday → Monday
+--     monthly → 1st of the month
+-- Backfill existing rows with recurrence='once' so behavior is unchanged
+-- for everyone with non-recurring lists today.
+ALTER TABLE public.personal_todo_lists
+  ADD COLUMN IF NOT EXISTS recurrence text NOT NULL DEFAULT 'once';
+ALTER TABLE public.personal_todo_lists
+  ADD COLUMN IF NOT EXISTS last_reset_date date;
+
+-- Constrain recurrence to the four supported values. Drop+recreate so
+-- the constraint stays idempotent across re-runs.
+ALTER TABLE public.personal_todo_lists
+  DROP CONSTRAINT IF EXISTS personal_todo_lists_recurrence_chk;
+ALTER TABLE public.personal_todo_lists
+  ADD CONSTRAINT personal_todo_lists_recurrence_chk
+  CHECK (recurrence IN ('once','daily','weekly','monthly'));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
