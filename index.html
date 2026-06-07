@@ -650,6 +650,7 @@ function emptyState() {
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
     todoLists: [],      // personal lists for office staff: [{ id, ownerId, name, items:[{id,text,done,doneAt,createdAt}], sortOrder, createdAt, updatedAt }] — RLS scopes to owner
+    applications: [],   // job applications (public form submissions) — RLS gates SELECT to admin+hr. Non-HR users get []. See SQL block 64.
 
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
@@ -1178,6 +1179,57 @@ function todoListToDb(t) {
     updated_at: new Date().toISOString(),
   };
 }
+// Job applications — submitted from the public /apply form. Mappers
+// follow the same snake→camel convention as everything else. See SQL
+// block 64 for the table + RLS.
+function mapApplicationFromDb(r) {
+  return {
+    id: r.id,
+    firstName: r.first_name||'', lastName: r.last_name||'',
+    email: r.email||'', phone: r.phone||'',
+    nationality: r.nationality||'',
+    position: r.position||'', positionOther: r.position_other||'',
+    branchPreference: r.branch_preference||'',
+    yearsExperience: r.years_experience==null ? null : Number(r.years_experience),
+    previousWorkplace: r.previous_workplace||'',
+    availability: r.availability||'',
+    earliestStart: r.earliest_start||null,
+    iqamaStatus: r.iqama_status||'',
+    hasDrivingLicense: r.has_driving_license===null ? null : !!r.has_driving_license,
+    whyHassad: r.why_hassad||'',
+    cvPath: r.cv_path||'',
+    status: r.status||'new',
+    reviewedBy: r.reviewed_by||null,
+    reviewedAt: r.reviewed_at||null,
+    hrNotes: r.hr_notes||'',
+    source: r.source||'',
+    consentGiven: !!r.consent_given,
+    consentAt: r.consent_at,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function applicationToDb(a) {
+  return {
+    first_name: (a.firstName||'').trim(),
+    last_name:  (a.lastName||'').trim() || null,
+    email:      (a.email||'').trim().toLowerCase(),
+    phone:      (a.phone||'').trim() || null,
+    nationality: (a.nationality||'').trim() || null,
+    position:    a.position,
+    position_other: a.position === 'other' ? ((a.positionOther||'').trim() || null) : null,
+    branch_preference: (a.branchPreference||'').trim() || null,
+    years_experience: a.yearsExperience==null || a.yearsExperience==='' ? null : Number(a.yearsExperience),
+    previous_workplace: (a.previousWorkplace||'').trim() || null,
+    availability: a.availability || null,
+    earliest_start: a.earliestStart || null,
+    iqama_status: a.iqamaStatus || null,
+    has_driving_license: a.hasDrivingLicense==null ? null : !!a.hasDrivingLicense,
+    why_hassad: (a.whyHassad||'').trim() || null,
+    cv_path: a.cvPath || null,
+    source: (a.source||'').trim() || null,
+    consent_given: !!a.consentGiven,
+  };
+}
 function mapCertificateFromDb(r) {
   return {
     id: r.id, employeeId: r.employee_id,
@@ -1584,7 +1636,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1682,6 +1734,11 @@ async function loadAll() {
       // current user, so this is bounded by what THIS user owns
       // (typically a handful). Safe to bulk-load.
       sb.from('personal_todo_lists').select('*').order('sort_order').order('created_at'),
+      // Job applications — RLS gates this to admin+hr only. Non-HR
+      // users get an empty array (RLS strips the rows, no error).
+      // Bounded by Hassad's actual hiring funnel — single-digit
+      // to low-hundreds, not a high-volume timeseries.
+      sb.from('job_applications').select('*').order('created_at', { ascending: false }).limit(500),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1733,6 +1790,7 @@ async function loadAll() {
     state.tasks        = (tasksR.data        || []).map(mapTaskFromDb);
     state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
     state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
+    state.applications = (applicationsR.data || []).map(mapApplicationFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
@@ -2235,7 +2293,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help'];
+const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -2537,6 +2595,7 @@ function renderShell(routeContent) {
     { key:'holidays',     icon:'calendar',  label:'Holidays',        show:canManagePeople(), group:'main', parent:'payroll' },
     { key:'deductions',   icon:'cash',      label:'Deductions',      show:canManagePeople(), group:'main', parent:'payroll' },
     /* People management */
+    { key:'applications', icon:'idcard',    label:'Interview',       show:hasRole('admin','operations'), group:'people' },
     { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
@@ -2608,6 +2667,11 @@ function renderShell(routeContent) {
                 return s;
               },0);
               if (exp) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">${exp}</span>`;
+            } else if (n.key === 'applications' && admin) {
+              // Count of unreviewed applications. Encourages HR to triage
+              // new submissions promptly.
+              const newCt = (state.applications||[]).filter(a => a.status === 'new').length;
+              if (newCt) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold">${newCt}</span>`;
             }
             // Children render without their icon — the parent row carries it,
             // and the indent + smaller padding tells you it's a sub-item.
@@ -7431,6 +7495,695 @@ function scrollToGuideSection(id) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 // Mirrors HR_USER_GUIDE.md in the repo. When updating one, update both.
+/* -------------------- JOB APPLICATIONS --------------------
+   Public-facing application form at /#/apply, plus admin/HR list +
+   detail views under People Care. Schema in SQL block 64; bucket
+   'applicant-cvs' must be created manually in Supabase Storage
+   before CV uploads work. RLS allows anonymous INSERT on the table
+   and the storage bucket; SELECT/UPDATE are gated to admin+hr.
+============================================================ */
+
+// Positions visible on the public form. Owner-confirmed list (2026-06-06):
+// only barista / roaster / cashier accept external applications. Other
+// roles (head_barista promotions, bakery, maintenance) are filled
+// through different channels — internal moves, direct outreach, etc.
+// The CHECK constraint in SQL block 64 is intentionally LOOSER (still
+// allows head_barista/bakery/maintenance/other) so that:
+//   (a) historical applications with those positions remain valid, and
+//   (b) the admin can broaden the list later by editing this array
+//       alone — no schema change needed.
+const APPLY_POSITIONS = [
+  { value:'barista',      en:'Barista',         ar:'باريستا' },
+  { value:'roaster',      en:'Coffee Roaster',  ar:'محمص قهوة' },
+  { value:'cashier',      en:'Cashier',         ar:'كاشير' },
+];
+
+const APPLY_BRANCHES = [
+  { value:'KHOBAR',     en:'Al-Khobar',  ar:'الخبر' },
+  { value:'RAYYAN',     en:'Al-Rayyan',  ar:'الريان' },
+  { value:'FAISALIYAH', en:'Faisaliyah', ar:'الفيصلية' },
+  { value:'ANY',        en:'No preference', ar:'لا يوجد تفضيل' },
+];
+
+const APPLY_AVAILABILITY = [
+  { value:'full_time', en:'Full-time', ar:'دوام كامل' },
+  { value:'part_time', en:'Part-time', ar:'دوام جزئي' },
+  { value:'flexible',  en:'Flexible',  ar:'مرن' },
+];
+
+const APPLY_IQAMA_STATUS = [
+  { value:'valid',         en:'Valid IQAMA',         ar:'إقامة سارية' },
+  { value:'transferable',  en:'Transferable',        ar:'قابلة للنقل' },
+  { value:'expired',       en:'Expired',             ar:'منتهية' },
+  { value:'none',          en:'None / Saudi',        ar:'لا يوجد / مواطن سعودي' },
+];
+
+// Max 5MB on the CV upload — enforced client-side. Server-side, the
+// Supabase Storage bucket should also be configured with a file size
+// limit at creation time (Dashboard → Storage → bucket settings).
+const APPLY_CV_MAX_BYTES = 5 * 1024 * 1024;
+const APPLY_CV_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png';
+
+// Toggle stored per-tab so /apply visitors can flip languages without
+// touching the company-wide setting. Default: existing state.settings.lang
+// (which is the company default or what their browser hinted earlier).
+function applyToggleLang() {
+  const cur = state.settings.lang || 'en';
+  state.settings.lang = cur === 'ar' ? 'en' : 'ar';
+  render();
+}
+
+function renderApplyForm() {
+  const isAr = state.settings.lang === 'ar';
+  // Bilingual labels inline (the form is reachable without a logged-in
+  // user, so i18n's t() function pointing to company settings can't
+  // be relied on for the *first* render before settings load).
+  const L = isAr ? {
+    title: 'انضم إلى فريق حصاد',
+    sub:   'يستقبل فريق الموارد البشرية في محمصة حصاد طلبات التوظيف على مدار العام. عبئ النموذج وسنتواصل معك عندما تنفتح وظيفة تناسب خبرتك.',
+    sec_personal: 'البيانات الشخصية',
+    first_name: 'الاسم الأول', last_name: 'اسم العائلة',
+    email: 'البريد الإلكتروني', phone: 'رقم الجوال',
+    nationality: 'الجنسية',
+    sec_position: 'الوظيفة المطلوبة',
+    position: 'الوظيفة', position_other_ph: 'حدد الوظيفة',
+    branch: 'الفرع المفضل',
+    years_exp: 'سنوات الخبرة',
+    prev_work: 'مكان العمل السابق',
+    sec_avail: 'الالتزام بالعمل',
+    availability: 'نوع الدوام',
+    earliest: 'أقرب تاريخ للالتحاق',
+    sec_ksa: 'بيانات تنظيمية',
+    iqama: 'حالة الإقامة',
+    license: 'هل لديك رخصة قيادة؟',
+    license_yes: 'نعم', license_no: 'لا',
+    sec_why: 'لماذا حصاد؟',
+    why_hassad_ph: 'تكلم باختصار عن سبب رغبتك في العمل معنا...',
+    sec_cv: 'السيرة الذاتية (اختياري)',
+    cv_help: 'PDF أو Word أو صورة. الحد الأقصى 5 ميجابايت.',
+    cv_choose: 'اختر ملف',
+    cv_remove: 'إزالة',
+    source: 'كيف عرفت عن حصاد؟ (اختياري)',
+    sec_consent: 'الموافقة والإقرار',
+    consent_label: 'أوافق على معالجة بياناتي الشخصية لغرض التوظيف. تحتفظ محمصة حصاد بهذه البيانات لمدة 12 شهر، ولي الحق في طلب حذفها في أي وقت عبر مراسلتنا.',
+    submit: 'إرسال الطلب',
+    submitting: 'جاري الإرسال...',
+    success_title: 'وصلنا طلبك',
+    success_sub: 'شكرًا لاهتمامك بالعمل في محمصة حصاد. سيقوم فريق الموارد البشرية بمراجعة طلبك والتواصل معك عند توفر وظيفة مناسبة.',
+    success_close: 'إغلاق',
+    err_required: 'الرجاء تعبئة الحقول المطلوبة.',
+    err_email: 'البريد الإلكتروني غير صحيح.',
+    err_cv_size: 'حجم الملف يتجاوز 5 ميجابايت.',
+    err_cv_type: 'نوع الملف غير مدعوم (استخدم PDF أو Word أو صورة).',
+    err_submit: 'تعذر إرسال الطلب. حاول مرة أخرى.',
+    err_consent: 'يرجى الموافقة على معالجة البيانات.',
+  } : {
+    title: 'Join the Hassad team',
+    sub:   'Hassad Coffee Roasters accepts applications year-round. Tell us about yourself and we&rsquo;ll reach out when an opening matches your background.',
+    sec_personal: 'About you',
+    first_name: 'First name', last_name: 'Last name',
+    email: 'Email', phone: 'Mobile / WhatsApp',
+    nationality: 'Nationality',
+    sec_position: 'Role',
+    position: 'Position you&rsquo;re applying for', position_other_ph: 'Specify the role',
+    branch: 'Preferred branch',
+    years_exp: 'Years of experience',
+    prev_work: 'Previous workplace',
+    sec_avail: 'Availability',
+    availability: 'Type of work',
+    earliest: 'Earliest start date',
+    sec_ksa: 'Regulatory',
+    iqama: 'IQAMA status',
+    license: 'Driving licence?',
+    license_yes: 'Yes', license_no: 'No',
+    sec_why: 'Why Hassad?',
+    why_hassad_ph: 'In a few sentences, tell us what draws you to Hassad...',
+    sec_cv: 'CV / résumé (optional)',
+    cv_help: 'PDF, Word, or image. 5 MB max.',
+    cv_choose: 'Choose file',
+    cv_remove: 'Remove',
+    source: 'How did you hear about us? (optional)',
+    sec_consent: 'Consent',
+    consent_label: 'I consent to Hassad Coffee Roasters processing my personal data for recruitment purposes. Hassad retains this data for 12 months. I can request deletion at any time by emailing the team.',
+    submit: 'Submit application',
+    submitting: 'Submitting...',
+    success_title: 'We&rsquo;ve received your application',
+    success_sub: 'Thanks for your interest in joining Hassad Coffee Roasters. Our HR team will review your application and reach out when an opening matches your background.',
+    success_close: 'Close',
+    err_required: 'Please fill in the required fields.',
+    err_email: 'That email doesn&rsquo;t look right.',
+    err_cv_size: 'CV must be 5 MB or smaller.',
+    err_cv_type: 'Unsupported file type (use PDF, Word, or image).',
+    err_submit: 'Couldn&rsquo;t submit. Please try again.',
+    err_consent: 'You need to consent to data processing to apply.',
+  };
+  const opt = (arr, val, key) => arr.map(o => `<option value="${o.value}" ${val===o.value?'selected':''}>${escapeHTML(isAr ? o.ar : o.en)}</option>`).join('');
+  // Honeypot: a hidden field bots will fill in. Submit handler refuses
+  // if it has any value. The label is intentionally tempting ("website")
+  // and the field is hidden via inline CSS rather than `type=hidden` so
+  // crawlers see a normal input.
+  return `
+  <div class="min-h-screen w-full" style="background:#fbf7f1">
+    <div class="max-w-3xl mx-auto p-4 md:p-8">
+
+      <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden border border-slate-100">
+            <img src="logo.png" alt="" class="w-full h-full object-contain" onerror="this.style.display='none'" />
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Hassad Coffee Roasters</div>
+            <div class="text-xs text-slate-500">${isAr ? 'انضم إلى فريقنا' : 'Join our team'}</div>
+          </div>
+        </div>
+        <button onclick="applyToggleLang()" class="btn btn-ghost btn-sm">
+          🌐 ${isAr ? 'English' : 'العربية'}
+        </button>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-pop p-6 md:p-10">
+        <div id="apply-success" class="hidden text-center py-12">
+          <div class="w-16 h-16 mx-auto rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
+          <h1 class="font-display text-2xl md:text-3xl font-semibold text-slate-900">${L.success_title}</h1>
+          <p class="text-sm text-slate-600 mt-3 max-w-md mx-auto leading-relaxed">${L.success_sub}</p>
+          <button onclick="window.location.hash=''; window.location.reload();" class="btn btn-primary mt-6">${L.success_close}</button>
+        </div>
+
+        <form id="apply-form" class="space-y-7" onsubmit="event.preventDefault(); submitApplication(this);">
+          <header class="text-center pb-2">
+            <h1 class="font-display text-3xl md:text-4xl font-semibold text-slate-900">${L.title}</h1>
+            <p class="text-sm text-slate-600 mt-3 max-w-xl mx-auto leading-relaxed">${L.sub}</p>
+          </header>
+
+          <!-- Honeypot — DO NOT FILL. Visible only to bots. -->
+          <div style="position:absolute; left:-9999px; top:-9999px;" aria-hidden="true">
+            <label>Website (leave empty)</label>
+            <input type="text" name="website" tabindex="-1" autocomplete="off">
+          </div>
+
+          <!-- Section: personal -->
+          <fieldset class="space-y-4">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_personal}</legend>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div><label class="label label-required">${L.first_name}</label><input name="firstName" class="input" required maxlength="80"></div>
+              <div><label class="label">${L.last_name}</label><input name="lastName" class="input" maxlength="80"></div>
+              <div><label class="label label-required">${L.email}</label><input name="email" type="email" class="input" required maxlength="180"></div>
+              <div><label class="label">${L.phone}</label><input name="phone" class="input" inputmode="tel" maxlength="40" placeholder="+966 5x xxx xxxx"></div>
+              <div class="md:col-span-2"><label class="label">${L.nationality}</label><input name="nationality" class="input" maxlength="60" list="apply-nat-list" placeholder="${isAr?'مثال: سعودي، فلبيني، يمني':'e.g. Saudi, Filipino, Yemeni'}">
+                <datalist id="apply-nat-list">${COMMON_NATIONALITIES.map(n=>`<option value="${escapeHTML(n)}">`).join('')}</datalist>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- Section: position -->
+          <fieldset class="space-y-4 pt-4 border-t border-slate-100">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_position}</legend>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label label-required">${L.position}</label>
+                <select name="position" class="input" required onchange="document.getElementById('apply-position-other').style.display=this.value==='other'?'':'none';">
+                  <option value="">— ${isAr?'اختر':'Select'} —</option>
+                  ${opt(APPLY_POSITIONS)}
+                </select>
+                <input id="apply-position-other" name="positionOther" class="input mt-2" placeholder="${L.position_other_ph}" maxlength="80" style="display:none">
+              </div>
+              <div>
+                <label class="label">${L.branch}</label>
+                <select name="branchPreference" class="input">
+                  <option value="">—</option>
+                  ${opt(APPLY_BRANCHES)}
+                </select>
+              </div>
+              <div><label class="label">${L.years_exp}</label><input name="yearsExperience" type="number" class="input" min="0" max="50" inputmode="numeric"></div>
+              <div><label class="label">${L.prev_work}</label><input name="previousWorkplace" class="input" maxlength="120" placeholder="${isAr?'مثال: ستاربكس، مقهى أركان':'e.g. Starbucks, Local Café'}"></div>
+            </div>
+          </fieldset>
+
+          <!-- Section: availability -->
+          <fieldset class="space-y-4 pt-4 border-t border-slate-100">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_avail}</legend>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label">${L.availability}</label>
+                <select name="availability" class="input">
+                  <option value="">—</option>
+                  ${opt(APPLY_AVAILABILITY)}
+                </select>
+              </div>
+              <div><label class="label">${L.earliest}</label><input name="earliestStart" type="date" class="input"></div>
+            </div>
+          </fieldset>
+
+          <!-- Section: KSA-specific -->
+          <fieldset class="space-y-4 pt-4 border-t border-slate-100">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_ksa}</legend>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="label">${L.iqama}</label>
+                <select name="iqamaStatus" class="input">
+                  <option value="">—</option>
+                  ${opt(APPLY_IQAMA_STATUS)}
+                </select>
+              </div>
+              <div>
+                <label class="label">${L.license}</label>
+                <div class="flex gap-4 pt-2">
+                  <label class="inline-flex items-center gap-2"><input type="radio" name="hasDrivingLicense" value="true"> <span class="text-sm">${L.license_yes}</span></label>
+                  <label class="inline-flex items-center gap-2"><input type="radio" name="hasDrivingLicense" value="false"> <span class="text-sm">${L.license_no}</span></label>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- Section: why -->
+          <fieldset class="space-y-4 pt-4 border-t border-slate-100">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_why}</legend>
+            <div>
+              <textarea name="whyHassad" class="input" rows="4" maxlength="1500" placeholder="${L.why_hassad_ph}"></textarea>
+            </div>
+            <div>
+              <label class="label">${L.source}</label>
+              <input name="source" class="input" maxlength="120" placeholder="${isAr?'مثال: إنستغرام، صديق، الفرع':'e.g. Instagram, friend, walked in'}">
+            </div>
+          </fieldset>
+
+          <!-- Section: CV -->
+          <fieldset class="space-y-2 pt-4 border-t border-slate-100">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_cv}</legend>
+            <div class="text-xs text-slate-500 mb-2">${L.cv_help}</div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <label class="btn btn-ghost btn-sm cursor-pointer">
+                ${icon('plus','w-4 h-4')} ${L.cv_choose}
+                <input id="apply-cv" type="file" name="cv" accept="${APPLY_CV_ACCEPT}" class="hidden" onchange="applyOnCvChange(event)">
+              </label>
+              <span id="apply-cv-name" class="text-sm text-slate-700 truncate"></span>
+              <button id="apply-cv-clear" type="button" onclick="applyClearCv()" class="btn btn-ghost btn-sm" style="display:none">${L.cv_remove}</button>
+            </div>
+          </fieldset>
+
+          <!-- Section: consent -->
+          <fieldset class="space-y-2 pt-4 border-t border-slate-100">
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_consent}</legend>
+            <label class="flex items-start gap-3 p-3 rounded-xl border border-amber-200 bg-amber-50 cursor-pointer">
+              <input type="checkbox" name="consent" required class="mt-0.5 w-5 h-5 accent-brand-700 shrink-0">
+              <span class="text-xs text-amber-900 leading-relaxed">${L.consent_label}</span>
+            </label>
+          </fieldset>
+
+          <button id="apply-submit-btn" type="submit" class="btn btn-primary w-full !py-4 !text-base">${L.submit}</button>
+        </form>
+      </div>
+
+      <div class="text-center text-xs text-slate-400 mt-6">© 2026 Hassad Coffee Roasters · <a href="#" onclick="window.location.hash=''; window.location.reload();" class="hover:text-slate-600">${isAr?'الصفحة الرئيسية':'Main site'}</a></div>
+    </div>
+  </div>`;
+}
+
+// File handler for the CV input — caps size + MIME, surfaces filename.
+let _applyCvFile = null;
+function applyOnCvChange(event) {
+  const file = event.target.files && event.target.files[0];
+  const nameEl = document.getElementById('apply-cv-name');
+  const clearEl = document.getElementById('apply-cv-clear');
+  if (!file) { _applyCvFile = null; if (nameEl) nameEl.textContent = ''; if (clearEl) clearEl.style.display='none'; return; }
+  const L = state.settings.lang === 'ar' ? { sz:'حجم الملف يتجاوز 5 ميجابايت.', ty:'نوع الملف غير مدعوم.' } : { sz:"CV must be 5 MB or smaller.", ty:"Unsupported file type." };
+  if (file.size > APPLY_CV_MAX_BYTES) { toast(L.sz, 'error'); event.target.value=''; return; }
+  // The accept attribute is a hint; trust it client-side as a soft check.
+  // Hard MIME validation isn't worth re-encoding here — admin reviews
+  // the file manually anyway.
+  _applyCvFile = file;
+  if (nameEl) nameEl.textContent = file.name;
+  if (clearEl) clearEl.style.display = '';
+}
+function applyClearCv() {
+  _applyCvFile = null;
+  const input = document.getElementById('apply-cv');
+  const nameEl = document.getElementById('apply-cv-name');
+  const clearEl = document.getElementById('apply-cv-clear');
+  if (input) input.value = '';
+  if (nameEl) nameEl.textContent = '';
+  if (clearEl) clearEl.style.display = 'none';
+}
+
+async function submitApplication(form) {
+  const isAr = state.settings.lang === 'ar';
+  const L = isAr ? {
+    err_required:'الرجاء تعبئة الحقول المطلوبة.', err_email:'البريد الإلكتروني غير صحيح.',
+    err_consent:'يرجى الموافقة على معالجة البيانات.', err_submit:'تعذر إرسال الطلب. حاول مرة أخرى.',
+    submitting:'جاري الإرسال...',
+  } : {
+    err_required:'Please fill in the required fields.', err_email:'That email doesn\'t look right.',
+    err_consent:'You need to consent to data processing to apply.', err_submit:'Couldn\'t submit. Please try again.',
+    submitting:'Submitting...',
+  };
+  const data = new FormData(form);
+
+  // Honeypot: bots fill the hidden "website" field. Real users don't.
+  if ((data.get('website') || '').toString().trim()) {
+    // Silent success — don't reveal we caught them.
+    document.getElementById('apply-form').style.display = 'none';
+    document.getElementById('apply-success').classList.remove('hidden');
+    return;
+  }
+
+  const get = k => (data.get(k) || '').toString().trim();
+  const a = {
+    firstName: get('firstName'),
+    lastName:  get('lastName'),
+    email:     get('email'),
+    phone:     get('phone'),
+    nationality: get('nationality'),
+    position:  get('position'),
+    positionOther: get('positionOther'),
+    branchPreference: get('branchPreference'),
+    yearsExperience: get('yearsExperience'),
+    previousWorkplace: get('previousWorkplace'),
+    availability: get('availability'),
+    earliestStart: get('earliestStart'),
+    iqamaStatus: get('iqamaStatus'),
+    hasDrivingLicense: get('hasDrivingLicense') === '' ? null : get('hasDrivingLicense') === 'true',
+    whyHassad: get('whyHassad'),
+    source:    get('source'),
+    consentGiven: !!data.get('consent'),
+  };
+  if (!a.firstName || !a.email || !a.position) { toast(L.err_required, 'error'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)) { toast(L.err_email, 'error'); return; }
+  if (!a.consentGiven) { toast(L.err_consent, 'error'); return; }
+
+  const btn = document.getElementById('apply-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = L.submitting; }
+
+  try {
+    // 1. Insert the application row first. RLS allows the anonymous
+    //    INSERT as long as consent_given=true.
+    const { data: inserted, error } = await sb.from('job_applications')
+      .insert(applicationToDb(a)).select().single();
+    if (error) throw error;
+
+    // 2. If they attached a CV, upload it into the bucket scoped by
+    //    the new application's id. Failures here DO NOT fail the
+    //    submission — the row is saved, HR can ask for the CV later.
+    if (_applyCvFile) {
+      const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
+      const path = `${inserted.id}/${Date.now()}_${safeName}`;
+      const { error: upErr } = await sb.storage
+        .from('applicant-cvs')
+        .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
+      if (upErr) {
+        console.warn('CV upload failed:', upErr);
+        // Don't roll back the application — just leave cv_path null.
+      } else {
+        await sb.from('job_applications').update({ cv_path: path }).eq('id', inserted.id);
+      }
+    }
+
+    // 3. Show the thank-you screen.
+    document.getElementById('apply-form').style.display = 'none';
+    document.getElementById('apply-success').classList.remove('hidden');
+    _applyCvFile = null;
+  } catch (e) {
+    console.error('apply submit error:', e);
+    toast(L.err_submit, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = isAr ? 'إرسال الطلب' : 'Submit application'; }
+  }
+}
+
+// ---------- Admin / HR view ----------
+
+const APPLY_STATUS_META = {
+  new:        { label:'New',         badge:'badge-emerald' },
+  reviewing:  { label:'Reviewing',   badge:'badge-blue' },
+  interview:  { label:'Interview',   badge:'badge-amber' },
+  hired:      { label:'Hired',       badge:'badge-green' },
+  rejected:   { label:'Rejected',    badge:'badge-rose' },
+  archived:   { label:'Archived',    badge:'badge-slate' },
+};
+
+let _appliedStatusFilter = 'open';   // 'open' (all non-terminal) | 'all' | each status
+let _appliedPositionFilter = 'all';
+let _appliedSearch = '';
+
+function renderApplications() {
+  const all = state.applications || [];
+  const counts = Object.keys(APPLY_STATUS_META).reduce((m,k)=>{ m[k]=all.filter(a=>a.status===k).length; return m; },{});
+  const openSet = new Set(['new','reviewing','interview']);
+  const tabs = [
+    { key:'open',     label:'Active',   count: all.filter(a=>openSet.has(a.status)).length },
+    { key:'new',      label:'New',      count: counts.new },
+    { key:'reviewing',label:'Reviewing',count: counts.reviewing },
+    { key:'interview',label:'Interview',count: counts.interview },
+    { key:'hired',    label:'Hired',    count: counts.hired },
+    { key:'rejected', label:'Rejected', count: counts.rejected },
+    { key:'archived', label:'Archived', count: counts.archived },
+    { key:'all',      label:'All',      count: all.length },
+  ];
+  const filtered = all.filter(a => {
+    if (_appliedStatusFilter === 'open') { if (!openSet.has(a.status)) return false; }
+    else if (_appliedStatusFilter !== 'all') { if (a.status !== _appliedStatusFilter) return false; }
+    if (_appliedPositionFilter !== 'all' && a.position !== _appliedPositionFilter) return false;
+    if (_appliedSearch) {
+      const s = _appliedSearch.toLowerCase();
+      const hay = `${a.firstName} ${a.lastName||''} ${a.email} ${a.phone||''} ${a.previousWorkplace||''}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+  const positionLabel = pos => {
+    if (pos === 'other') return 'Other';
+    const m = APPLY_POSITIONS.find(p => p.value === pos);
+    return m ? m.en : pos;
+  };
+  const fmtDate2 = iso => iso ? new Date(iso).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}) : '—';
+  const fmtAgo = iso => {
+    if (!iso) return '—';
+    const sec = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (sec < 60)  return `${sec}s ago`;
+    if (sec < 3600) return `${Math.round(sec/60)}m ago`;
+    if (sec < 86400) return `${Math.round(sec/3600)}h ago`;
+    if (sec < 86400*30) return `${Math.round(sec/86400)}d ago`;
+    return fmtDate2(iso);
+  };
+  const applyUrl = window.location.origin + window.location.pathname + '#/apply';
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('idcard','w-3.5 h-3.5')} Recruitment</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Interview pool</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">Everyone who&rsquo;s submitted the public application form. When you need to hire, pick from here — search, filter by position, review notes, and convert hires into employees.</p>
+        </div>
+        <div class="flex flex-col gap-2 text-xs">
+          <div class="text-slate-500">Share this link to invite applicants:</div>
+          <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            <code class="text-xs text-slate-700 truncate max-w-[280px]">${escapeHTML(applyUrl)}</code>
+            <button onclick="navigator.clipboard.writeText('${applyUrl}').then(()=>toast('Link copied','success'))" class="btn btn-ghost btn-sm">${icon('file','w-3 h-3')} Copy</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+      ${miniStat('New',        counts.new,       'check',   'green')}
+      ${miniStat('Reviewing',  counts.reviewing, 'edit',    'blue')}
+      ${miniStat('Interview',  counts.interview, 'calendar','amber')}
+      ${miniStat('Hired',      counts.hired,     'award',   'green')}
+      ${miniStat('Rejected',   counts.rejected,  'close',   'red')}
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="px-4 pt-4 flex items-center gap-3 flex-wrap">
+        <div class="flex gap-1 flex-wrap">
+          ${tabs.map(tb => `<button onclick="_appliedStatusFilter='${tb.key}'; render();" class="px-3 py-1.5 rounded-lg text-xs font-semibold ${_appliedStatusFilter===tb.key?'bg-brand-700 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${escapeHTML(tb.label)}${tb.count?` <span class="opacity-70">${tb.count}</span>`:''}</button>`).join('')}
+        </div>
+        <div class="ms-auto flex items-center gap-2 flex-wrap">
+          <select onchange="_appliedPositionFilter=this.value; render();" class="input !py-1.5 !text-sm !w-auto">
+            <option value="all" ${_appliedPositionFilter==='all'?'selected':''}>All positions</option>
+            ${APPLY_POSITIONS.map(p=>`<option value="${p.value}" ${_appliedPositionFilter===p.value?'selected':''}>${escapeHTML(p.en)}</option>`).join('')}
+          </select>
+          <input type="search" placeholder="Search name, email, phone..." value="${escapeHTML(_appliedSearch)}" oninput="_appliedSearch=this.value; clearTimeout(window._appsSearchT); window._appsSearchT=setTimeout(render,200);" class="input !py-1.5 !text-sm !w-56">
+        </div>
+      </div>
+
+      <div class="overflow-x-auto mt-4">
+        <table class="w-full">
+          <thead class="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+            <tr>
+              <th class="text-start px-4 py-2">Applicant</th>
+              <th class="text-start px-4 py-2">Position</th>
+              <th class="text-start px-4 py-2">Branch</th>
+              <th class="text-start px-4 py-2">Exp.</th>
+              <th class="text-start px-4 py-2">Status</th>
+              <th class="text-start px-4 py-2">Submitted</th>
+              <th class="text-end px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${filtered.length === 0 ? `<tr><td colspan="7" class="px-4 py-12 text-center text-slate-400 text-sm">No applications match your filters.</td></tr>` : filtered.map(a => {
+              const m = APPLY_STATUS_META[a.status] || APPLY_STATUS_META.new;
+              const fullName = (a.firstName + ' ' + (a.lastName||'')).trim();
+              return `<tr class="hover-row">
+                <td class="px-4 py-3">
+                  <div class="font-medium text-slate-900">${escapeHTML(fullName)}</div>
+                  <div class="text-xs text-slate-500">${escapeHTML(a.email)}${a.phone?` · ${escapeHTML(a.phone)}`:''}</div>
+                </td>
+                <td class="px-4 py-3 text-sm">${escapeHTML(a.position==='other' && a.positionOther ? a.positionOther : positionLabel(a.position))}</td>
+                <td class="px-4 py-3 text-sm">${escapeHTML(a.branchPreference || '—')}</td>
+                <td class="px-4 py-3 text-sm tabular-nums">${a.yearsExperience==null?'—':a.yearsExperience+'y'}</td>
+                <td class="px-4 py-3"><span class="badge ${m.badge}">${escapeHTML(m.label)}</span></td>
+                <td class="px-4 py-3 text-xs text-slate-500" title="${escapeHTML(fmtDate2(a.createdAt))}">${escapeHTML(fmtAgo(a.createdAt))}</td>
+                <td class="px-4 py-3 text-end whitespace-nowrap">
+                  <a href="#/application/${a.id}" class="text-brand-700 hover:underline text-sm">Open</a>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderApplicationDetail(id) {
+  const a = (state.applications || []).find(x => x.id === id);
+  if (!a) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">Application not found.</div>`;
+  const m = APPLY_STATUS_META[a.status] || APPLY_STATUS_META.new;
+  const fullName = (a.firstName + ' ' + (a.lastName||'')).trim();
+  const positionLabel = a.position==='other' && a.positionOther ? a.positionOther : (APPLY_POSITIONS.find(p=>p.value===a.position)?.en || a.position);
+  const fmtDate2 = iso => iso ? new Date(iso).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  const row = (k,v) => `<div class="grid grid-cols-[140px_1fr] gap-3 text-sm py-2.5 border-b border-slate-100 last:border-0"><div class="text-slate-500">${escapeHTML(k)}</div><div class="text-slate-800 break-words">${v}</div></div>`;
+  const reviewer = a.reviewedBy ? getEmployee(a.reviewedBy) : null;
+  return `
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <a href="#/applications" class="text-sm text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">← Back to interview pool</a>
+      <div class="flex items-center gap-2">
+        <span class="badge ${m.badge}">${escapeHTML(m.label)}</span>
+        <select onchange="updateApplicationStatus('${a.id}', this.value)" class="input !py-1.5 !text-sm !w-auto">
+          ${Object.entries(APPLY_STATUS_META).map(([k,v]) => `<option value="${k}" ${a.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}
+        </select>
+        ${a.status === 'hired' ? `<button onclick="convertApplicationToEmployee('${a.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Convert to employee</button>` : ''}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div class="lg:col-span-2 space-y-5">
+        <div class="bg-white rounded-2xl shadow-card p-6">
+          <h2 class="font-display text-2xl font-semibold text-slate-900">${escapeHTML(fullName)}</h2>
+          <div class="text-sm text-slate-500 mt-1">${escapeHTML(positionLabel)}${a.branchPreference?` · ${escapeHTML(a.branchPreference)}`:''}</div>
+          <div class="mt-5 divide-y divide-slate-100">
+            ${row('Email', `<a href="mailto:${escapeHTML(a.email)}" class="text-brand-700 hover:underline">${escapeHTML(a.email)}</a>`)}
+            ${row('Phone', a.phone ? `<a href="tel:${escapeHTML(a.phone)}" class="text-brand-700 hover:underline">${escapeHTML(a.phone)}</a>` : '—')}
+            ${row('Nationality', escapeHTML(a.nationality||'—'))}
+            ${row('Experience', a.yearsExperience==null ? '—' : `${a.yearsExperience} year${a.yearsExperience===1?'':'s'}`)}
+            ${row('Previous workplace', escapeHTML(a.previousWorkplace||'—'))}
+            ${row('Availability', escapeHTML(APPLY_AVAILABILITY.find(x=>x.value===a.availability)?.en || '—'))}
+            ${row('Earliest start', a.earliestStart ? new Date(a.earliestStart).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}) : '—')}
+            ${row('IQAMA', escapeHTML(APPLY_IQAMA_STATUS.find(x=>x.value===a.iqamaStatus)?.en || '—'))}
+            ${row('Driving licence', a.hasDrivingLicense==null ? '—' : (a.hasDrivingLicense?'Yes':'No'))}
+            ${row('Heard via', escapeHTML(a.source||'—'))}
+          </div>
+        </div>
+
+        ${a.whyHassad ? `
+        <div class="bg-white rounded-2xl shadow-card p-6">
+          <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">Why Hassad</div>
+          <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">${escapeHTML(a.whyHassad)}</p>
+        </div>` : ''}
+
+        ${a.cvPath ? `
+        <div class="bg-white rounded-2xl shadow-card p-6">
+          <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">CV / Résumé</div>
+          <button onclick="downloadApplicationCv('${a.id}')" class="btn btn-primary btn-sm">${icon('download','w-4 h-4')} Download CV</button>
+        </div>` : ''}
+      </div>
+
+      <div class="space-y-5">
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-3">HR notes</div>
+          <textarea id="app-notes-${a.id}" class="input" rows="6" placeholder="Internal notes, interview feedback, follow-up tasks...">${escapeHTML(a.hrNotes||'')}</textarea>
+          <button onclick="saveApplicationNotes('${a.id}')" class="btn btn-primary btn-sm w-full mt-2">${icon('check','w-4 h-4')} Save notes</button>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-card p-5">
+          <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">Activity</div>
+          <div class="text-xs text-slate-600 space-y-1.5">
+            <div>Submitted: <strong>${escapeHTML(fmtDate2(a.createdAt))}</strong></div>
+            ${a.reviewedAt ? `<div>Last reviewed: <strong>${escapeHTML(fmtDate2(a.reviewedAt))}</strong>${reviewer?` by ${escapeHTML((reviewer.firstName+' '+(reviewer.lastName||'')).trim())}`:''}</div>` : ''}
+            ${a.consentGiven ? `<div class="text-emerald-700">${icon('check','w-3 h-3 inline')} PDPL consent recorded</div>` : `<div class="text-rose-700">${icon('warning','w-3 h-3 inline')} No PDPL consent</div>`}
+          </div>
+        </div>
+
+        <button onclick="deleteApplication('${a.id}')" class="btn btn-ghost btn-sm w-full text-rose-600">${icon('trash','w-3.5 h-3.5')} Delete (PDPL)</button>
+      </div>
+    </div>`;
+}
+
+async function updateApplicationStatus(id, status) {
+  if (!APPLY_STATUS_META[status]) return;
+  const me = currentEmployee();
+  const { data, error } = await sb.from('job_applications')
+    .update({
+      status,
+      reviewed_by: me?.id || null,
+      reviewed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  const idx = state.applications.findIndex(a => a.id === id);
+  if (idx >= 0) state.applications[idx] = mapApplicationFromDb(data);
+  render();
+  toast(`Status: ${APPLY_STATUS_META[status].label}`, 'success');
+}
+
+async function saveApplicationNotes(id) {
+  const el = document.getElementById(`app-notes-${id}`);
+  const notes = (el?.value || '').trim();
+  const { data, error } = await sb.from('job_applications')
+    .update({ hr_notes: notes || null, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  const idx = state.applications.findIndex(a => a.id === id);
+  if (idx >= 0) state.applications[idx] = mapApplicationFromDb(data);
+  toast('Notes saved', 'success');
+}
+
+async function downloadApplicationCv(id) {
+  const a = (state.applications || []).find(x => x.id === id);
+  if (!a || !a.cvPath) { toast('No CV on file', 'error'); return; }
+  const { data, error } = await sb.storage.from('applicant-cvs').createSignedUrl(a.cvPath, 60);
+  if (error || !data?.signedUrl) { toast('Could not generate download link', 'error'); return; }
+  window.open(data.signedUrl, '_blank', 'noopener');
+}
+
+async function deleteApplication(id) {
+  if (!isAdmin()) { toast('Admin only', 'error'); return; }
+  const a = (state.applications || []).find(x => x.id === id);
+  if (!a) return;
+  if (!confirm(`Permanently delete ${a.firstName}'s application?\n\nThis cannot be undone. PDPL right-to-delete: when an applicant requests removal, use this.`)) return;
+  // Try to remove the CV file too (best-effort).
+  if (a.cvPath) {
+    try { await sb.storage.from('applicant-cvs').remove([a.cvPath]); } catch (_) {}
+  }
+  const { error } = await sb.from('job_applications').delete().eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  state.applications = state.applications.filter(x => x.id !== id);
+  location.hash = '#/applications';
+  toast('Application deleted', 'success');
+}
+
+// Mark the application as hired (if not already) and open the empty
+// Add Employee modal so HR can complete onboarding. v1 doesn't
+// auto-prefill the form yet — HR can keep the application detail in a
+// second tab and copy across. Auto-prefill is queued as a polish PR
+// once we've validated the basic flow.
+function convertApplicationToEmployee(id) {
+  const a = (state.applications || []).find(x => x.id === id);
+  if (!a) return;
+  if (a.status !== 'hired') updateApplicationStatus(id, 'hired');
+  openEmployeeModal();
+  toast('Application marked Hired. Add their employee row to complete onboarding.', 'success');
+}
+
 function renderHelp() {
   const admin = canManagePeople();
   const sections = [
@@ -18527,6 +19280,16 @@ function render() {
   document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
+  // Public-facing job application form (/#/apply). Bypasses ALL auth
+  // gates — anyone on the internet can reach this page and submit.
+  // RLS on job_applications (block 64) is what actually permits the
+  // anonymous INSERT; here we just render the form. Signed-in users
+  // who navigate here see the same form too (uncommon but harmless).
+  if (getRoute() === 'apply') {
+    stopClockTicker();
+    app.innerHTML = renderApplyForm();
+    return;
+  }
   if (!state.session) { stopClockTicker(); app.innerHTML = renderLogin(); return; }
   // Block: signed-in but not in the employees table (someone signed up
   // who wasn't pre-added by HR). The DB trigger leaves them unlinked.
@@ -18574,6 +19337,8 @@ function render() {
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
     case 'spend_report': content = hasRole('admin','accounting') ? renderSpendReport() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
+    case 'applications': content = hasRole('admin','operations') ? renderApplications() : renderRoleDashboard(); break;
+    case 'application':  content = hasRole('admin','operations') ? renderApplicationDetail(getRouteParam()) : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
     case 'account':      content = renderAccount(); break;
     default:             content = renderDashboard();
