@@ -2293,7 +2293,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>"
@@ -4378,6 +4378,35 @@ function openEmployeeModal(id) {
     render();
     return true;
   });
+
+  // Auto-prefill from a stashed job application (Interview → "Convert
+  // to employee" funnels here via _applicationPrefill). DOM is already
+  // populated by openModal() above. Inputs are set after the synchronous
+  // openModal returns; values then survive the modal's focus-shift +
+  // tab-trap setup.
+  if (!editing && typeof _applicationPrefill !== 'undefined' && _applicationPrefill) {
+    const p = _applicationPrefill;
+    _applicationPrefill = null;
+    const set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+    set('m-fn',  p.firstName);
+    set('m-ln',  p.lastName);
+    set('m-em',  p.email);
+    set('m-ph',  p.phone);
+    set('m-nat', p.nationality);
+    // Position → job title. APPLY_POSITIONS labels match the form's
+    // datalist of job titles closely enough (Barista / Coffee Roaster
+    // / Cashier). Free-text 'other' uses positionOther.
+    const positionLabel = (p.position === 'other' && p.positionOther)
+      ? p.positionOther
+      : (APPLY_POSITIONS.find(x => x.value === p.position)?.en
+         || (p.position||'').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()));
+    set('m-ro', positionLabel);
+    // Branch preference (skip 'ANY' — admin should pick a real branch).
+    if (p.branchPreference && p.branchPreference !== 'ANY') {
+      set('m-br', p.branchPreference);
+    }
+    toast('Prefilled from the application — review and complete the missing fields', 'success');
+  }
 }
 // When the user picks "+ Add custom department…", reveal an inline input.
 // We avoid opening a second modal here — that would close the parent
@@ -7883,17 +7912,23 @@ async function submitApplication(form) {
     // 2. If they attached a CV, upload it into the bucket scoped by
     //    the new application's id. Failures here DO NOT fail the
     //    submission — the row is saved, HR can ask for the CV later.
+    //    Wrapped in its own try/catch in case the bucket doesn't exist,
+    //    the SDK throws on network issues, etc. — anything storage-side
+    //    must never take down the form submission.
     if (_applyCvFile) {
-      const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
-      const path = `${inserted.id}/${Date.now()}_${safeName}`;
-      const { error: upErr } = await sb.storage
-        .from('applicant-cvs')
-        .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
-      if (upErr) {
-        console.warn('CV upload failed:', upErr);
-        // Don't roll back the application — just leave cv_path null.
-      } else {
-        await sb.from('job_applications').update({ cv_path: path }).eq('id', inserted.id);
+      try {
+        const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
+        const path = `${inserted.id}/${Date.now()}_${safeName}`;
+        const { error: upErr } = await sb.storage
+          .from('applicant-cvs')
+          .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
+        if (upErr) {
+          console.warn('CV upload failed (row already saved):', upErr);
+        } else {
+          await sb.from('job_applications').update({ cv_path: path }).eq('id', inserted.id);
+        }
+      } catch (storageErr) {
+        console.warn('CV upload threw (row already saved):', storageErr);
       }
     }
 
@@ -7903,7 +7938,13 @@ async function submitApplication(form) {
     _applyCvFile = null;
   } catch (e) {
     console.error('apply submit error:', e);
-    toast(L.err_submit, 'error');
+    // Surface the real reason in the toast so the applicant (and we,
+    // remotely) can see what went wrong without dev tools open. Common
+    // shapes from Supabase JS:
+    //   { message, code, details, hint }   — PostgREST errors
+    //   plain Error("...")                  — network / SDK errors
+    const reason = (e && (e.message || e.code || e.details)) || 'unknown error';
+    toast(`${L.err_submit} (${reason})`, 'error');
     if (btn) { btn.disabled = false; btn.textContent = isAr ? 'إرسال الطلب' : 'Submit application'; }
   }
 }
@@ -8171,17 +8212,21 @@ async function deleteApplication(id) {
   toast('Application deleted', 'success');
 }
 
-// Mark the application as hired (if not already) and open the empty
-// Add Employee modal so HR can complete onboarding. v1 doesn't
-// auto-prefill the form yet — HR can keep the application detail in a
-// second tab and copy across. Auto-prefill is queued as a polish PR
-// once we've validated the basic flow.
+// Mark the application as hired (if not already) and open the Add
+// Employee modal pre-populated with the applicant's data. The prefill
+// stash is read once by openEmployeeModal() and cleared on use, so
+// subsequent "Add Employee" clicks start blank as expected.
+let _applicationPrefill = null;
 function convertApplicationToEmployee(id) {
   const a = (state.applications || []).find(x => x.id === id);
   if (!a) return;
+  // Mark hired first (idempotent — no-op if already hired). Sequencing:
+  // status flip → stash prefill → open modal. The status flip triggers
+  // a re-render (state changes), which is why we stash AFTER it: a
+  // render that ran before the stash wouldn't see the prefill anyway.
   if (a.status !== 'hired') updateApplicationStatus(id, 'hired');
+  _applicationPrefill = a;
   openEmployeeModal();
-  toast('Application marked Hired. Add their employee row to complete onboarding.', 'success');
 }
 
 function renderHelp() {
