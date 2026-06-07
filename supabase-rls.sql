@@ -865,7 +865,7 @@ CREATE POLICY "employees_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "employees_delete_hr"
   ON public.employees FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- EMPLOYEE_EXTRAS — same scope
 CREATE POLICY "employee_extras_insert_hr"
@@ -877,7 +877,7 @@ CREATE POLICY "employee_extras_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "employee_extras_delete_hr"
   ON public.employee_extras FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- LEAVE_REQUESTS — insert kept as self-or-hr; update/delete: admin or hr
 CREATE POLICY "leave_requests_insert_self_or_hr"
@@ -896,7 +896,7 @@ CREATE POLICY "leave_requests_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "leave_requests_delete_hr"
   ON public.leave_requests FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- PAYROLL — admin or hr
 CREATE POLICY "payroll_insert_hr"
@@ -908,7 +908,7 @@ CREATE POLICY "payroll_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "payroll_delete_hr"
   ON public.payroll FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- BRANCHES — admin or hr
 CREATE POLICY "branches_insert_hr"
@@ -920,7 +920,7 @@ CREATE POLICY "branches_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "branches_delete_hr"
   ON public.branches FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- WARNINGS — admin or hr
 CREATE POLICY "warnings_insert_hr"
@@ -932,7 +932,7 @@ CREATE POLICY "warnings_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "warnings_delete_hr"
   ON public.warnings FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- ADVANCES — insert kept as self-or-hr; decide(update)/delete: admin or hr
 CREATE POLICY "advances_insert_self_or_hr"
@@ -956,7 +956,7 @@ CREATE POLICY "advances_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "advances_delete_hr"
   ON public.advances FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- CERTIFICATES — admin or hr
 CREATE POLICY "certificates_insert_hr"
@@ -968,7 +968,7 @@ CREATE POLICY "certificates_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "certificates_delete_hr"
   ON public.certificates FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- ARCHIVE_DOCUMENTS — admin or hr
 CREATE POLICY "archive_insert_hr"
@@ -980,7 +980,7 @@ CREATE POLICY "archive_update_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "archive_delete_hr"
   ON public.archive_documents FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
 -- 16. INVENTORY (admin or inventory role)
@@ -2752,7 +2752,7 @@ CREATE POLICY "holidays_update_admin_or_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "holidays_delete_admin_or_hr"
   ON public.holidays FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 ALTER TABLE public.payroll ADD COLUMN IF NOT EXISTS holiday_ot_hours numeric(12,2);
 
@@ -2815,7 +2815,7 @@ END $$;
 
 CREATE POLICY "deductions_select_admin_or_hr"
   ON public.deductions FOR SELECT TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 CREATE POLICY "deductions_insert_admin_or_hr"
   ON public.deductions FOR INSERT TO authenticated
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
@@ -2825,7 +2825,7 @@ CREATE POLICY "deductions_update_admin_or_hr"
   WITH CHECK (public.has_role(ARRAY['admin','hr']));
 CREATE POLICY "deductions_delete_admin_or_hr"
   ON public.deductions FOR DELETE TO authenticated
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
 -- 52. WORK MANAGEMENT — TASKS (Phase 1)
@@ -3654,18 +3654,23 @@ CREATE POLICY job_applications_insert_public ON public.job_applications
   FOR INSERT
   WITH CHECK (consent_given = true);
 
--- SELECT: admin + hr only. Public CANNOT enumerate applications.
+-- SELECT: admin + operations only. Public CANNOT enumerate applications.
+-- Owner-confirmed role gate (2026-06-06): the "Interview" pool is for
+-- admin + operations. HR does not exist as a separate role in Hassad's
+-- current setup; if it's added later, widen this to ARRAY['admin','hr',
+-- 'operations'] and ship the corresponding JS canManagePeople()-style
+-- widening on the renderer.
 DROP POLICY IF EXISTS job_applications_select_admin_hr ON public.job_applications;
 CREATE POLICY job_applications_select_admin_hr ON public.job_applications
   FOR SELECT
-  USING (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']));
 
--- UPDATE: admin + hr. Used for status transitions + notes.
+-- UPDATE: admin + operations. Used for status transitions + HR notes.
 DROP POLICY IF EXISTS job_applications_update_admin_hr ON public.job_applications;
 CREATE POLICY job_applications_update_admin_hr ON public.job_applications
   FOR UPDATE
-  USING (public.has_role(ARRAY['admin','hr']))
-  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+  USING (public.has_role(ARRAY['admin','operations']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
 
 -- DELETE: admin only. PDPL right-to-delete + spam cleanup.
 DROP POLICY IF EXISTS job_applications_delete_admin ON public.job_applications;
@@ -3680,7 +3685,7 @@ CREATE POLICY job_applications_delete_admin ON public.job_applications
 -- outside our migration discipline). Instead, create it once via the
 -- Supabase Dashboard → Storage → New bucket → 'applicant-cvs' →
 -- PRIVATE (NOT public). Then run the policies below to allow public
--- uploads + admin/hr reads.
+-- uploads + admin/operations reads.
 --
 -- File naming convention enforced client-side:
 --   applicant-cvs/{application_id}/{original_filename}
@@ -3694,17 +3699,17 @@ CREATE POLICY job_applications_delete_admin ON public.job_applications
 -- Public anonymous upload: anyone can INSERT into the bucket as long
 -- as it's the 'applicant-cvs' bucket. 5 MB limit + MIME whitelist
 -- should be enforced client-side (we trust the network less, so the
--- HR review UI also validates before download).
+-- review UI also validates before download).
 DROP POLICY IF EXISTS applicant_cvs_public_insert ON storage.objects;
 CREATE POLICY applicant_cvs_public_insert ON storage.objects
   FOR INSERT
   WITH CHECK (bucket_id = 'applicant-cvs');
 
--- Admin + hr can read (so HR can preview/download the CV).
+-- Admin + operations can read (so admin/ops can preview/download the CV).
 DROP POLICY IF EXISTS applicant_cvs_select_admin_hr ON storage.objects;
 CREATE POLICY applicant_cvs_select_admin_hr ON storage.objects
   FOR SELECT
-  USING (bucket_id = 'applicant-cvs' AND public.has_role(ARRAY['admin','hr']));
+  USING (bucket_id = 'applicant-cvs' AND public.has_role(ARRAY['admin','operations']));
 
 -- Admin only can DELETE (paired with row-deletion to satisfy PDPL).
 DROP POLICY IF EXISTS applicant_cvs_delete_admin ON storage.objects;

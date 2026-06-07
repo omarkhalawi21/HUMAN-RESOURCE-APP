@@ -2595,7 +2595,7 @@ function renderShell(routeContent) {
     { key:'holidays',     icon:'calendar',  label:'Holidays',        show:canManagePeople(), group:'main', parent:'payroll' },
     { key:'deductions',   icon:'cash',      label:'Deductions',      show:canManagePeople(), group:'main', parent:'payroll' },
     /* People management */
-    { key:'applications', icon:'idcard',    label:'Applications',    show:canManagePeople(), group:'people' },
+    { key:'applications', icon:'idcard',    label:'Interview',       show:hasRole('admin','operations'), group:'people' },
     { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
@@ -7503,17 +7503,19 @@ function scrollToGuideSection(id) {
    and the storage bucket; SELECT/UPDATE are gated to admin+hr.
 ============================================================ */
 
-// Positions visible on the public form. Keep in sync with the
-// position CHECK constraint in SQL block 64. Bilingual labels;
-// 'other' triggers a free-text field.
+// Positions visible on the public form. Owner-confirmed list (2026-06-06):
+// only barista / roaster / cashier accept external applications. Other
+// roles (head_barista promotions, bakery, maintenance) are filled
+// through different channels — internal moves, direct outreach, etc.
+// The CHECK constraint in SQL block 64 is intentionally LOOSER (still
+// allows head_barista/bakery/maintenance/other) so that:
+//   (a) historical applications with those positions remain valid, and
+//   (b) the admin can broaden the list later by editing this array
+//       alone — no schema change needed.
 const APPLY_POSITIONS = [
   { value:'barista',      en:'Barista',         ar:'باريستا' },
-  { value:'head_barista', en:'Head Barista',    ar:'رئيس باريستا' },
-  { value:'cashier',      en:'Cashier',         ar:'كاشير' },
   { value:'roaster',      en:'Coffee Roaster',  ar:'محمص قهوة' },
-  { value:'bakery',       en:'Bakery / Pastry', ar:'مخبز / حلويات' },
-  { value:'maintenance',  en:'Maintenance',     ar:'صيانة' },
-  { value:'other',        en:'Other (specify)', ar:'أخرى (حدد)' },
+  { value:'cashier',      en:'Cashier',         ar:'كاشير' },
 ];
 
 const APPLY_BRANCHES = [
@@ -7968,8 +7970,8 @@ function renderApplications() {
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('idcard','w-3.5 h-3.5')} Recruitment</div>
-          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Applications</h2>
-          <p class="text-slate-500 mt-1 text-sm max-w-xl">Public submissions from the careers form. Triage new ones, move them through the pipeline, and convert hires into employees.</p>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Interview pool</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">Everyone who&rsquo;s submitted the public application form. When you need to hire, pick from here — search, filter by position, review notes, and convert hires into employees.</p>
         </div>
         <div class="flex flex-col gap-2 text-xs">
           <div class="text-slate-500">Share this link to invite applicants:</div>
@@ -8052,7 +8054,7 @@ function renderApplicationDetail(id) {
   const reviewer = a.reviewedBy ? getEmployee(a.reviewedBy) : null;
   return `
     <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-      <a href="#/applications" class="text-sm text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">← Back to Applications</a>
+      <a href="#/applications" class="text-sm text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">← Back to interview pool</a>
       <div class="flex items-center gap-2">
         <span class="badge ${m.badge}">${escapeHTML(m.label)}</span>
         <select onchange="updateApplicationStatus('${a.id}', this.value)" class="input !py-1.5 !text-sm !w-auto">
@@ -19335,8 +19337,8 @@ function render() {
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
     case 'spend_report': content = hasRole('admin','accounting') ? renderSpendReport() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
-    case 'applications': content = canManagePeople() ? renderApplications() : renderRoleDashboard(); break;
-    case 'application':  content = canManagePeople() ? renderApplicationDetail(getRouteParam()) : renderRoleDashboard(); break;
+    case 'applications': content = hasRole('admin','operations') ? renderApplications() : renderRoleDashboard(); break;
+    case 'application':  content = hasRole('admin','operations') ? renderApplicationDetail(getRouteParam()) : renderRoleDashboard(); break;
     case 'help':         content = renderHelp(); break;
     case 'account':      content = renderAccount(); break;
     default:             content = renderDashboard();
