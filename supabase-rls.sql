@@ -3550,6 +3550,169 @@ ALTER TABLE public.personal_todo_lists
   CHECK (recurrence IN ('once','daily','weekly','monthly'));
 
 -- =============================================================
+-- 64. JOB APPLICATIONS — public-facing application form
+-- =============================================================
+-- Hassad wants a public form (no login required) where people who
+-- want to work for Hassad can submit their details. The data sits
+-- waiting until HR has a position to fill, then HR reviews and either
+-- moves them through interview → hired, or marks them rejected.
+-- Added 2026-06-06.
+--
+-- Threat model
+-- ------------
+-- The form is intentionally open-access — anyone on the internet can
+-- INSERT. That means:
+--   - Spam / form abuse: rate-limited at the Supabase RPC layer + we
+--     add a honeypot field client-side (a hidden input bots fill in;
+--     real users don't).
+--   - PII exposure: SELECT/UPDATE locked to admin+hr only via RLS.
+--     Public users can post in but never read out. DELETE is admin-
+--     only (PDPL right-to-delete).
+-- A future Edge Function can layer Cloudflare Turnstile if abuse
+-- becomes real; not needed for launch.
+CREATE TABLE IF NOT EXISTS public.job_applications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Personal
+  first_name      text NOT NULL,
+  last_name       text,
+  email           text NOT NULL,
+  phone           text,
+  nationality     text,
+
+  -- Position they want
+  position        text NOT NULL,                     -- 'barista' | 'head_barista' | 'roaster' | 'bakery' | 'maintenance' | 'other'
+  position_other  text,                              -- free text when position = 'other'
+  branch_preference text,                            -- KHOBAR | RAYYAN | FAISALIYAH | ANY
+
+  -- Background
+  years_experience smallint,                         -- in coffee or this role
+  previous_workplace text,
+
+  -- Availability
+  availability    text,                              -- 'full_time' | 'part_time' | 'flexible'
+  earliest_start  date,
+
+  -- KSA-specific
+  iqama_status    text,                              -- 'valid' | 'expired' | 'transferable' | 'none'
+  has_driving_license boolean,
+
+  -- Open-ended
+  why_hassad      text,
+
+  -- Optional CV (path in the storage bucket below)
+  cv_path         text,                              -- e.g. 'cvs/{application_id}/filename.pdf'
+
+  -- HR workflow
+  status          text NOT NULL DEFAULT 'new',       -- 'new' | 'reviewing' | 'interview' | 'hired' | 'rejected' | 'archived'
+  reviewed_by     uuid REFERENCES public.employees(id),
+  reviewed_at     timestamptz,
+  hr_notes        text,
+  source          text,                              -- where they heard about Hassad
+
+  -- PDPL
+  consent_given   boolean NOT NULL DEFAULT true,
+  consent_at      timestamptz NOT NULL DEFAULT now(),
+
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS job_applications_status_idx ON public.job_applications(status);
+CREATE INDEX IF NOT EXISTS job_applications_created_idx ON public.job_applications(created_at DESC);
+
+ALTER TABLE public.job_applications
+  DROP CONSTRAINT IF EXISTS job_applications_status_chk;
+ALTER TABLE public.job_applications
+  ADD CONSTRAINT job_applications_status_chk
+  CHECK (status IN ('new','reviewing','interview','hired','rejected','archived'));
+
+ALTER TABLE public.job_applications
+  DROP CONSTRAINT IF EXISTS job_applications_position_chk;
+ALTER TABLE public.job_applications
+  ADD CONSTRAINT job_applications_position_chk
+  CHECK (position IN ('barista','head_barista','roaster','bakery','maintenance','cashier','other'));
+
+ALTER TABLE public.job_applications
+  DROP CONSTRAINT IF EXISTS job_applications_availability_chk;
+ALTER TABLE public.job_applications
+  ADD CONSTRAINT job_applications_availability_chk
+  CHECK (availability IS NULL OR availability IN ('full_time','part_time','flexible'));
+
+ALTER TABLE public.job_applications
+  DROP CONSTRAINT IF EXISTS job_applications_iqama_chk;
+ALTER TABLE public.job_applications
+  ADD CONSTRAINT job_applications_iqama_chk
+  CHECK (iqama_status IS NULL OR iqama_status IN ('valid','expired','transferable','none'));
+
+ALTER TABLE public.job_applications ENABLE ROW LEVEL SECURITY;
+
+-- INSERT: public (anon role) can submit. No SELECT auth required for the
+--         insert itself. consent_given must be true (PDPL).
+DROP POLICY IF EXISTS job_applications_insert_public ON public.job_applications;
+CREATE POLICY job_applications_insert_public ON public.job_applications
+  FOR INSERT
+  WITH CHECK (consent_given = true);
+
+-- SELECT: admin + hr only. Public CANNOT enumerate applications.
+DROP POLICY IF EXISTS job_applications_select_admin_hr ON public.job_applications;
+CREATE POLICY job_applications_select_admin_hr ON public.job_applications
+  FOR SELECT
+  USING (public.has_role(ARRAY['admin','hr']));
+
+-- UPDATE: admin + hr. Used for status transitions + notes.
+DROP POLICY IF EXISTS job_applications_update_admin_hr ON public.job_applications;
+CREATE POLICY job_applications_update_admin_hr ON public.job_applications
+  FOR UPDATE
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+
+-- DELETE: admin only. PDPL right-to-delete + spam cleanup.
+DROP POLICY IF EXISTS job_applications_delete_admin ON public.job_applications;
+CREATE POLICY job_applications_delete_admin ON public.job_applications
+  FOR DELETE
+  USING (public.is_admin());
+
+-- -------------------------------------------------------------
+-- CV upload: Supabase Storage bucket 'applicant-cvs'
+-- -------------------------------------------------------------
+-- We DON'T create the bucket via SQL (Supabase's storage schema lives
+-- outside our migration discipline). Instead, create it once via the
+-- Supabase Dashboard → Storage → New bucket → 'applicant-cvs' →
+-- PRIVATE (NOT public). Then run the policies below to allow public
+-- uploads + admin/hr reads.
+--
+-- File naming convention enforced client-side:
+--   applicant-cvs/{application_id}/{original_filename}
+-- That way each CV is namespaced under the row it belongs to and we
+-- can look it up from the application row's cv_path.
+--
+-- Note: these CREATE POLICY statements assume the bucket already
+-- exists. If you re-run the file before creating the bucket, the
+-- policies fail. After creating 'applicant-cvs', re-run this section.
+
+-- Public anonymous upload: anyone can INSERT into the bucket as long
+-- as it's the 'applicant-cvs' bucket. 5 MB limit + MIME whitelist
+-- should be enforced client-side (we trust the network less, so the
+-- HR review UI also validates before download).
+DROP POLICY IF EXISTS applicant_cvs_public_insert ON storage.objects;
+CREATE POLICY applicant_cvs_public_insert ON storage.objects
+  FOR INSERT
+  WITH CHECK (bucket_id = 'applicant-cvs');
+
+-- Admin + hr can read (so HR can preview/download the CV).
+DROP POLICY IF EXISTS applicant_cvs_select_admin_hr ON storage.objects;
+CREATE POLICY applicant_cvs_select_admin_hr ON storage.objects
+  FOR SELECT
+  USING (bucket_id = 'applicant-cvs' AND public.has_role(ARRAY['admin','hr']));
+
+-- Admin only can DELETE (paired with row-deletion to satisfy PDPL).
+DROP POLICY IF EXISTS applicant_cvs_delete_admin ON storage.objects;
+CREATE POLICY applicant_cvs_delete_admin ON storage.objects
+  FOR DELETE
+  USING (bucket_id = 'applicant-cvs' AND public.is_admin());
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
