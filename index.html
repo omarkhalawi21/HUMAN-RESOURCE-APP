@@ -7912,17 +7912,23 @@ async function submitApplication(form) {
     // 2. If they attached a CV, upload it into the bucket scoped by
     //    the new application's id. Failures here DO NOT fail the
     //    submission — the row is saved, HR can ask for the CV later.
+    //    Wrapped in its own try/catch in case the bucket doesn't exist,
+    //    the SDK throws on network issues, etc. — anything storage-side
+    //    must never take down the form submission.
     if (_applyCvFile) {
-      const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
-      const path = `${inserted.id}/${Date.now()}_${safeName}`;
-      const { error: upErr } = await sb.storage
-        .from('applicant-cvs')
-        .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
-      if (upErr) {
-        console.warn('CV upload failed:', upErr);
-        // Don't roll back the application — just leave cv_path null.
-      } else {
-        await sb.from('job_applications').update({ cv_path: path }).eq('id', inserted.id);
+      try {
+        const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
+        const path = `${inserted.id}/${Date.now()}_${safeName}`;
+        const { error: upErr } = await sb.storage
+          .from('applicant-cvs')
+          .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
+        if (upErr) {
+          console.warn('CV upload failed (row already saved):', upErr);
+        } else {
+          await sb.from('job_applications').update({ cv_path: path }).eq('id', inserted.id);
+        }
+      } catch (storageErr) {
+        console.warn('CV upload threw (row already saved):', storageErr);
       }
     }
 
@@ -7932,7 +7938,13 @@ async function submitApplication(form) {
     _applyCvFile = null;
   } catch (e) {
     console.error('apply submit error:', e);
-    toast(L.err_submit, 'error');
+    // Surface the real reason in the toast so the applicant (and we,
+    // remotely) can see what went wrong without dev tools open. Common
+    // shapes from Supabase JS:
+    //   { message, code, details, hint }   — PostgREST errors
+    //   plain Error("...")                  — network / SDK errors
+    const reason = (e && (e.message || e.code || e.details)) || 'unknown error';
+    toast(`${L.err_submit} (${reason})`, 'error');
     if (btn) { btn.disabled = false; btn.textContent = isAr ? 'إرسال الطلب' : 'Submit application'; }
   }
 }
