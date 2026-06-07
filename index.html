@@ -7609,7 +7609,8 @@ function renderApplyForm() {
     license_yes: 'نعم', license_no: 'لا',
     sec_why: 'لماذا حصاد؟',
     why_hassad_ph: 'تكلم باختصار عن سبب رغبتك في العمل معنا...',
-    sec_cv: 'السيرة الذاتية (اختياري)',
+    sec_cv: 'السيرة الذاتية',
+    err_cv_required: 'يرجى إرفاق السيرة الذاتية.',
     cv_help: 'PDF أو Word أو صورة. الحد الأقصى 5 ميجابايت.',
     cv_choose: 'اختر ملف',
     cv_remove: 'إزالة',
@@ -7648,7 +7649,8 @@ function renderApplyForm() {
     license_yes: 'Yes', license_no: 'No',
     sec_why: 'Why Hassad?',
     why_hassad_ph: 'In a few sentences, tell us what draws you to Hassad...',
-    sec_cv: 'CV / résumé (optional)',
+    sec_cv: 'CV / résumé',
+    err_cv_required: 'Please attach your CV.',
     cv_help: 'PDF, Word, or image. 5 MB max.',
     cv_choose: 'Choose file',
     cv_remove: 'Remove',
@@ -7797,9 +7799,9 @@ function renderApplyForm() {
             </div>
           </fieldset>
 
-          <!-- Section: CV -->
+          <!-- Section: CV (required) -->
           <fieldset class="space-y-2 pt-4 border-t border-slate-100">
-            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_cv}</legend>
+            <legend class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold mb-2">${L.sec_cv} <span class="text-rose-600">*</span></legend>
             <div class="text-xs text-slate-500 mb-2">${L.cv_help}</div>
             <div class="flex items-center gap-3 flex-wrap">
               <label class="btn btn-ghost btn-sm cursor-pointer">
@@ -7860,10 +7862,12 @@ async function submitApplication(form) {
   const L = isAr ? {
     err_required:'الرجاء تعبئة الحقول المطلوبة.', err_email:'البريد الإلكتروني غير صحيح.',
     err_consent:'يرجى الموافقة على معالجة البيانات.', err_submit:'تعذر إرسال الطلب. حاول مرة أخرى.',
+    err_cv_required:'يرجى إرفاق السيرة الذاتية.',
     submitting:'جاري الإرسال...',
   } : {
     err_required:'Please fill in the required fields.', err_email:'That email doesn\'t look right.',
     err_consent:'You need to consent to data processing to apply.', err_submit:'Couldn\'t submit. Please try again.',
+    err_cv_required:'Please attach your CV.',
     submitting:'Submitting...',
   };
   const data = new FormData(form);
@@ -7899,6 +7903,15 @@ async function submitApplication(form) {
   if (!a.firstName || !a.email || !a.position) { toast(L.err_required, 'error'); return; }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)) { toast(L.err_email, 'error'); return; }
   if (!a.consentGiven) { toast(L.err_consent, 'error'); return; }
+  // CV is now compulsory. _applyCvFile is set by applyOnCvChange when
+  // the user picks a file that passes size+type checks.
+  if (!_applyCvFile) {
+    toast(L.err_cv_required, 'error');
+    // Scroll to the CV section so the user actually sees the field
+    // that's missing — common UX failure for long forms.
+    document.getElementById('apply-cv')?.closest('fieldset')?.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
 
   const btn = document.getElementById('apply-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = L.submitting; }
@@ -7910,13 +7923,14 @@ async function submitApplication(form) {
       .insert(applicationToDb(a)).select().single();
     if (error) throw error;
 
-    // 2. If they attached a CV, upload it into the bucket scoped by
-    //    the new application's id. Failures here DO NOT fail the
-    //    submission — the row is saved, HR can ask for the CV later.
-    //    Wrapped in its own try/catch in case the bucket doesn't exist,
-    //    the SDK throws on network issues, etc. — anything storage-side
-    //    must never take down the form submission.
-    if (_applyCvFile) {
+    // 2. CV is compulsory (validated above) — upload it. If the upload
+    //    fails for any reason (bucket missing, file rejected by storage,
+    //    network), roll back the row we just inserted so the applicant
+    //    can retry cleanly instead of ending up with a half-saved
+    //    application with no CV attached. Then surface the error.
+    {
+      let uploadOk = false;
+      let uploadErrMsg = '';
       try {
         const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
         const path = `${inserted.id}/${Date.now()}_${safeName}`;
@@ -7924,12 +7938,31 @@ async function submitApplication(form) {
           .from('applicant-cvs')
           .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
         if (upErr) {
-          console.warn('CV upload failed (row already saved):', upErr);
+          uploadErrMsg = upErr.message || 'upload failed';
         } else {
-          await sb.from('job_applications').update({ cv_path: path }).eq('id', inserted.id);
+          const { error: updErr } = await sb.from('job_applications')
+            .update({ cv_path: path }).eq('id', inserted.id);
+          if (updErr) {
+            uploadErrMsg = updErr.message || 'could not link CV to application';
+          } else {
+            uploadOk = true;
+          }
         }
       } catch (storageErr) {
-        console.warn('CV upload threw (row already saved):', storageErr);
+        uploadErrMsg = (storageErr && storageErr.message) || 'storage error';
+      }
+      if (!uploadOk) {
+        console.warn('CV upload failed, rolling back application row:', uploadErrMsg);
+        // Best-effort rollback. If the DELETE itself fails (RLS edge
+        // case, network), it's noisy but recoverable — admin can clean
+        // up via the directory's delete button. Don't let cleanup
+        // failure mask the original upload error.
+        try {
+          await sb.from('job_applications').delete().eq('id', inserted.id);
+        } catch (cleanupErr) {
+          console.warn('Rollback delete also failed:', cleanupErr);
+        }
+        throw new Error(`CV upload failed (${uploadErrMsg}). Please retry.`);
       }
     }
 
