@@ -4378,6 +4378,35 @@ function openEmployeeModal(id) {
     render();
     return true;
   });
+
+  // Auto-prefill from a stashed job application (Interview → "Convert
+  // to employee" funnels here via _applicationPrefill). DOM is already
+  // populated by openModal() above. Inputs are set after the synchronous
+  // openModal returns; values then survive the modal's focus-shift +
+  // tab-trap setup.
+  if (!editing && typeof _applicationPrefill !== 'undefined' && _applicationPrefill) {
+    const p = _applicationPrefill;
+    _applicationPrefill = null;
+    const set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+    set('m-fn',  p.firstName);
+    set('m-ln',  p.lastName);
+    set('m-em',  p.email);
+    set('m-ph',  p.phone);
+    set('m-nat', p.nationality);
+    // Position → job title. APPLY_POSITIONS labels match the form's
+    // datalist of job titles closely enough (Barista / Coffee Roaster
+    // / Cashier). Free-text 'other' uses positionOther.
+    const positionLabel = (p.position === 'other' && p.positionOther)
+      ? p.positionOther
+      : (APPLY_POSITIONS.find(x => x.value === p.position)?.en
+         || (p.position||'').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()));
+    set('m-ro', positionLabel);
+    // Branch preference (skip 'ANY' — admin should pick a real branch).
+    if (p.branchPreference && p.branchPreference !== 'ANY') {
+      set('m-br', p.branchPreference);
+    }
+    toast('Prefilled from the application — review and complete the missing fields', 'success');
+  }
 }
 // When the user picks "+ Add custom department…", reveal an inline input.
 // We avoid opening a second modal here — that would close the parent
@@ -8171,17 +8200,21 @@ async function deleteApplication(id) {
   toast('Application deleted', 'success');
 }
 
-// Mark the application as hired (if not already) and open the empty
-// Add Employee modal so HR can complete onboarding. v1 doesn't
-// auto-prefill the form yet — HR can keep the application detail in a
-// second tab and copy across. Auto-prefill is queued as a polish PR
-// once we've validated the basic flow.
+// Mark the application as hired (if not already) and open the Add
+// Employee modal pre-populated with the applicant's data. The prefill
+// stash is read once by openEmployeeModal() and cleared on use, so
+// subsequent "Add Employee" clicks start blank as expected.
+let _applicationPrefill = null;
 function convertApplicationToEmployee(id) {
   const a = (state.applications || []).find(x => x.id === id);
   if (!a) return;
+  // Mark hired first (idempotent — no-op if already hired). Sequencing:
+  // status flip → stash prefill → open modal. The status flip triggers
+  // a re-render (state changes), which is why we stash AFTER it: a
+  // render that ran before the stash wouldn't see the prefill anyway.
   if (a.status !== 'hired') updateApplicationStatus(id, 'hired');
+  _applicationPrefill = a;
   openEmployeeModal();
-  toast('Application marked Hired. Add their employee row to complete onboarding.', 'success');
 }
 
 function renderHelp() {
