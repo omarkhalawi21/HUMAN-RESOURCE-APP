@@ -2197,14 +2197,26 @@ function canManagePeople() { return hasRole('admin','hr'); }
 // (employees, payroll, balances, certificates, etc.) stay on canManagePeople.
 function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations'); }
 // canViewAttendanceAndLeave — broader than canManage. Adds two view-only roles:
-//   • head_barista — cross-branch visibility for shift planning across all
-//     locations (use the page's branch filter to narrow if needed).
+//   • head_barista — runs a single branch, so their attendance views are
+//     PINNED to their own branch (see attLockedBranch); they do not see
+//     other locations.
 //   • accounting   — cross-branch visibility to prep payroll against
 //     attendance + approved leave.
 // Both see the team-wide tabs but no approve/reject buttons — those stay
 // on canManageAttendanceAndLeave.
 function canViewAttendanceAndLeave() {
   return canManageAttendanceAndLeave() || hasRole('head_barista', 'accounting');
+}
+// attLockedBranch — the single branch a head_barista is confined to in the
+// attendance views, or '' for unrestricted roles (admin/hr/operations/
+// accounting, who see all branches). Resolved via dcDefaultBranch() so it
+// matches how the same head barista's checklists and daily counts already
+// scope. Respects the admin "view as role" preview because it goes through
+// hasRole()/dcDefaultBranch().
+function attLockedBranch() {
+  if (canManageAttendanceAndLeave() || hasRole('accounting')) return '';
+  if (hasRole('head_barista')) return dcDefaultBranch();
+  return '';
 }
 // Find employees whose system_role is still the default 'employee' but
 // whose department or job_title looks like a real role name. Used to
@@ -4541,15 +4553,20 @@ function setAttHistRange(kind) {
   render();
 }
 function getAttHistFiltered() {
+  // Head baristas are confined to their branch — this overrides any branch
+  // value in module state, so CSV export and "print as evidence" (both of
+  // which call this) can't be used to pull other branches.
+  const lockBranch = attLockedBranch();
+  const branchFilter = lockBranch || attHistFilter.branch;
   const records = state.attendance.filter(a => {
     if (a.date < attHistFilter.from || a.date > attHistFilter.to) return false;
     if (attHistFilter.employee !== 'all' && a.employeeId !== attHistFilter.employee) return false;
-    if (attHistFilter.branch !== 'all') {
+    if (branchFilter !== 'all') {
       const ex = getEmpExtras(a.employeeId);
       const empBranch = (ex.branch || '').trim();
-      if (attHistFilter.branch === 'none') {
+      if (branchFilter === 'none') {
         if (empBranch !== '') return false;
-      } else if (empBranch !== attHistFilter.branch) return false;
+      } else if (empBranch !== branchFilter) return false;
     }
     if (attHistFilter.status !== 'all' && a.status !== attHistFilter.status) return false;
     return true;
@@ -4736,15 +4753,19 @@ function renderAttendance() {
       </div>
     `;
   } else if (attTab==='all') {
-    const rows = state.employees.map(e => {
-      const a = state.attendance.find(x => x.employeeId===e.id && x.date===today);
-      const onLeave = state.leaveRequests.find(r=>r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
-      return { e, a, onLeave };
-    });
+    // Head baristas only see their own branch's roster; other roles see all.
+    const lockBranch = attLockedBranch();
+    const rows = state.employees
+      .filter(e => !lockBranch || (getEmpExtras(e.id).branch||'').trim().toUpperCase() === lockBranch)
+      .map(e => {
+        const a = state.attendance.find(x => x.employeeId===e.id && x.date===today);
+        const onLeave = state.leaveRequests.find(r=>r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
+        return { e, a, onLeave };
+      });
     main = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
         <div class="p-5 border-b border-slate-100 flex justify-between items-center">
-          <h3 class="font-display text-lg font-semibold text-slate-900">Today — ${new Date().toLocaleDateString()}</h3>
+          <h3 class="font-display text-lg font-semibold text-slate-900">Today — ${new Date().toLocaleDateString()}${lockBranch?` · ${escapeHTML(lockBranch)}`:''}</h3>
           <button onclick="exportCSV('today-attendance')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
         </div>
         <div class="overflow-x-auto">
@@ -4772,6 +4793,11 @@ function renderAttendance() {
       attHistFilter.from = d.toISOString().slice(0,10);
       attHistFilter.to = todayISO();
     }
+    // Head baristas are pinned to their branch — force the branch filter so
+    // the existing per-row branch check below scopes the results, regardless
+    // of any value left in module state.
+    const lockBranch = attLockedBranch();
+    if (lockBranch) attHistFilter.branch = lockBranch;
     const sorted = state.attendance
       .filter(a => {
         if (a.date < attHistFilter.from || a.date > attHistFilter.to) return false;
@@ -4813,16 +4839,18 @@ function renderAttendance() {
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Employee</div>
               <select class="input !py-2 !text-sm" onchange="attHistFilter.employee=this.value; render();">
                 <option value="all" ${attHistFilter.employee==='all'?'selected':''}>All employees</option>
-                ${state.employees.slice().sort((a,b)=>a.firstName.localeCompare(b.firstName)).map(e=>`<option value="${e.id}" ${attHistFilter.employee===e.id?'selected':''}>${escapeHTML(e.firstName+' '+e.lastName)}</option>`).join('')}
+                ${state.employees.slice().filter(e=>!lockBranch || (getEmpExtras(e.id).branch||'').trim().toUpperCase()===lockBranch).sort((a,b)=>a.firstName.localeCompare(b.firstName)).map(e=>`<option value="${e.id}" ${attHistFilter.employee===e.id?'selected':''}>${escapeHTML(e.firstName+' '+e.lastName)}</option>`).join('')}
               </select>
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Branch</div>
+              ${lockBranch ? `
+              <div class="input !py-2 !text-sm bg-slate-100 text-slate-600 flex items-center">${escapeHTML(lockBranch)}</div>` : `
               <select class="input !py-2 !text-sm" onchange="attHistFilter.branch=this.value; render();">
                 <option value="all" ${attHistFilter.branch==='all'?'selected':''}>All branches</option>
                 <option value="none" ${attHistFilter.branch==='none'?'selected':''}>None (unassigned)</option>
                 ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${attHistFilter.branch===b?'selected':''}>${escapeHTML(b)}</option>`).join('')}
-              </select>
+              </select>`}
             </div>
             <div>
               <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">From</div>
@@ -8743,10 +8771,13 @@ function exportCSV(kind) {
   } else if (kind==='today-attendance') {
     rows = [['Employee','Department','Clock In','Clock Out','Status']];
     const today = todayISO();
-    state.employees.forEach(e => {
-      const a = state.attendance.find(x=>x.employeeId===e.id&&x.date===today);
-      rows.push([e.firstName+' '+e.lastName, e.department, a?.clockIn||'', a?.clockOut||'', a?.status||'absent']);
-    });
+    const lockBranch = attLockedBranch(); // head baristas: own branch only
+    state.employees
+      .filter(e => !lockBranch || (getEmpExtras(e.id).branch||'').trim().toUpperCase() === lockBranch)
+      .forEach(e => {
+        const a = state.attendance.find(x=>x.employeeId===e.id&&x.date===today);
+        rows.push([e.firstName+' '+e.lastName, e.department, a?.clockIn||'', a?.clockOut||'', a?.status||'absent']);
+      });
   } else if (kind==='all-attendance') {
     rows = [['Date','Employee','Clock In','Clock Out','Hours','Status']];
     state.attendance.forEach(a => {
