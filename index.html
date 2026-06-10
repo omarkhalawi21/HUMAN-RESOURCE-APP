@@ -443,6 +443,7 @@ const I18N = {
     err_duplicate: "That record already exists.",
     err_not_found: "Record not found.",
     err_validation: "Some fields are invalid — please review.",
+    err_config: "This action isn't set up yet — a database update is needed. Please contact your administrator.",
   },
   ar: {
     login_welcome: "مرحبًا بك في",
@@ -613,6 +614,7 @@ const I18N = {
     err_duplicate: "هذا السجل موجود مسبقًا.",
     err_not_found: "السجل غير موجود.",
     err_validation: "بعض الحقول غير صحيحة — يرجى المراجعة.",
+    err_config: "هذه العملية غير مهيأة بعد — يلزم تحديث قاعدة البيانات. يرجى التواصل مع المسؤول.",
   }
 };
 const t = (key) => (I18N[state.settings.lang] && I18N[state.settings.lang][key]) || I18N.en[key] || key;
@@ -2125,16 +2127,29 @@ function humanizeError(err, fallbackKey = 'err_generic') {
   if (typeof err === 'object') console.error('Supabase error:', err);
   // PostgREST "no rows" / "multiple rows" when expecting one.
   if (code === 'PGRST116' || lower.includes('json object requested')) return t('err_not_found');
-  // Permission denied / RLS violation.
-  if (code === '42501' || lower.includes('permission denied') || lower.includes('row-level security')) return t('err_permission');
+  // Permission denied / RLS violation / explicit authorization RAISE from
+  // a SECURITY DEFINER RPC (e.g. "Not authorized to decide leave requests").
+  if (code === '42501' || lower.includes('permission denied') || lower.includes('row-level security')
+      || lower.includes('not authorized')) return t('err_permission');
   // Unique constraint violation.
   if (code === '23505' || lower.includes('duplicate key') || lower.includes('already exists')) return t('err_duplicate');
   // Foreign key / check / not-null violation — surface as validation.
   if (code === '23503' || code === '23514' || code === '23502'
       || lower.includes('violates') || lower.includes('check constraint')
       || lower.includes('null value')) return t('err_validation');
+  // Missing DB object — RPC/function/table/column not found. Almost always a
+  // skipped SQL migration: the frontend shipped but the schema wasn't applied
+  // in Supabase. Kept distinct from err_network/err_generic so a setup gap
+  // isn't masked as a transient "try again" (this is what hid the missing
+  // decide_leave_request RPC behind a generic toast).
+  if (code === 'PGRST202' || code === '42883' || code === '42P01' || code === '42703'
+      || lower.includes('could not find the function') || lower.includes('schema cache')) return t('err_config');
   // Network / fetch failures (Supabase client wraps as TypeError "Failed to fetch").
   if (lower.includes('failed to fetch') || lower.includes('network') || (err && err.name === 'TypeError')) return t('err_network');
+  // Intentional business-rule guardrail raised by a plpgsql function (P0001).
+  // The message is human-readable and meant to be shown verbatim
+  // (e.g. "Decision must be approved or rejected").
+  if (code === 'P0001' && raw) return raw;
   // Anything else: generic toast. The detail is in the console.
   return t(fallbackKey);
 }
