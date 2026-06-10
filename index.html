@@ -2207,6 +2207,14 @@ function canManageAttendanceAndLeave() { return hasRole('admin','hr','operations
 function canViewAttendanceAndLeave() {
   return canManageAttendanceAndLeave() || hasRole('head_barista', 'accounting');
 }
+// canViewLeave — the Leave page's team-view gate. Deliberately NARROWER than
+// canViewAttendanceAndLeave: head baristas get NO team view here. They see
+// only their own requests, like a regular employee. Accounting keeps
+// visibility (prep payroll against approved leave); managers keep it via
+// canManageAttendanceAndLeave (which also gates approve/reject).
+function canViewLeave() {
+  return canManageAttendanceAndLeave() || hasRole('accounting');
+}
 // attLockedBranch — the single branch a head_barista is confined to in the
 // attendance views, or '' for unrestricted roles (admin/hr/operations/
 // accounting, who see all branches). Resolved via dcDefaultBranch() so it
@@ -5023,10 +5031,11 @@ async function clockOut() {
 let leaveTab = 'mine';
 function renderLeave() {
   const me = currentEmployee();
-  // canView (head_barista + accounting + managers) gates the team-wide tabs
-  // and the Employee column. canManage (managers only) gates Approve/Reject
-  // buttons. All viewers see all branches.
-  const canView = canViewAttendanceAndLeave();
+  // canView (accounting + managers) gates the team-wide tabs and the Employee
+  // column. Head baristas are intentionally excluded here — on the Leave page
+  // they see only their own requests (unlike attendance, where they get a
+  // branch-scoped team view). canManage (managers only) gates Approve/Reject.
+  const canView = canViewLeave();
   const canManage = canManageAttendanceAndLeave();
   if (!canView) leaveTab = 'mine';
   const balances = state.leaveBalances[me.id] || { annual:0, sick:0, personal:0 };
