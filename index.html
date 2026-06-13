@@ -7909,6 +7909,27 @@ function applyClearCv() {
   if (clearEl) clearEl.style.display = 'none';
 }
 
+// Generates a UUID for a new application row client-side, so the CV can be
+// namespaced under the row id BEFORE the row exists. The public form runs
+// as the anon role, which has no SELECT on job_applications, so we can't
+// read a DB-generated id back — we mint it here instead. crypto.randomUUID
+// is present in every https context the form is served from; the fallbacks
+// still yield a valid v4 UUID for the uuid column.
+function applyGenId() {
+  try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch(_) {}
+  try {
+    const b = new Uint8Array(16); crypto.getRandomValues(b);
+    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map(x => x.toString(16).padStart(2, '0'));
+    return `${h[0]}${h[1]}${h[2]}${h[3]}-${h[4]}${h[5]}-${h[6]}${h[7]}-${h[8]}${h[9]}-${h[10]}${h[11]}${h[12]}${h[13]}${h[14]}${h[15]}`;
+  } catch(_) {}
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 async function submitApplication(form) {
   const isAr = state.settings.lang === 'ar';
   const L = isAr ? {
@@ -7969,56 +7990,45 @@ async function submitApplication(form) {
   if (btn) { btn.disabled = true; btn.textContent = L.submitting; }
 
   try {
-    // 1. Insert the application row first. RLS allows the anonymous
-    //    INSERT as long as consent_given=true.
-    const { data: inserted, error } = await sb.from('job_applications')
-      .insert(applicationToDb(a)).select().single();
+    // The public applicant is the anonymous (anon) role, which RLS on
+    // job_applications grants exactly ONE capability: a single INSERT with
+    // consent_given=true (block 64). There is deliberately NO anon SELECT,
+    // UPDATE or DELETE. So the submit must reduce to operations anon can
+    // actually perform — upload the CV (anon INSERT on the 'applicant-cvs'
+    // bucket is allowed) and INSERT one fully-formed row with the id +
+    // cv_path already set.
+    //
+    // Crucially we must NOT request the row back: .insert().select() adds a
+    // RETURNING that Postgres validates against the SELECT policy, which
+    // anon fails — that surfaced as "new row violates row-level security
+    // policy for table job_applications" even though the INSERT itself was
+    // fine. We also can't update/delete afterwards (both anon-forbidden),
+    // so the CV must be uploaded first and linked in the single INSERT.
+
+    // 1. Mint the row id up front so the CV is namespaced under it before
+    //    the row exists, and so we never need to read the id back.
+    const appId = applyGenId();
+
+    // 2. Upload the CV first. If it fails, no row has been created yet —
+    //    nothing to roll back, just surface the error and let them retry.
+    const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
+    const cvPath = `${appId}/${Date.now()}_${safeName}`;
+    const { error: upErr } = await sb.storage
+      .from('applicant-cvs')
+      .upload(cvPath, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
+    if (upErr) throw new Error(`CV upload failed (${upErr.message || 'upload failed'}). Please retry.`);
+
+    // 3. Insert the application row with the CV already linked — one shot,
+    //    no representation requested. If this fails the uploaded CV is
+    //    orphaned (anon can't delete it; storage DELETE is admin-only), but
+    //    an orphan is harmless and admin can prune it, so we don't attempt
+    //    a rollback the anon role isn't permitted to do anyway.
+    a.cvPath = cvPath;
+    const { error } = await sb.from('job_applications')
+      .insert({ ...applicationToDb(a), id: appId });
     if (error) throw error;
 
-    // 2. CV is compulsory (validated above) — upload it. If the upload
-    //    fails for any reason (bucket missing, file rejected by storage,
-    //    network), roll back the row we just inserted so the applicant
-    //    can retry cleanly instead of ending up with a half-saved
-    //    application with no CV attached. Then surface the error.
-    {
-      let uploadOk = false;
-      let uploadErrMsg = '';
-      try {
-        const safeName = _applyCvFile.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-100);
-        const path = `${inserted.id}/${Date.now()}_${safeName}`;
-        const { error: upErr } = await sb.storage
-          .from('applicant-cvs')
-          .upload(path, _applyCvFile, { contentType: _applyCvFile.type || undefined, upsert: false });
-        if (upErr) {
-          uploadErrMsg = upErr.message || 'upload failed';
-        } else {
-          const { error: updErr } = await sb.from('job_applications')
-            .update({ cv_path: path }).eq('id', inserted.id);
-          if (updErr) {
-            uploadErrMsg = updErr.message || 'could not link CV to application';
-          } else {
-            uploadOk = true;
-          }
-        }
-      } catch (storageErr) {
-        uploadErrMsg = (storageErr && storageErr.message) || 'storage error';
-      }
-      if (!uploadOk) {
-        console.warn('CV upload failed, rolling back application row:', uploadErrMsg);
-        // Best-effort rollback. If the DELETE itself fails (RLS edge
-        // case, network), it's noisy but recoverable — admin can clean
-        // up via the directory's delete button. Don't let cleanup
-        // failure mask the original upload error.
-        try {
-          await sb.from('job_applications').delete().eq('id', inserted.id);
-        } catch (cleanupErr) {
-          console.warn('Rollback delete also failed:', cleanupErr);
-        }
-        throw new Error(`CV upload failed (${uploadErrMsg}). Please retry.`);
-      }
-    }
-
-    // 3. Show the thank-you screen.
+    // 4. Show the thank-you screen.
     document.getElementById('apply-form').style.display = 'none';
     document.getElementById('apply-success').classList.remove('hidden');
     _applyCvFile = null;
