@@ -8285,9 +8285,18 @@ async function saveApplicationNotes(id) {
 async function downloadApplicationCv(id) {
   const a = (state.applications || []).find(x => x.id === id);
   if (!a || !a.cvPath) { toast('No CV on file', 'error'); return; }
+  // Open the tab synchronously inside the click so the popup blocker doesn't
+  // trip — creating the signed URL is async and would burn the user gesture.
+  const w = window.open('', '_blank');
+  if (!w) { toast('Popup blocked — allow popups to download.', 'error'); return; }
+  try { w.opener = null; } catch (_) {}
   const { data, error } = await sb.storage.from('applicant-cvs').createSignedUrl(a.cvPath, 60);
-  if (error || !data?.signedUrl) { toast('Could not generate download link', 'error'); return; }
-  window.open(data.signedUrl, '_blank', 'noopener');
+  if (error || !data?.signedUrl) {
+    try { w.close(); } catch (_) {}
+    toast('Could not generate download link', 'error');
+    return;
+  }
+  w.location.href = data.signedUrl;
 }
 
 async function deleteApplication(id) {
