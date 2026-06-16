@@ -5066,10 +5066,9 @@ function renderLeave() {
     </div>` : '';
 
   const balanceCards = `
-    <div class="grid grid-cols-3 gap-4 mb-6">
+    <div class="grid grid-cols-2 gap-4 mb-6">
       ${balanceCard('Annual',   balances.annual,   21, '#6e4220')}
       ${balanceCard('Sick',     balances.sick,     10, '#059669')}
-      ${balanceCard('Personal', balances.personal, 5,  '#c44a4a')}
     </div>
   `;
   const requestBtn = `
@@ -5147,7 +5146,6 @@ function openLeaveModal() {
         <select id="lv-type" class="input">
           <option value="annual">${escapeHTML(t('leave_type_annual'))}</option>
           <option value="sick">${escapeHTML(t('leave_type_sick'))}</option>
-          <option value="personal">${escapeHTML(t('leave_type_personal'))}</option>
         </select>
       </div>
       <div><label class="label">${escapeHTML(t('leave_days'))}</label><input id="lv-days" class="input" type="number" min="1" value="1" readonly></div>
