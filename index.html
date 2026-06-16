@@ -4971,7 +4971,9 @@ async function clockIn() {
   }
   const shiftStart = today.start || state.settings.workStart;
   const lateMin = diffMinutes(shiftStart, now);
-  const status = lateMin > 5 ? 'late' : 'present';
+  // 15-minute grace period — clock-ins more than 15 min after shift start
+  // are flagged late.
+  const status = lateMin > 15 ? 'late' : 'present';
   let location = null;
   let branch = null;
   const branchesActive = (state.branches||[]).filter(b => b.isActive);
