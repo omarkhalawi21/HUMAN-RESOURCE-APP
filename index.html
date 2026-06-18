@@ -301,6 +301,20 @@ const I18N = {
     ded_hours_ph: "e.g. 2",
     ded_hours_unit: "hours late / missed",
     ded_rate_hint: "Rate",
+    sign: "Sign",
+    signed: "Signed",
+    sign_here: "Sign here",
+    clear: "Clear",
+    save_signature: "Save signature",
+    please_sign_first: "Please draw your signature first",
+    sign_finger_hint: "Use your finger or stylus",
+    sign_warning_title: "Sign warning letter",
+    sign_ack_text: "By signing, you acknowledge that you have received and read this warning.",
+    warning_signed_ok: "Warning signed — thank you",
+    mgr_sign_title: "Manager signature",
+    mgr_sign_sub: "Sign as the issuing manager.",
+    mgr_signed_ok: "Signed as manager",
+    notif_warning_sign: "Warning to acknowledge",
     pending: "Pending",
     approved: "Approved",
     rejected: "Rejected",
@@ -483,6 +497,20 @@ const I18N = {
     ded_hours_ph: "مثال: 2",
     ded_hours_unit: "ساعات تأخير / غياب",
     ded_rate_hint: "المعدل",
+    sign: "توقيع",
+    signed: "موقّع",
+    sign_here: "وقّع هنا",
+    clear: "مسح",
+    save_signature: "حفظ التوقيع",
+    please_sign_first: "يرجى رسم توقيعك أولاً",
+    sign_finger_hint: "استخدم إصبعك أو القلم",
+    sign_warning_title: "توقيع خطاب الإنذار",
+    sign_ack_text: "بالتوقيع، تُقرّ بأنك استلمت هذا الإنذار وقرأته.",
+    warning_signed_ok: "تم توقيع الإنذار — شكرًا لك",
+    mgr_sign_title: "توقيع المدير",
+    mgr_sign_sub: "وقّع بصفتك المدير المُصدِر.",
+    mgr_signed_ok: "تم التوقيع كمدير",
+    notif_warning_sign: "إنذار بانتظار توقيعك",
     pending: "قيد المراجعة",
     approved: "موافق",
     rejected: "مرفوض",
@@ -1093,6 +1121,11 @@ function mapWarningFromDb(r) {
     // Number printed on the letter. Falls back to employee.iqama
     // in printWarningLetter when null. See SQL block 61.
     nationalId: r.national_id||'',
+    // Digital signatures (base64 PNG) drawn on the phone. See SQL block 65.
+    employeeSignature: r.employee_signature||null,
+    employeeSignedAt:  r.employee_signed_at||null,
+    managerSignature:  r.manager_signature||null,
+    managerSignedAt:   r.manager_signed_at||null,
   };
 }
 function warningToDb(w) {
@@ -2929,6 +2962,11 @@ function buildNotifications() {
       if (d!==null && d>=0 && d<=3) out.push({ key:'task-soon-'+t.id, icon:'clock', tone:'amber',
         title:d===0?'Task due today':'Task due soon', detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}`, href:'#/work_management' });
     }
+  });
+  // Every employee: their own warning letters awaiting a signature.
+  (state.warnings||[]).filter(w => w.employeeId===me?.id && !w.employeeSignature).forEach(w=>{
+    out.push({ key:'warnsign-'+w.id, icon:'warning', tone:'amber', title:t('notif_warning_sign'),
+      detail:`${escapeHTML(w.type||'Warning')} · ${fmtDate(w.date)}`, href:'#/warnings' });
   });
   // Today's incomplete checklists — only if this month's runs are
   // already cached (don't trigger an extra fetch from the bell).
@@ -9062,6 +9100,7 @@ function renderWarnings() {
               visible.map(w => {
                 const e = getEmployee(w.employeeId);
                 const issuer = getEmployee(w.issuedBy);
+                const isMine = w.employeeId === me?.id;
                 return `
                 <tr class="hover-row">
                   ${admin?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML(e?.firstName+' '+e?.lastName||'Unknown')}</span></div></td>`:''}
@@ -9071,8 +9110,17 @@ function renderWarnings() {
                   <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML(w.reason||'')}">${escapeHTML(w.reason||'—')}</td>
                   <td class="text-slate-500 text-xs">${escapeHTML(issuer?(issuer.firstName+' '+issuer.lastName):'—')}</td>
                   <td class="!text-end whitespace-nowrap">
-                    <button onclick="printWarningLetter('${w.id}')" aria-label="Print warning letter" title="Print letter" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
-                    ${admin ? `<button onclick="deleteWarning('${w.id}')" aria-label="Delete warning" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
+                    <div class="flex items-center justify-end gap-1.5 flex-wrap">
+                      ${isMine && !admin ? (w.employeeSignature
+                          ? `<span class="badge badge-green" title="${escapeHTML(t('signed'))} ${fmtDate((w.employeeSignedAt||'').slice(0,10))}">${escapeHTML(t('signed'))} ✓</span>`
+                          : `<button onclick="signWarning('${w.id}','employee')" class="btn btn-accent btn-sm">${icon('check','w-4 h-4')} ${escapeHTML(t('sign'))}</button>`) : ''}
+                      ${admin ? `<span class="badge ${w.employeeSignature?'badge-green':'badge-slate'}" title="Employee acknowledgement">Emp ${w.employeeSignature?'✓':'—'}</span>` : ''}
+                      ${admin ? (w.managerSignature
+                          ? `<span class="badge badge-green" title="Manager signed">Mgr ✓</span>`
+                          : `<button onclick="signWarning('${w.id}','manager')" class="btn btn-ghost btn-sm" title="${escapeHTML(t('mgr_sign_title'))}">${icon('check','w-3.5 h-3.5')} ${escapeHTML(t('sign'))}</button>`) : ''}
+                      <button onclick="printWarningLetter('${w.id}')" aria-label="Print warning letter" title="Print letter" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
+                      ${admin ? `<button onclick="deleteWarning('${w.id}')" aria-label="Delete warning" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
+                    </div>
                   </td>
                 </tr>`;
               }).join('')}
@@ -9504,6 +9552,81 @@ function printConsentForm() {
   if (!openPrintWindow(html)) return;
 }
 
+// --- Signature pad ------------------------------------------------------
+// Finger/stylus/mouse drawing on a canvas, exported as a base64 PNG.
+// Transient state in _sigPad (cleared in closeModal per the modal
+// convention). Pointer events cover touch + mouse in one path.
+let _sigPad = null;
+function initSignaturePad() {
+  const canvas = document.getElementById('sig-canvas');
+  if (!canvas) return;
+  const ratio = window.devicePixelRatio || 1;
+  const rect  = canvas.getBoundingClientRect();
+  canvas.width  = Math.max(1, Math.round(rect.width  * ratio));
+  canvas.height = Math.max(1, Math.round(rect.height * ratio));
+  const ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
+  _sigPad = { canvas, ctx, drawing: false, hasInk: false };
+  const pt = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const start = e => { e.preventDefault(); _sigPad.drawing = true; const p = pt(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const move  = e => {
+    if (!_sigPad.drawing) return; e.preventDefault();
+    const p = pt(e); ctx.lineTo(p.x, p.y); ctx.stroke();
+    if (!_sigPad.hasInk) { _sigPad.hasInk = true; const ph = document.getElementById('sig-placeholder'); if (ph) ph.style.display = 'none'; }
+  };
+  const end = () => { _sigPad.drawing = false; };
+  canvas.addEventListener('pointerdown', start);
+  canvas.addEventListener('pointermove', move);
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+  canvas.addEventListener('pointerleave', end);
+}
+function clearSignaturePad() {
+  if (!_sigPad) return;
+  _sigPad.ctx.clearRect(0, 0, _sigPad.canvas.width, _sigPad.canvas.height);
+  _sigPad.hasInk = false;
+  const ph = document.getElementById('sig-placeholder'); if (ph) ph.style.display = '';
+}
+function openSignaturePad(title, subtitle, onSave) {
+  const body = `
+    <div class="space-y-3">
+      <p class="text-sm text-slate-600">${escapeHTML(subtitle)}</p>
+      <div class="relative border-2 border-dashed border-slate-300 rounded-xl bg-slate-50" style="touch-action:none;">
+        <canvas id="sig-canvas" style="width:100%; height:200px; display:block; touch-action:none;"></canvas>
+        <div id="sig-placeholder" class="absolute inset-0 flex items-center justify-center text-slate-300 text-sm pointer-events-none">${escapeHTML(t('sign_here'))}</div>
+      </div>
+      <div class="flex items-center justify-between">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="clearSignaturePad()">${icon('close','w-4 h-4')} ${escapeHTML(t('clear'))}</button>
+        <span class="text-xs text-slate-400">${escapeHTML(t('sign_finger_hint'))}</span>
+      </div>
+    </div>`;
+  openModal(title, body, async () => {
+    if (!_sigPad || !_sigPad.hasInk) { toast(t('please_sign_first'), 'error'); return false; }
+    const dataUrl = _sigPad.canvas.toDataURL('image/png');
+    return await onSave(dataUrl);
+  }, { saveLabel: t('save_signature') });
+  setTimeout(initSignaturePad, 0);
+}
+// Capture a signature for a warning. `as` is 'employee' or 'manager';
+// the secure sign_warning RPC (SQL block 65) enforces who may sign which.
+async function signWarning(id, as) {
+  const w = (state.warnings||[]).find(x => x.id===id);
+  if (!w) return;
+  const me = currentEmployee();
+  if (as === 'employee' && w.employeeId !== me?.id) { toast('This is not your warning', 'error'); return; }
+  if (as === 'manager'  && !canManagePeople())      { toast('Admins / HR only', 'error'); return; }
+  const title    = as === 'manager' ? t('mgr_sign_title') : t('sign_warning_title');
+  const subtitle = as === 'manager' ? t('mgr_sign_sub')   : t('sign_ack_text');
+  openSignaturePad(title, subtitle, async (dataUrl) => {
+    const { data, error } = await sb.rpc('sign_warning', { p_id: id, p_signature: dataUrl, p_as: as });
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    Object.assign(w, mapWarningFromDb(data));
+    render();
+    toast(as === 'manager' ? t('mgr_signed_ok') : t('warning_signed_ok'), 'success');
+    return true;
+  });
+}
 function printWarningLetter(id) {
   const w = (state.warnings||[]).find(x => x.id===id);
   if (!w) return;
@@ -9533,9 +9656,12 @@ function printWarningLetter(id) {
       </tbody>
     </table>
     <p class="doc-closing">We emphasize the importance of adhering to workplace conduct and general discipline. Please note that repeating such violations may lead to stricter administrative actions.</p>
+    <p class="doc-closing" style="font-size:12px;color:#6b7280;">By signing below, the employee acknowledges that they have received and read this warning.</p>
     <div class="doc-sign">
-      <div class="sign-row">Employee Signature:</div>
-      <div class="sign-row">Direct Manager Signature:</div>
+      <div class="sign-row">Employee Signature:${w.employeeSignature ? `<img src="${w.employeeSignature}" alt="employee signature" style="display:block;height:46px;margin-top:6px;">` : ''}</div>
+      ${w.employeeSignature ? `<div style="font-size:11px;color:#6b7280;margin-top:-6px;margin-bottom:8px;">Acknowledged on ${fmtDate((w.employeeSignedAt||'').slice(0,10))}</div>` : ''}
+      <div class="sign-row">Direct Manager Signature:${w.managerSignature ? `<img src="${w.managerSignature}" alt="manager signature" style="display:block;height:46px;margin-top:6px;">` : ''}</div>
+      ${w.managerSignature ? `<div style="font-size:11px;color:#6b7280;margin-top:-6px;">Signed on ${fmtDate((w.managerSignedAt||'').slice(0,10))}</div>` : ''}
     </div>
     ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
     <div class="doc-footer">Document reference WL-${escapeHTML(w.id.slice(-6).toUpperCase())} &middot; Confidential personnel record</div>
@@ -19379,6 +19505,7 @@ function closeModal() {
   if (typeof _maintenancePhoto !== 'undefined') _maintenancePhoto = null;
   if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
+  if (typeof _sigPad !== 'undefined') _sigPad = null;
   if (_modalTrapHandler) {
     document.removeEventListener('keydown', _modalTrapHandler);
     _modalTrapHandler = null;
