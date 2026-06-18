@@ -309,7 +309,7 @@ const I18N = {
     please_sign_first: "Please draw your signature first",
     sign_finger_hint: "Use your finger or stylus",
     sign_warning_title: "Sign warning letter",
-    sign_ack_text: "By signing, you acknowledge that you received and read this warning. Signing does not mean you agree with its contents.",
+    sign_ack_text: "By signing, you acknowledge that you have received and read this warning.",
     warning_signed_ok: "Warning signed — thank you",
     mgr_sign_title: "Manager signature",
     mgr_sign_sub: "Sign as the issuing manager.",
@@ -505,7 +505,7 @@ const I18N = {
     please_sign_first: "يرجى رسم توقيعك أولاً",
     sign_finger_hint: "استخدم إصبعك أو القلم",
     sign_warning_title: "توقيع خطاب الإنذار",
-    sign_ack_text: "بالتوقيع، تُقرّ بأنك استلمت هذا الإنذار وقرأته. التوقيع لا يعني الموافقة على محتواه.",
+    sign_ack_text: "بالتوقيع، تُقرّ بأنك استلمت هذا الإنذار وقرأته.",
     warning_signed_ok: "تم توقيع الإنذار — شكرًا لك",
     mgr_sign_title: "توقيع المدير",
     mgr_sign_sub: "وقّع بصفتك المدير المُصدِر.",
@@ -9656,7 +9656,7 @@ function printWarningLetter(id) {
       </tbody>
     </table>
     <p class="doc-closing">We emphasize the importance of adhering to workplace conduct and general discipline. Please note that repeating such violations may lead to stricter administrative actions.</p>
-    <p class="doc-closing" style="font-size:12px;color:#6b7280;">By signing below, the employee acknowledges that they have received and read this warning. Signature does not necessarily indicate agreement with its contents.</p>
+    <p class="doc-closing" style="font-size:12px;color:#6b7280;">By signing below, the employee acknowledges that they have received and read this warning.</p>
     <div class="doc-sign">
       <div class="sign-row">Employee Signature:${w.employeeSignature ? `<img src="${w.employeeSignature}" alt="employee signature" style="display:block;height:46px;margin-top:6px;">` : ''}</div>
       ${w.employeeSignature ? `<div style="font-size:11px;color:#6b7280;margin-top:-6px;margin-bottom:8px;">Acknowledged on ${fmtDate((w.employeeSignedAt||'').slice(0,10))}</div>` : ''}
