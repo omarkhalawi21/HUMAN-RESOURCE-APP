@@ -3718,6 +3718,74 @@ CREATE POLICY applicant_cvs_delete_admin ON storage.objects
   USING (bucket_id = 'applicant-cvs' AND public.is_admin());
 
 -- =============================================================
+-- 65. WARNING LETTER DIGITAL SIGNATURES
+--     Employees acknowledge a warning by drawing a signature on their
+--     phone; the issuing manager (admin/HR) signs the same way. Stored
+--     as base64 PNG data-URLs on the warning row.
+--
+--     Why an RPC instead of a plain RLS UPDATE policy: an employee must
+--     be able to set THEIR signature but NOTHING else (not reason,
+--     severity, etc.). RLS is row-level, not column-level, so granting
+--     employees UPDATE would let them rewrite the whole row. A
+--     SECURITY DEFINER function with an explicit signer role is the
+--     safe column-scoped path. Managers already have UPDATE via the
+--     admin/HR policies, but route through the same RPC for symmetry.
+-- =============================================================
+ALTER TABLE public.warnings ADD COLUMN IF NOT EXISTS employee_signature text;
+ALTER TABLE public.warnings ADD COLUMN IF NOT EXISTS employee_signed_at  timestamptz;
+ALTER TABLE public.warnings ADD COLUMN IF NOT EXISTS manager_signature   text;
+ALTER TABLE public.warnings ADD COLUMN IF NOT EXISTS manager_signed_at   timestamptz;
+
+CREATE OR REPLACE FUNCTION public.sign_warning(p_id uuid, p_signature text, p_as text)
+RETURNS public.warnings
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  w      public.warnings;
+  my_emp uuid;
+BEGIN
+  IF p_signature IS NULL OR length(p_signature) < 50 THEN
+    RAISE EXCEPTION 'Signature is empty';
+  END IF;
+  IF length(p_signature) > 400000 THEN
+    RAISE EXCEPTION 'Signature image is too large';
+  END IF;
+
+  SELECT * INTO w FROM public.warnings WHERE id = p_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Warning not found'; END IF;
+
+  IF p_as = 'manager' THEN
+    IF NOT public.has_role(ARRAY['admin','hr']) THEN
+      RAISE EXCEPTION 'Only admin or HR can sign as the manager';
+    END IF;
+    UPDATE public.warnings
+       SET manager_signature = p_signature, manager_signed_at = now()
+     WHERE id = p_id
+     RETURNING * INTO w;
+
+  ELSIF p_as = 'employee' THEN
+    SELECT id INTO my_emp FROM public.employees WHERE user_id = auth.uid();
+    IF my_emp IS NULL OR my_emp <> w.employee_id THEN
+      RAISE EXCEPTION 'You can only sign your own warning';
+    END IF;
+    UPDATE public.warnings
+       SET employee_signature = p_signature, employee_signed_at = now()
+     WHERE id = p_id
+     RETURNING * INTO w;
+
+  ELSE
+    RAISE EXCEPTION 'Invalid signer role: %', p_as;
+  END IF;
+
+  RETURN w;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.sign_warning(uuid, text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.sign_warning(uuid, text, text) TO authenticated;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
