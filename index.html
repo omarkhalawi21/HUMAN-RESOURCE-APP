@@ -295,6 +295,12 @@ const I18N = {
     absent: "Absent",
     late: "Late",
     on_leave: "On leave",
+    off_day: "Off day",
+    salary: "Salary",
+    ded_hours_label: "Calculate from hours (optional)",
+    ded_hours_ph: "e.g. 2",
+    ded_hours_unit: "hours late / missed",
+    ded_rate_hint: "Rate",
     pending: "Pending",
     approved: "Approved",
     rejected: "Rejected",
@@ -471,6 +477,12 @@ const I18N = {
     absent: "غائب",
     late: "متأخر",
     on_leave: "في إجازة",
+    off_day: "يوم راحة",
+    salary: "الراتب",
+    ded_hours_label: "احتساب من الساعات (اختياري)",
+    ded_hours_ph: "مثال: 2",
+    ded_hours_unit: "ساعات تأخير / غياب",
+    ded_rate_hint: "المعدل",
     pending: "قيد المراجعة",
     approved: "موافق",
     rejected: "مرفوض",
@@ -2305,6 +2317,7 @@ function statusBadge(status) {
     paid:     ['badge-green',  'Paid'],
     active:   ['badge-green',  'Active'],
     on_leave: ['badge-blue',   t('on_leave')],
+    off:      ['badge-slate',  t('off_day')],
     terminated: ['badge-red',  'Terminated'],
     pending:    ['badge-amber','Pending approval'],
   };
@@ -4790,7 +4803,8 @@ function renderAttendance() {
       .map(e => {
         const a = state.attendance.find(x => x.employeeId===e.id && x.date===today);
         const onLeave = state.leaveRequests.find(r=>r.status==='approved' && r.employeeId===e.id && r.startDate<=today && r.endDate>=today);
-        return { e, a, onLeave };
+        const isOff = !!todaysShift(e.id).off;   // scheduled off-day → not "absent"
+        return { e, a, onLeave, isOff };
       });
     main = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
@@ -4802,14 +4816,14 @@ function renderAttendance() {
           <table class="data">
             <thead><tr><th>Employee</th><th>Department</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr></thead>
             <tbody>
-              ${rows.map(({e,a,onLeave}) => `
+              ${rows.map(({e,a,onLeave,isOff}) => `
                 <tr class="hover-row">
                   <td><div class="flex items-center gap-3">${avatarHTML(e,32)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
                   <td>${escapeHTML(e.department)}</td>
                   <td>${a?.clockIn||'—'}</td>
                   <td>${a?.clockOut||'—'}</td>
                   <td>${a?.clockIn && a?.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
-                  <td>${onLeave ? statusBadge('on_leave') : a ? statusBadge(a.status) : statusBadge('absent')}</td>
+                  <td>${a ? statusBadge(a.status) : onLeave ? statusBadge('on_leave') : isOff ? statusBadge('off') : statusBadge('absent')}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
@@ -11258,6 +11272,28 @@ function renderDeductions() {
     </div>
   `;
 }
+// Hourly rate for a deduction, on the SAME basis as payroll holiday-OT:
+// monthly salary ÷ 30 days ÷ standard day length (Saudi 8h / others 10h).
+// Lets an admin deduct for late-coming / missed work by typing the hours
+// instead of computing the riyal amount by hand.
+function _dedHourlyRate(empId) {
+  const e = getEmployee(empId);
+  return (Number(e?.salary) || 0) / 30 / holidayDayHours(empId);
+}
+// Live-updates the rate hint and (when hours are entered) the Amount field
+// in the deduction modal. Wired to the employee select + the hours input.
+function dedRecalc() {
+  const empId  = document.getElementById('ded-emp')?.value;
+  const hintEl = document.getElementById('ded-rate-hint');
+  const hoursEl= document.getElementById('ded-hours');
+  const amtEl  = document.getElementById('ded-amt');
+  if (!empId) { if (hintEl) hintEl.textContent = ''; return; }
+  const rate = _dedHourlyRate(empId);
+  const dh   = holidayDayHours(empId);
+  if (hintEl) hintEl.textContent = `${t('ded_rate_hint')}: ${fmtMoney(rate)}/h · ${t('salary')} ÷ 30 ÷ ${dh}h`;
+  const h = parseFloat(((hoursEl?.value)||'').replace(/,/g,''));
+  if (isFinite(h) && h > 0 && amtEl) amtEl.value = (Math.round(h * rate * 100) / 100).toString();
+}
 function openDeductionModal(id) {
   const editing = id ? (state.deductions||[]).find(d => d.id===id) : null;
   if (editing && editing.status !== 'pending') { toast('Only pending deductions can be edited', 'error'); return; }
@@ -11270,7 +11306,15 @@ function openDeductionModal(id) {
     <div class="space-y-4">
       <div>
         <label class="label">Employee *</label>
-        <select id="ded-emp" class="input">${emps.map(e=>`<option value="${e.id}" ${editing?.employeeId===e.id?'selected':''}>${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())} — salary ${fmtMoney(e.salary)}</option>`).join('')}</select>
+        <select id="ded-emp" class="input" onchange="dedRecalc()">${emps.map(e=>`<option value="${e.id}" ${editing?.employeeId===e.id?'selected':''}>${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())} — salary ${fmtMoney(e.salary)}</option>`).join('')}</select>
+      </div>
+      <div class="bg-slate-50 border border-slate-200 rounded-xl p-3">
+        <label class="label">${escapeHTML(t('ded_hours_label'))}</label>
+        <div class="flex items-center gap-2">
+          <input id="ded-hours" inputmode="decimal" class="input !w-32" placeholder="${escapeHTML(t('ded_hours_ph'))}" oninput="dedRecalc()">
+          <span class="text-sm text-slate-500">${escapeHTML(t('ded_hours_unit'))}</span>
+        </div>
+        <div id="ded-rate-hint" class="text-xs text-slate-500 mt-1.5"></div>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
@@ -11334,6 +11378,8 @@ function openDeductionModal(id) {
     render();
     return true;
   }, { saveLabel: editing ? 'Save changes' : 'Register deduction' });
+  // Populate the per-hour rate hint for the initially-selected employee.
+  setTimeout(dedRecalc, 0);
 }
 async function cancelDeduction(id) {
   const d = (state.deductions||[]).find(x => x.id===id);
