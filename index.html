@@ -4734,8 +4734,8 @@ function renderAttendance() {
             <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('att_hours'))}</div>
             <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn && myToday?.clockOut ? minutesToHrs(diffMinutes(myToday.clockIn, myToday.clockOut))+'h' : '—'}</div>
           </div>
-          ${!myToday ? `<button onclick="clockIn()" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
-            : !myToday.clockOut ? `<button onclick="clockOut()" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
+          ${!myToday ? `<button onclick="clockIn(event)" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
+            : !myToday.clockOut ? `<button onclick="clockOut(event)" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
             : `<div class="badge badge-green !px-4 !py-2">✓ ${escapeHTML(t('att_done_for_today'))}</div>`}
         </div>
       </div>
@@ -4963,9 +4963,42 @@ function miniStat(label, value, ico, color) {
     </div>
   `;
 }
-async function clockIn() {
+// --- Double-punch guard -------------------------------------------------
+// Network/GPS can make a clock action take several seconds, during which the
+// button still shows its OLD label. Users tap again → either a duplicate
+// punch, or (once render() flips the label) the OPPOSITE action fires the
+// instant the button changes — the "clocked in & out at the same time" bug.
+// _clockBusy blocks re-entry while a request is in flight; the cooldown blocks
+// a bounce-tap in the brief window right after a punch is recorded.
+let _clockBusy = false;
+let _clockLastAt = 0;
+const CLOCK_COOLDOWN_MS = 3000;
+function _clockGuardEnter(ev) {
+  if (_clockBusy) return false;                     // a punch is already running
+  if (Date.now() - _clockLastAt < CLOCK_COOLDOWN_MS) {
+    toast('Just recorded — give it a second.');     // bounce-tap right after a punch
+    return false;
+  }
+  _clockBusy = true;
+  const btn = (ev && ev.currentTarget instanceof HTMLElement) ? ev.currentTarget : null;
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.pointerEvents = 'none'; }
+  return { btn };
+}
+function _clockGuardExit(g) {
+  _clockBusy = false;
+  if (g && g.btn) { g.btn.disabled = false; g.btn.style.opacity = ''; g.btn.style.pointerEvents = ''; }
+}
+async function clockIn(ev) {
+  const g = _clockGuardEnter(ev);
+  if (!g) return;
+  try {
   const me = currentEmployee();
   if (!me) { toast('Not signed in', 'error'); return; }
+  // Idempotency: the UI only shows Clock In when no record exists for today,
+  // so reaching here with one already present means a double-tap race — refuse.
+  if (state.attendance.find(a => a.employeeId===me.id && a.date===todayISO())) {
+    toast('You are already clocked in today.'); return;
+  }
   const now = nowHHMM();
   /* Use today's specific schedule; warn (but allow) if today is an off-day */
   const today = todaysShift(me.id);
@@ -5024,6 +5057,7 @@ async function clockIn() {
     branch_id: branch?.id || null,
   }).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
+  _clockLastAt = Date.now();   // start the cooldown only on a real punch
   state.attendance.unshift(mapAttendanceFromDb(data));
   render();
   toast(
@@ -5032,19 +5066,30 @@ async function clockIn() {
       : (status==='late' ? `Clocked in (late by ${lateMin}m)` : 'Clocked in successfully'),
     'success'
   );
+  } finally {
+    _clockGuardExit(g);
+  }
 }
-async function clockOut() {
+async function clockOut(ev) {
+  const g = _clockGuardEnter(ev);
+  if (!g) return;
+  try {
   const me = currentEmployee();
   if (!me) return;
   const today = todayISO();
   const rec = state.attendance.find(a => a.employeeId===me.id && a.date===today);
   if (!rec) { toast('No clock-in found', 'error'); return; }
+  if (rec.clockOut) { toast('You already clocked out today.'); return; }  // never double clock-out
   const newOut = nowHHMM();
   const { data, error } = await sb.from('attendance').update({ clock_out: newOut }).eq('id', rec.id).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
+  _clockLastAt = Date.now();   // start the cooldown only on a real punch
   Object.assign(rec, mapAttendanceFromDb(data));
   render();
   toast('Clocked out — have a good rest!', 'success');
+  } finally {
+    _clockGuardExit(g);
+  }
 }
 
 /* -------------------- LEAVE -------------------- */
