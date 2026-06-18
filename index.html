@@ -296,6 +296,8 @@ const I18N = {
     late: "Late",
     on_leave: "On leave",
     off_day: "Off day",
+    att_leave: "ON LEAVE",
+    att_offday: "OFFDAY",
     salary: "Salary",
     ded_hours_label: "Calculate from hours (optional)",
     ded_hours_ph: "e.g. 2",
@@ -492,6 +494,8 @@ const I18N = {
     late: "متأخر",
     on_leave: "في إجازة",
     off_day: "يوم راحة",
+    att_leave: "إجازة",
+    att_offday: "راحة",
     salary: "الراتب",
     ded_hours_label: "احتساب من الساعات (اختياري)",
     ded_hours_ph: "مثال: 2",
@@ -4861,7 +4865,10 @@ function renderAttendance() {
                   <td>${a?.clockIn||'—'}</td>
                   <td>${a?.clockOut||'—'}</td>
                   <td>${a?.clockIn && a?.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
-                  <td>${a ? statusBadge(a.status) : onLeave ? statusBadge('on_leave') : isOff ? statusBadge('off') : statusBadge('absent')}</td>
+                  <td>${a ? statusBadge(a.status)
+                          : onLeave ? `<span class="badge badge-green">${escapeHTML(t('att_leave'))}</span>`
+                          : isOff ? `<span class="badge badge-green">${escapeHTML(t('att_offday'))}</span>`
+                          : statusBadge('absent')}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
