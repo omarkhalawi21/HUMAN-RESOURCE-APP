@@ -387,6 +387,8 @@ const I18N = {
     res_empty_upload_cta: "Upload your first resource",
     // My Work page
     my_work_intro: "Tasks assigned to you. Move a task forward by changing its status — it saves instantly.",
+    needs_action: "Needs your action",
+    needs_action_sub: "Pending requests waiting on you. Each item clears once you approve, reject, or resolve it.",
     open: "Open",
     overdue: "Overdue",
     done: "Done",
@@ -559,6 +561,8 @@ const I18N = {
     res_empty_upload_cta: "ارفع أول مورد",
     // My Work page
     my_work_intro: "المهام الموكلة إليك. غيّر الحالة لتحريك المهمة — يتم الحفظ فورًا.",
+    needs_action: "بحاجة إلى إجراء منك",
+    needs_action_sub: "طلبات معلّقة بانتظارك. يختفي كل عنصر بمجرد الموافقة عليه أو رفضه أو معالجته.",
     open: "مفتوحة",
     overdue: "متأخرة",
     done: "منجز",
@@ -10444,6 +10448,38 @@ function renderMyWork() {
       ${miniStat(t('done'), mine.filter(tk=>tk.status==='done').length, 'check', 'green')}
     </div>`;
 
+  // "Needs your action" inbox — the manager/approval items from
+  // buildNotifications() (pending leave, pending advances, doc expiries),
+  // surfaced here so they gather in one place until acted on. Derived live
+  // from state, so each row disappears the moment its status changes
+  // (leave approved, advance decided, doc renewed). We exclude task- and
+  // cl- items: tasks already have the table below, checklists their own
+  // section. Empty for non-managers (those notif types are admin/hr-gated),
+  // so the card simply doesn't render for floor staff.
+  let actionSection = '';
+  const actionItems = buildNotifications().filter(n => !/^(task-|cl-)/.test(n.key));
+  if (actionItems.length) {
+    const aTone = { red:'text-rose-600 bg-rose-50', amber:'text-amber-600 bg-amber-50', blue:'text-blue-600 bg-blue-50' };
+    const aRows = actionItems.map(n => `
+      <button type="button" onclick="location.hash='${n.href||'#/dashboard'}'" class="w-full text-start px-4 py-3 flex items-center gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0">
+        <span class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${aTone[n.tone]||'text-slate-600 bg-slate-100'}">${icon(n.icon,'w-4 h-4')}</span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-sm font-medium text-slate-800">${n.title}</span>
+          <span class="block text-xs text-slate-500 truncate">${n.detail}</span>
+        </span>
+        <span class="text-xs text-brand-700 font-medium shrink-0">${escapeHTML(t('view'))}</span>
+      </button>`).join('');
+    actionSection = `
+      <div class="mb-6">
+        <div class="flex items-center gap-2 mb-1">
+          <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('needs_action'))}</h3>
+          <span class="text-xs text-white bg-rose-500 rounded-full px-2 py-0.5 font-semibold tabular-nums">${actionItems.length}</span>
+        </div>
+        <p class="text-xs text-slate-500 mb-2">${escapeHTML(t('needs_action_sub'))}</p>
+        <div class="bg-white rounded-2xl shadow-card overflow-hidden">${aRows}</div>
+      </div>`;
+  }
+
   // Branch staff also complete their own branch's checklists right
   // here (their branch = their employee_extras.branch, same default
   // as Daily Count). Renders even when no tasks are assigned.
@@ -10623,12 +10659,12 @@ function renderMyWork() {
   }
 
   if (mine.length === 0) {
-    return header + (clSection || todoSection ? (clSection + todoSection) : `
+    return header + actionSection + (clSection || todoSection ? (clSection + todoSection) : (actionSection ? '' : `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
         <div class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('nothing_assigned'))}</div>
         <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">${escapeHTML(t('nothing_assigned_sub'))}</div>
-      </div>`);
+      </div>`));
   }
 
   // Pre-translate strings used inside `rows = list => list.map(tk => …)`
@@ -10678,6 +10714,7 @@ function renderMyWork() {
     </div>` : '';
 
   return header
+    + actionSection
     + section(t('section_overdue'),       overdue, 'text-rose-700')
     + section(t('section_to_do'),         active,  null)
     + section(t('section_recently_done'), done,    'text-slate-500')
