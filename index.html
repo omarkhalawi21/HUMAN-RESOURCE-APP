@@ -317,6 +317,10 @@ const I18N = {
     mgr_sign_sub: "Sign as the issuing manager.",
     mgr_signed_ok: "Signed as manager",
     notif_warning_sign: "Warning to acknowledge",
+    notif_leave_approved: "Leave request approved",
+    notif_leave_rejected: "Leave request rejected",
+    notif_advance_approved: "Advance request approved",
+    notif_advance_rejected: "Advance request rejected",
     pending: "Pending",
     approved: "Approved",
     rejected: "Rejected",
@@ -515,6 +519,10 @@ const I18N = {
     mgr_sign_sub: "وقّع بصفتك المدير المُصدِر.",
     mgr_signed_ok: "تم التوقيع كمدير",
     notif_warning_sign: "إنذار بانتظار توقيعك",
+    notif_leave_approved: "تمت الموافقة على طلب الإجازة",
+    notif_leave_rejected: "تم رفض طلب الإجازة",
+    notif_advance_approved: "تمت الموافقة على طلب السلفة",
+    notif_advance_rejected: "تم رفض طلب السلفة",
     pending: "قيد المراجعة",
     approved: "موافق",
     rejected: "مرفوض",
@@ -2971,6 +2979,25 @@ function buildNotifications() {
   (state.warnings||[]).filter(w => w.employeeId===me?.id && !w.employeeSignature).forEach(w=>{
     out.push({ key:'warnsign-'+w.id, icon:'warning', tone:'amber', title:t('notif_warning_sign'),
       detail:`${escapeHTML(w.type||'Warning')} · ${fmtDate(w.date)}`, href:'#/warnings' });
+  });
+  // Every employee: decisions on their OWN leave / advance requests, so they
+  // learn the outcome without opening the page. Bounded to recent decisions
+  // (by decidedAt) so old approvals don't linger. These are FYIs, not action
+  // items — excluded from the My Work "Needs your action" inbox (bell only).
+  const DECISION_NOTIFY_DAYS = 7;
+  (state.leaveRequests||[]).filter(r => r.employeeId===me?.id && (r.status==='approved'||r.status==='rejected')
+      && r.decidedAt && daysUntil(r.decidedAt) >= -DECISION_NOTIFY_DAYS).forEach(r=>{
+    out.push({ key:'leavedone-'+r.id+'-'+r.status,
+      icon: r.status==='approved'?'check':'warning', tone: r.status==='approved'?'blue':'red',
+      title: r.status==='approved' ? t('notif_leave_approved') : t('notif_leave_rejected'),
+      detail:`${escapeHTML(r.type||'leave')} · ${fmtDate(r.startDate)}`, href:'#/leave' });
+  });
+  (state.advances||[]).filter(a => a.employeeId===me?.id && (a.status==='approved'||a.status==='rejected')
+      && a.decidedAt && daysUntil(a.decidedAt) >= -DECISION_NOTIFY_DAYS).forEach(a=>{
+    out.push({ key:'advdone-'+a.id+'-'+a.status,
+      icon:'cash', tone: a.status==='approved'?'blue':'red',
+      title: a.status==='approved' ? t('notif_advance_approved') : t('notif_advance_rejected'),
+      detail: fmtMoney(a.amount), href:'#/advances' });
   });
   // Today's incomplete checklists — only if this month's runs are
   // already cached (don't trigger an extra fetch from the bell).
@@ -10632,7 +10659,7 @@ function renderMyWork() {
   // section. Empty for non-managers (those notif types are admin/hr-gated),
   // so the card simply doesn't render for floor staff.
   let actionSection = '';
-  const actionItems = buildNotifications().filter(n => !/^(task-|cl-)/.test(n.key));
+  const actionItems = buildNotifications().filter(n => !/^(task-|cl-|leavedone-|advdone-)/.test(n.key));
   if (actionItems.length) {
     const aTone = { red:'text-rose-600 bg-rose-50', amber:'text-amber-600 bg-amber-50', blue:'text-blue-600 bg-blue-50' };
     const aRows = actionItems.map(n => `
