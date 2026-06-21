@@ -3786,6 +3786,26 @@ REVOKE ALL ON FUNCTION public.sign_warning(uuid, text, text) FROM public;
 GRANT EXECUTE ON FUNCTION public.sign_warning(uuid, text, text) TO authenticated;
 
 -- =============================================================
+-- 66. ATTENDANCE — let HR (not just admin) correct attendance
+--     So admin AND HR can "undo" a mistaken clock-out (clear clock_out)
+--     on any employee's row. Keeps the self-update leg intact (employees
+--     still clock in/out their own rows). Idempotent drop-then-create —
+--     replaces the admin-only version from block ~early.
+-- =============================================================
+DROP POLICY IF EXISTS "attendance_update_self_or_admin" ON public.attendance;
+CREATE POLICY "attendance_update_self_or_admin"
+  ON public.attendance FOR UPDATE
+  TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = attendance.employee_id AND e.user_id = auth.uid())
+  )
+  WITH CHECK (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = attendance.employee_id AND e.user_id = auth.uid())
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

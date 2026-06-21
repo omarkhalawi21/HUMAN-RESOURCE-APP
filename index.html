@@ -4749,6 +4749,7 @@ function renderAttendance() {
   // has no privileged mutations. canView adds head_barista + accounting on
   // top of admin/hr/operations; both view-only roles see all branches.
   const admin = canViewAttendanceAndLeave();
+  const canFix = canManagePeople();   // admin/HR may undo a mistaken clock-out
   if (!admin) attTab = 'me';
 
   const tabs = admin ? `
@@ -4863,7 +4864,7 @@ function renderAttendance() {
                   <td><div class="flex items-center gap-3">${avatarHTML(e,32)}<span class="font-medium">${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>
                   <td>${escapeHTML(e.department)}</td>
                   <td>${a?.clockIn||'—'}</td>
-                  <td>${a?.clockOut||'—'}</td>
+                  <td>${a?.clockOut ? `${a.clockOut}${canFix ? ` <button onclick="undoClockOut('${a.id}')" title="Undo clock-out (re-open shift)" aria-label="Undo clock-out" class="text-slate-300 hover:text-rose-600 align-middle ml-1">${icon('close','w-3.5 h-3.5 inline')}</button>` : ''}` : '—'}</td>
                   <td>${a?.clockIn && a?.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
                   <td>${a ? statusBadge(a.status)
                           : onLeave ? `<span class="badge badge-green">${escapeHTML(t('att_leave'))}</span>`
@@ -5036,6 +5037,10 @@ function miniStat(label, value, ico, color) {
 let _clockBusy = false;
 let _clockLastAt = 0;
 const CLOCK_COOLDOWN_MS = 3000;
+// Clock-outs within this many minutes of clocking in trigger an
+// "are you sure?" confirm — catches the accidental "clocked in & out at
+// the same time" mistake that survives the short cooldown above.
+const CLOCK_MIN_SHIFT_MIN = 5;
 function _clockGuardEnter(ev) {
   if (_clockBusy) return false;                     // a punch is already running
   if (Date.now() - _clockLastAt < CLOCK_COOLDOWN_MS) {
@@ -5144,6 +5149,13 @@ async function clockOut(ev) {
   if (!rec) { toast('No clock-in found', 'error'); return; }
   if (rec.clockOut) { toast('You already clocked out today.'); return; }  // never double clock-out
   const newOut = nowHHMM();
+  // Catch the "clocked in & out at the same time" mistake: if the clock-in
+  // was only minutes ago, make them confirm. Genuine short shifts still go
+  // through; an accidental tap gets cancelled here.
+  const sinceIn = diffMinutes(rec.clockIn, newOut);
+  if (sinceIn >= 0 && sinceIn < CLOCK_MIN_SHIFT_MIN) {
+    if (!confirm(`You clocked in only ${sinceIn} minute${sinceIn===1?'':'s'} ago. Are you sure you want to clock out?`)) return;
+  }
   const { data, error } = await sb.from('attendance').update({ clock_out: newOut }).eq('id', rec.id).select().single();
   if (error) { toast(humanizeError(error), 'error'); return; }
   _clockLastAt = Date.now();   // start the cooldown only on a real punch
@@ -5153,6 +5165,22 @@ async function clockOut(ev) {
   } finally {
     _clockGuardExit(g);
   }
+}
+// Admin/HR fix for a mistaken clock-out: clears clock_out so the shift
+// re-opens (employee shows clocked in again). Needs SQL block 66 for HR
+// to update another employee's row; admins work via the existing policy.
+async function undoClockOut(id) {
+  if (!canManagePeople()) { toast('Admins / HR only', 'error'); return; }
+  const rec = (state.attendance||[]).find(a => a.id===id);
+  if (!rec || !rec.clockOut) return;
+  const emp = getEmployee(rec.employeeId);
+  const who = emp ? (emp.firstName+' '+(emp.lastName||'')).trim() : 'this employee';
+  if (!confirm(`Re-open ${who}'s shift? This clears the clock-out (${rec.clockOut}) so they show as clocked in again.`)) return;
+  const { data, error } = await sb.from('attendance').update({ clock_out: null }).eq('id', id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  Object.assign(rec, mapAttendanceFromDb(data));
+  render();
+  toast('Clock-out undone — shift re-opened', 'success');
 }
 
 /* -------------------- LEAVE -------------------- */
