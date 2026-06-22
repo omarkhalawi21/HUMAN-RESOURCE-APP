@@ -322,6 +322,8 @@ const I18N = {
     notif_leave_rejected: "Leave request rejected",
     notif_advance_approved: "Advance request approved",
     notif_advance_rejected: "Advance request rejected",
+    notif_travel_ticket: "Flight ticket to upload",
+    notif_travel_visa: "Exit visa to upload",
     pending: "Pending",
     approved: "Approved",
     rejected: "Rejected",
@@ -535,6 +537,8 @@ const I18N = {
     notif_warning_sign: "إنذار بانتظار توقيعك",
     notif_leave_approved: "تمت الموافقة على طلب الإجازة",
     notif_leave_rejected: "تم رفض طلب الإجازة",
+    notif_travel_ticket: "تذكرة طيران بانتظار الرفع",
+    notif_travel_visa: "تأشيرة خروج بانتظار الرفع",
     notif_advance_approved: "تمت الموافقة على طلب السلفة",
     notif_advance_rejected: "تم رفض طلب السلفة",
     pending: "قيد المراجعة",
@@ -3001,6 +3005,20 @@ function buildNotifications() {
       const e=getEmployee(a.employeeId);
       out.push({ key:'adv-'+a.id, icon:'cash', tone:'amber', title:'Advance request pending',
         detail:`${e?(e.firstName+' '+(e.lastName||'')).trim():'—'} · ${fmtMoney(a.amount)}`, href:'#/advances' });
+    });
+    // Non-Saudi travel workflow: flight ticket / exit visa still owed on an
+    // approved annual leave. One item per missing document — each clears as
+    // its file is uploaded (derived live from state.leaveTravel). The
+    // 'travel-' key isn't in the excluded prefixes, so these also land in
+    // the My Work "Needs your action" inbox, not just the bell.
+    (state.leaveRequests||[]).filter(leaveNeedsTravel).forEach(r=>{
+      const e=getEmployee(r.employeeId);
+      const who = e?(e.firstName+' '+(e.lastName||'')).trim():'—';
+      const rec = state.leaveTravel[r.id];
+      if (!rec || !rec.ticketUploadedAt) out.push({ key:'travel-ticket-'+r.id, icon:'plane', tone:'amber',
+        title:t('notif_travel_ticket'), detail:`${who} · ${fmtDate(r.startDate)}`, href:'#/leave' });
+      if (!rec || !rec.visaUploadedAt) out.push({ key:'travel-visa-'+r.id, icon:'plane', tone:'amber',
+        title:t('notif_travel_visa'), detail:`${who} · ${fmtDate(r.startDate)}`, href:'#/leave' });
     });
     (state.employees||[]).filter(isActiveEmployee).forEach(e=>{
       const x=getEmpExtras(e.id);
