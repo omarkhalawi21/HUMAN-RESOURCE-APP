@@ -6402,6 +6402,7 @@ function renderPayrollAdjust() {
   if (!target) return;
   const emps = (state.employees || []).filter(isActiveEmployee).slice()
     .sort((a,b) => ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
+  const empOptions = emps.map(e=>`<option value="${e.id}">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('');
   const list = (_payrollAdjustments || []).map((a,i) => {
     const e = getEmployee(a.employeeId);
     const nm = e ? ((e.firstName||'')+' '+(e.lastName||'')).trim() : '—';
@@ -6416,17 +6417,43 @@ function renderPayrollAdjust() {
   }).join('');
   target.innerHTML = `
     <div class="bg-white border border-slate-200 rounded-xl p-4">
+      ${list ? `<div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Lines added this run</div><div class="space-y-2 mb-4">${list}</div>` : ''}
+      <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Holiday overtime — enter hours</div>
+      <p class="text-xs text-slate-500 mb-3">For holidays worked but not clocked in the app (e.g. Eid before go-live). Just enter the hours each person worked — the app auto-calculates the pay at <strong>1.5×</strong> their hourly rate (salary ÷ 30 ÷ standard day: 8h Saudi / 10h others) and adds it as an itemised line below.</p>
+      <div class="flex flex-wrap gap-2 items-end mb-4 pb-4 border-b border-slate-100">
+        <div style="flex:1 1 160px"><label class="label">Employee</label><select id="ot-emp" class="input">${empOptions}</select></div>
+        <div style="flex:0 1 130px"><label class="label">Hours worked</label><input id="ot-hours" inputmode="decimal" class="input" placeholder="e.g. 10"></div>
+        <div style="flex:0 0 auto"><button type="button" onclick="addPayrollOtHours()" class="btn btn-ghost">Add OT</button></div>
+      </div>
       <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Manual adjustments (optional)</div>
       <p class="text-xs text-slate-500 mb-3">One-off deduction or bonus for a specific employee this run — e.g. uniform damage, an unpaid-leave day, a spot bonus. Itemised on that payslip with the reason. Payslips already issued are never changed.</p>
-      ${list ? `<div class="space-y-2 mb-3">${list}</div>` : ''}
       <div class="flex flex-wrap gap-2 items-end">
-        <div style="flex:1 1 160px"><label class="label">Employee</label><select id="adj-emp" class="input">${emps.map(e=>`<option value="${e.id}">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('')}</select></div>
+        <div style="flex:1 1 160px"><label class="label">Employee</label><select id="adj-emp" class="input">${empOptions}</select></div>
         <div style="flex:0 1 130px"><label class="label">Type</label><select id="adj-kind" class="input"><option value="deduction">Deduction</option><option value="bonus">Bonus</option></select></div>
         <div style="flex:1 1 160px"><label class="label">Reason</label><input id="adj-label" class="input" placeholder="e.g. Uniform damage"></div>
         <div style="flex:0 1 120px"><label class="label">Amount</label><input id="adj-amount" inputmode="decimal" class="input" placeholder="0.00"></div>
         <div style="flex:0 0 auto"><button type="button" onclick="addPayrollAdjustment()" class="btn btn-ghost">Add</button></div>
       </div>
     </div>`;
+}
+// Holiday OT entered as HOURS (for holidays not clocked in the app). Converts
+// to money with the SAME formula as the attendance-driven auto-OT
+// (holidayOtForEmployee) — hours × salary÷30÷dayHours × 1.5 — and pushes it
+// as a bonus adjustment so it itemises on the payslip and flows into totals.
+function addPayrollOtHours() {
+  const employeeId = $('#ot-emp')?.value;
+  const hours = parseFloat(($('#ot-hours')?.value || '').replace(/,/g,''));
+  if (!employeeId) { toast('Pick an employee', 'error'); return; }
+  if (!isFinite(hours) || hours <= 0) { toast('Enter hours greater than 0', 'error'); return; }
+  const emp = getEmployee(employeeId);
+  const salary = Number(emp?.salary) || 0;
+  if (salary <= 0) { toast('This employee has no salary set on their profile', 'error'); return; }
+  const hourlyRate = salary / 30 / holidayDayHours(employeeId);
+  const amount = Math.round(hours * hourlyRate * HOLIDAY_OT_MULTIPLIER * 100) / 100;
+  const hrs = Math.round(hours*100)/100;
+  _payrollAdjustments.push({ employeeId, kind: 'bonus', label: `Holiday overtime (${hrs} hrs × 1.5)`, amount });
+  renderPayrollAdjust();
+  renderRunPayrollPreview();
 }
 function addPayrollAdjustment() {
   const employeeId = $('#adj-emp')?.value;
