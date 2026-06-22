@@ -3806,6 +3806,79 @@ CREATE POLICY "attendance_update_self_or_admin"
   );
 
 -- =============================================================
+-- 67. LEAVE TRAVEL WORKFLOW — non-Saudi: flight ticket + exit visa
+--     After an ANNUAL-leave request is approved, non-Saudi staff have a
+--     post-approval process: book the flight ticket, then issue the exit
+--     (re-entry) visa. This table tracks those two steps per leave request
+--     and stores the uploaded ticket + visa documents as base64 data URLs
+--     (mirrors archive_documents). One row per leave request (UNIQUE).
+--     A step is "done" when its document is uploaded — status is derived
+--     client-side from *_uploaded_at, so no status column is needed.
+--
+--     Visibility (owner-confirmed 2026-06-22): admin/hr manage; the
+--     EMPLOYEE can read their OWN row (they need the ticket to travel).
+--     So SELECT = admin/hr OR the employee who owns the linked leave.
+--     INSERT/UPDATE = admin/hr; DELETE = admin. The data_url columns are
+--     stripped from the client's bulk load and lazy-fetched on
+--     preview/download (same discipline as archive_documents).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.leave_travel (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  leave_id uuid NOT NULL UNIQUE REFERENCES public.leave_requests(id) ON DELETE CASCADE,
+
+  ticket_data_url    text,
+  ticket_mime        text,
+  ticket_name        text,
+  ticket_uploaded_at timestamptz,
+  ticket_uploaded_by uuid REFERENCES public.employees(id),
+
+  visa_data_url      text,
+  visa_mime          text,
+  visa_name          text,
+  visa_uploaded_at   timestamptz,
+  visa_uploaded_by   uuid REFERENCES public.employees(id),
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS leave_travel_leave_idx ON public.leave_travel(leave_id);
+
+ALTER TABLE public.leave_travel ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: admin/hr, or the employee who owns the linked leave request.
+DROP POLICY IF EXISTS leave_travel_select_admin_hr_or_self ON public.leave_travel;
+CREATE POLICY leave_travel_select_admin_hr_or_self ON public.leave_travel
+  FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (
+      SELECT 1 FROM public.leave_requests lr
+      JOIN public.employees e ON e.id = lr.employee_id
+      WHERE lr.id = leave_travel.leave_id AND e.user_id = auth.uid()
+    )
+  );
+
+-- INSERT: admin/hr only (they book the ticket + issue the visa).
+DROP POLICY IF EXISTS leave_travel_insert_admin_hr ON public.leave_travel;
+CREATE POLICY leave_travel_insert_admin_hr ON public.leave_travel
+  FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+
+-- UPDATE: admin/hr only.
+DROP POLICY IF EXISTS leave_travel_update_admin_hr ON public.leave_travel;
+CREATE POLICY leave_travel_update_admin_hr ON public.leave_travel
+  FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr']))
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+
+-- DELETE: admin only.
+DROP POLICY IF EXISTS leave_travel_delete_admin ON public.leave_travel;
+CREATE POLICY leave_travel_delete_admin ON public.leave_travel
+  FOR DELETE TO authenticated
+  USING (public.is_admin());
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

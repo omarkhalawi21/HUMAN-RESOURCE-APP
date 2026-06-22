@@ -254,6 +254,7 @@ const ICONS = {
   refresh:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>`,
   file:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
   upload:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
+  plane:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>`,
   star:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
   receipt:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l3-2 3 2 3-2 3 2 3-2 1 2V2l-1 2-3-2-3 2-3-2-3 2-3-2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>`,
   box:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>`,
@@ -400,6 +401,19 @@ const I18N = {
     resources_intro: "SOPs, training material, policies, and company resources for the floor. Tap a document to preview it or download it for offline reading.",
     resources_intro_upload: " Anything you upload here lands in the shared Archive too.",
     upload: "Upload",
+    travel_arrangements: "Travel arrangements",
+    travel_subtitle: "Required for non-Saudi staff before departure.",
+    flight_ticket: "Flight ticket",
+    exit_visa: "Exit / re-entry visa",
+    upload_ticket: "Upload flight ticket",
+    upload_exit_visa: "Upload exit / re-entry visa",
+    replace: "Replace",
+    uploaded_on: "Uploaded",
+    not_uploaded_yet: "Not uploaded yet",
+    awaiting_hr: "Awaiting HR",
+    travel_upload_ok: "Document uploaded",
+    doc_load_failed: "Could not load the document. Please try again.",
+    doc_cannot_open: "This document type cannot be opened.",
     all: "All",
     res_cat_sops: "SOPs",
     res_cat_training: "Training Material",
@@ -600,6 +614,19 @@ const I18N = {
     resources_intro: "إجراءات التشغيل القياسية، مواد التدريب، السياسات، وموارد الشركة للفروع. اضغط على المستند لمعاينته أو تنزيله للقراءة دون اتصال.",
     resources_intro_upload: " أي ملف ترفعه هنا يُضاف إلى الأرشيف المشترك أيضًا.",
     upload: "رفع",
+    travel_arrangements: "ترتيبات السفر",
+    travel_subtitle: "مطلوبة للموظفين غير السعوديين قبل المغادرة.",
+    flight_ticket: "تذكرة الطيران",
+    exit_visa: "تأشيرة الخروج والعودة",
+    upload_ticket: "رفع تذكرة الطيران",
+    upload_exit_visa: "رفع تأشيرة الخروج والعودة",
+    replace: "استبدال",
+    uploaded_on: "تم الرفع",
+    not_uploaded_yet: "لم تُرفع بعد",
+    awaiting_hr: "بانتظار الموارد البشرية",
+    travel_upload_ok: "تم رفع المستند",
+    doc_load_failed: "تعذّر تحميل المستند. حاول مرة أخرى.",
+    doc_cannot_open: "لا يمكن فتح هذا النوع من المستندات.",
     all: "الكل",
     res_cat_sops: "إجراءات التشغيل",
     res_cat_training: "مواد التدريب",
@@ -698,6 +725,7 @@ function emptyState() {
     attendance: [],
     leaveRequests: [],
     leaveBalances: {},
+    leaveTravel: {},    // { [leaveId]: {ticket*/visa* meta}; data_url lazy-fetched } — SQL block 67
     payroll: [],
     holidays: [],       // company-wide public-holiday calendar (Supabase); drives payroll holiday-overtime
     session: null,
@@ -1102,6 +1130,20 @@ function mapLeaveFromDb(r) {
     reason: r.reason||'', status: r.status,
     requestedAt: r.created_at ? r.created_at.slice(0,10) : '',
     decidedBy: r.decided_by, decidedAt: r.decided_at ? r.decided_at.slice(0,10) : null,
+  };
+}
+// Leave travel workflow (non-Saudi: flight ticket + exit visa). See SQL
+// block 67. The *_data_url columns are stripped from the bulk load and
+// lazy-fetched via ensureLeaveTravelDoc, so dataUrl is null until then.
+function mapLeaveTravelFromDb(r) {
+  return {
+    id: r.id, leaveId: r.leave_id,
+    ticketName: r.ticket_name||'', ticketMime: r.ticket_mime||'',
+    ticketDataUrl: r.ticket_data_url||null,
+    ticketUploadedAt: r.ticket_uploaded_at||null, ticketUploadedBy: r.ticket_uploaded_by||null,
+    visaName: r.visa_name||'', visaMime: r.visa_mime||'',
+    visaDataUrl: r.visa_data_url||null,
+    visaUploadedAt: r.visa_uploaded_at||null, visaUploadedBy: r.visa_uploaded_by||null,
   };
 }
 function mapPayrollFromDb(r) {
@@ -1702,7 +1744,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1805,6 +1847,12 @@ async function loadAll() {
       // Bounded by Hassad's actual hiring funnel — single-digit
       // to low-hundreds, not a high-volume timeseries.
       sb.from('job_applications').select('*').order('created_at', { ascending: false }).limit(500),
+      // Leave travel workflow (SQL block 67). RLS scopes rows to admin/hr
+      // (all) or the employee who owns the linked leave (their own only),
+      // so this is bounded. The heavy ticket_data_url / visa_data_url
+      // columns are excluded — lazy-fetched on view via ensureLeaveTravelDoc.
+      sb.from('leave_travel')
+        .select('id, leave_id, ticket_mime, ticket_name, ticket_uploaded_at, ticket_uploaded_by, visa_mime, visa_name, visa_uploaded_at, visa_uploaded_by, created_at, updated_at'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -1835,6 +1883,8 @@ async function loadAll() {
     state.employees = (employeesR.data || []).map(mapEmployeeFromDb);
     state.attendance = (attendanceR.data || []).map(mapAttendanceFromDb);
     state.leaveRequests = (leaveR.data || []).map(mapLeaveFromDb);
+    state.leaveTravel = {};
+    (leaveTravelR.data || []).forEach(r => { state.leaveTravel[r.leave_id] = mapLeaveTravelFromDb(r); });
     state.payroll = (payrollR.data || []).map(mapPayrollFromDb);
     state.holidays = (holidaysR.data || []).map(mapHolidayFromDb);
     state.leaveBalances = {};
@@ -5256,26 +5306,30 @@ function renderLeave() {
         <table class="data">
           <thead><tr>${canView && leaveTab!=='mine'?'<th>Employee</th>':''}<th>Type</th><th>Dates</th><th>Days</th><th>Reason</th><th>Requested</th><th>Status</th>${canManage?'<th class="!text-end">Action</th>':''}</tr></thead>
           <tbody>
-            ${rows.length===0 ? `<tr><td colspan="${6 + (canView && leaveTab!=='mine' ? 1 : 0) + (canManage ? 1 : 0)}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
-              rows.map(r => {
+            ${(() => {
+              const colspan = 6 + (canView && leaveTab!=='mine' ? 1 : 0) + (canManage ? 1 : 0);
+              if (rows.length===0) return `<tr><td colspan="${colspan}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>`;
+              return rows.map(r => {
                 const e = getEmployee(r.employeeId);
+                const needsTravel = leaveNeedsTravel(r);
                 return `
-                <tr class="hover-row">
+                <tr class="hover-row ${needsTravel?'!border-b-0':''}">
                   ${canView && leaveTab!=='mine'?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span>${escapeHTML(e.firstName+' '+e.lastName)}</span></div></td>`:''}
                   <td><span class="badge badge-blue">${escapeHTML(r.type)}</span></td>
                   <td class="text-slate-700 text-sm">${fmtDate(r.startDate)} → ${fmtDate(r.endDate)}</td>
                   <td class="font-medium">${r.days}</td>
                   <td class="text-slate-600 text-sm">${escapeHTML(r.reason||'—')}</td>
                   <td class="text-slate-500 text-xs">${fmtDate(r.requestedAt)}</td>
-                  <td>${statusBadge(r.status)}</td>
+                  <td>${statusBadge(r.status)}${needsTravel?`<span class="ml-1 inline-flex items-center gap-0.5 align-middle text-amber-700" title="${escapeHTML(t('travel_arrangements'))}">${icon('plane','w-3.5 h-3.5')}</span>`:''}</td>
                   ${canManage ? `<td class="!text-end whitespace-nowrap">
                     ${r.status==='pending'?`
                       <button onclick="decideLeave('${r.id}','approved')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} ${escapeHTML(t('approve'))}</button>
                       <button onclick="decideLeave('${r.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
                     `:'<span class="text-xs text-slate-400">decided</span>'}
                   </td>`:''}
-                </tr>`;
-              }).join('')}
+                </tr>${leaveTravelRowHTML(r, colspan, canManage)}`;
+              }).join('');
+            })()}
           </tbody>
         </table>
       </div>
@@ -5367,6 +5421,165 @@ async function decideLeave(id, decision) {
   }
   render();
   toast(`Request ${decision}`, 'success');
+}
+
+/* ---- Leave travel workflow (non-Saudi: ticket + exit visa) — SQL block 67 ---- */
+// Columns fetched without the heavy *_data_url blobs (lazy-loaded on view).
+const LEAVE_TRAVEL_COLS = 'id, leave_id, ticket_mime, ticket_name, ticket_uploaded_at, ticket_uploaded_by, visa_mime, visa_name, visa_uploaded_at, visa_uploaded_by, created_at, updated_at';
+let _travelFile = null;
+// The workflow applies to APPROVED ANNUAL leave for non-Saudi employees.
+// Blank nationality is treated as non-Saudi (consistent with payroll's
+// holiday-OT divisor) so a real expat with an unfilled profile isn't missed.
+function leaveNeedsTravel(r) {
+  if (!r || r.status !== 'approved' || r.type !== 'annual') return false;
+  const ex = getEmpExtras(r.employeeId) || {};
+  return (ex.nationality || '').trim().toLowerCase() !== 'saudi';
+}
+// Lazy-fetch a single document's base64 data URL (stripped from bulk load).
+async function ensureLeaveTravelDoc(leaveId, kind) {
+  const rec = state.leaveTravel[leaveId];
+  if (!rec) return null;
+  const field = kind === 'visa' ? 'visaDataUrl' : 'ticketDataUrl';
+  if (rec[field]) return rec[field];
+  const col = kind === 'visa' ? 'visa_data_url' : 'ticket_data_url';
+  const { data, error } = await sb.from('leave_travel').select(col).eq('id', rec.id).single();
+  if (error || !data) return null;
+  rec[field] = data[col] || null;
+  return rec[field];
+}
+// Only render a stored value as a data: URL if it's a safe image/pdf blob.
+function travelDocSafeUrl(url, mime) {
+  if (!isSafeBase64DataUrl(String(url || ''))) return '';
+  if (!isAllowedArchiveMime(mime)) return '';
+  return url;
+}
+async function openTravelDoc(leaveId, kind) {
+  const rec = state.leaveTravel[leaveId];
+  if (!rec) return;
+  const isVisa = kind === 'visa';
+  const mime = isVisa ? rec.visaMime : rec.ticketMime;
+  const name = (isVisa ? rec.visaName : rec.ticketName) || 'document';
+  if (!isAllowedArchiveMime(mime)) { toast(t('doc_cannot_open'), 'error'); return; }
+  // Open the popup synchronously (inside the click) so the blocker doesn't
+  // kill it during the async lazy-fetch below — mirrors previewArchiveDoc.
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked.', 'error'); return; }
+  try { win.opener = null; } catch (_) {}
+  win.document.write(`<title>${escapeHTML(name)}</title><body style="font-family:system-ui;margin:0;padding:40px;color:#64748b;background:#f8fafc">Loading…</body>`);
+  win.document.close();
+  const url = await ensureLeaveTravelDoc(leaveId, kind);
+  const safe = travelDocSafeUrl(url, mime);
+  if (!safe) { try { win.close(); } catch (_) {} toast(t('doc_load_failed'), 'error'); return; }
+  try { win.location.href = safe; } catch (_) { try { win.close(); } catch (_) {} }
+}
+async function handleTravelFile(ev) {
+  _travelFile = null;
+  const p = document.getElementById('tv-preview');
+  if (p) p.innerHTML = '';
+  const f = await readUploadedFile(ev, {
+    allowed: ARCHIVE_ALLOWED_MIMES,
+    errorMsg: 'Unsupported file type. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.',
+  });
+  if (!f) return;
+  _travelFile = { name: f.name, mime: f.mime, size: f.size, dataUrl: f.dataUrl };
+  if (p) p.innerHTML = `${icon('check','w-4 h-4 inline text-emerald-600')} Loaded <strong>${escapeHTML(f.name)}</strong> (${(f.size/1024).toFixed(1)} KB)`;
+}
+function openTravelUploadModal(leaveId, kind) {
+  if (!canManagePeople()) return;
+  _travelFile = null;
+  const isVisa = kind === 'visa';
+  const r = state.leaveRequests.find(x => x.id === leaveId);
+  const e = r ? getEmployee(r.employeeId) : null;
+  const who = e ? `${e.firstName} ${e.lastName||''}`.trim() : '';
+  const title = isVisa ? t('upload_exit_visa') : t('upload_ticket');
+  const form = `
+    <div class="space-y-3">
+      <p class="text-sm text-slate-600">${escapeHTML(who)}${who?' · ':''}${fmtDate(r?.startDate)} → ${fmtDate(r?.endDate)}</p>
+      <div>
+        <label class="label">${escapeHTML(isVisa ? t('exit_visa') : t('flight_ticket'))}</label>
+        <input id="tv-file" type="file" class="input" accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.txt,.csv" onchange="handleTravelFile(event)">
+        <div class="text-xs text-slate-500 mt-1">Max 5MB. Allowed: PDF, Word, Excel, images (PNG/JPG/GIF/WebP), TXT, CSV.</div>
+        <div id="tv-preview" class="mt-2 text-sm text-slate-700"></div>
+      </div>
+    </div>`;
+  openModal(title, form, async () => {
+    if (!_travelFile) { toast('Please choose a file', 'error'); return false; }
+    return await saveTravelDoc(leaveId, kind);
+  }, { saveLabel: t('upload') });
+}
+async function saveTravelDoc(leaveId, kind) {
+  if (!canManagePeople() || !_travelFile) return false;
+  const me = currentEmployee();
+  const isVisa = kind === 'visa';
+  const nowISO = new Date().toISOString();
+  const cols = isVisa
+    ? { visa_data_url: _travelFile.dataUrl, visa_mime: _travelFile.mime, visa_name: _travelFile.name, visa_uploaded_at: nowISO, visa_uploaded_by: me?.id || null }
+    : { ticket_data_url: _travelFile.dataUrl, ticket_mime: _travelFile.mime, ticket_name: _travelFile.name, ticket_uploaded_at: nowISO, ticket_uploaded_by: me?.id || null };
+  const existing = state.leaveTravel[leaveId];
+  let res;
+  if (existing) {
+    res = await sb.from('leave_travel').update({ ...cols, updated_at: nowISO }).eq('id', existing.id).select(LEAVE_TRAVEL_COLS).single();
+  } else {
+    res = await sb.from('leave_travel').insert({ leave_id: leaveId, ...cols }).select(LEAVE_TRAVEL_COLS).single();
+  }
+  if (res.error) { toast(humanizeError(res.error), 'error'); return false; }
+  const mapped = mapLeaveTravelFromDb(res.data);
+  // Preserve any already-cached blob for the OTHER document; cache the one
+  // we just uploaded so an immediate "View" doesn't re-hit the DB.
+  const prev = existing || {};
+  mapped.ticketDataUrl = isVisa ? (prev.ticketDataUrl || null) : _travelFile.dataUrl;
+  mapped.visaDataUrl   = isVisa ? _travelFile.dataUrl : (prev.visaDataUrl || null);
+  state.leaveTravel[leaveId] = mapped;
+  _travelFile = null;
+  render();
+  toast(t('travel_upload_ok'), 'success');
+  return true;
+}
+// One step (ticket or visa) card inside the travel sub-row.
+function travelStepHTML(r, kind, canManage) {
+  const rec = state.leaveTravel[r.id];
+  const isVisa = kind === 'visa';
+  const uploadedAt = rec ? (isVisa ? rec.visaUploadedAt : rec.ticketUploadedAt) : null;
+  const done = !!uploadedAt;
+  const label = isVisa ? t('exit_visa') : t('flight_ticket');
+  const stepNo = isVisa ? 2 : 1;
+  const pill = done
+    ? `<span class="badge badge-green">${escapeHTML(t('done'))} ✓</span>`
+    : `<span class="badge badge-amber">${escapeHTML(t('pending'))}</span>`;
+  const meta = done
+    ? `<div class="text-[11px] text-slate-500 mb-2">${escapeHTML(t('uploaded_on'))} ${fmtDate((uploadedAt||'').slice(0,10))}</div>`
+    : `<div class="text-[11px] text-slate-400 mb-2">${escapeHTML(canManage ? t('not_uploaded_yet') : t('awaiting_hr'))}</div>`;
+  const viewBtn = done ? `<button onclick="openTravelDoc('${r.id}','${kind}')" class="btn btn-ghost btn-sm">${icon('eye','w-4 h-4')} ${escapeHTML(t('view'))}</button>` : '';
+  const upBtn = canManage ? `<button onclick="openTravelUploadModal('${r.id}','${kind}')" class="btn btn-sm ${done?'btn-ghost':'btn-primary'}">${icon('upload','w-4 h-4')} ${escapeHTML(done ? t('replace') : t('upload'))}</button>` : '';
+  return `
+    <div class="flex-1 rounded-lg bg-white border border-amber-100 p-3 min-w-[200px]">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-xs font-semibold text-slate-700">${stepNo}. ${escapeHTML(label)}</span>
+        ${pill}
+      </div>
+      ${meta}
+      <div class="flex gap-1.5 flex-wrap">${viewBtn}${upBtn}</div>
+    </div>`;
+}
+// Full-width amber sub-row beneath an approved annual-leave request that
+// highlights the ticket → exit-visa process. Returns '' when N/A.
+function leaveTravelRowHTML(r, colspan, canManage) {
+  if (!leaveNeedsTravel(r)) return '';
+  return `
+    <tr class="!border-t-0">
+      <td colspan="${colspan}" class="!pt-0 !pb-4">
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <div class="flex items-center gap-2 mb-2 text-amber-800 text-sm font-semibold">
+            ${icon('plane','w-4 h-4')} ${escapeHTML(t('travel_arrangements'))}
+            <span class="font-normal text-xs text-amber-700/80">${escapeHTML(t('travel_subtitle'))}</span>
+          </div>
+          <div class="flex flex-col sm:flex-row gap-3">
+            ${travelStepHTML(r, 'ticket', canManage)}
+            ${travelStepHTML(r, 'visa', canManage)}
+          </div>
+        </div>
+      </td>
+    </tr>`;
 }
 
 /* -------------------- PAYROLL -------------------- */
@@ -19611,6 +19824,7 @@ function closeModal() {
   // Reset transient form state so it can't bleed into the next modal.
   if (typeof _pendingPhoto !== 'undefined')  _pendingPhoto = null;
   if (typeof _archiveFile !== 'undefined')   _archiveFile = null;
+  if (typeof _travelFile !== 'undefined')    _travelFile = null;
   if (typeof _receiptFile !== 'undefined')   _receiptFile = null;
   if (typeof _maintenancePhoto !== 'undefined') _maintenancePhoto = null;
   if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
