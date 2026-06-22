@@ -9622,31 +9622,79 @@ let _sigPad = null;
 function initSignaturePad() {
   const canvas = document.getElementById('sig-canvas');
   if (!canvas) return;
-  const ratio = window.devicePixelRatio || 1;
-  const rect  = canvas.getBoundingClientRect();
-  canvas.width  = Math.max(1, Math.round(rect.width  * ratio));
-  canvas.height = Math.max(1, Math.round(rect.height * ratio));
   const ctx = canvas.getContext('2d');
-  ctx.scale(ratio, ratio);
-  ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
-  _sigPad = { canvas, ctx, drawing: false, hasInk: false };
+  _sigPad = { canvas, ctx, drawing: false, hasInk: false, sized: false };
+
+  // Match the canvas bitmap to its on-screen size. Deferred until we have a
+  // real layout: when the modal opens on a phone this can run before the
+  // canvas has any width, and sizing against a 0px rect silently breaks
+  // drawing (strokes land off-canvas / scaled wrong) while hasInk still
+  // flips true — i.e. a "saved" but blank signature. So we (re)size right
+  // before the first stroke too, when layout is guaranteed.
+  const sizeCanvas = () => {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return false;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(rect.width  * ratio);
+    canvas.height = Math.round(rect.height * ratio);
+    // Setting canvas.width resets the context, so re-apply transform + style.
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
+    _sigPad.sized = true;
+    return true;
+  };
+
   const pt = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const start = e => { e.preventDefault(); _sigPad.drawing = true; const p = pt(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
-  const move  = e => {
+  const markInk = () => {
+    if (_sigPad.hasInk) return;
+    _sigPad.hasInk = true;
+    const ph = document.getElementById('sig-placeholder'); if (ph) ph.style.display = 'none';
+  };
+  const start = e => {
+    e.preventDefault();
+    if (!_sigPad.sized) sizeCanvas();            // size now that layout is real
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}  // keep events even if finger leaves the box
+    _sigPad.drawing = true;
+    const p = pt(e);
+    // Stamp a dot so a tap or very short stroke still leaves visible ink.
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.1, p.y + 0.1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p.x, p.y);
+    markInk();
+  };
+  const move = e => {
     if (!_sigPad.drawing) return; e.preventDefault();
     const p = pt(e); ctx.lineTo(p.x, p.y); ctx.stroke();
-    if (!_sigPad.hasInk) { _sigPad.hasInk = true; const ph = document.getElementById('sig-placeholder'); if (ph) ph.style.display = 'none'; }
+    markInk();
   };
-  const end = () => { _sigPad.drawing = false; };
+  const end = e => {
+    _sigPad.drawing = false;
+    if (e && e.pointerId != null) { try { canvas.releasePointerCapture(e.pointerId); } catch (_) {} }
+  };
   canvas.addEventListener('pointerdown', start);
   canvas.addEventListener('pointermove', move);
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
-  canvas.addEventListener('pointerleave', end);
+  // Best-effort immediate sizing; first pointerdown re-sizes if this was too early.
+  sizeCanvas();
+}
+// True if the canvas has no non-transparent pixels — a final guard so a
+// mis-sized canvas (strokes that landed off-screen) can never save blank.
+function sigPadIsBlank() {
+  if (!_sigPad) return true;
+  const { ctx, canvas } = _sigPad;
+  try {
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) return false;
+    return true;
+  } catch (_) { return false; }  // cross-origin/security: don't block on read failure
 }
 function clearSignaturePad() {
   if (!_sigPad) return;
-  _sigPad.ctx.clearRect(0, 0, _sigPad.canvas.width, _sigPad.canvas.height);
+  const { ctx, canvas } = _sigPad;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
   _sigPad.hasInk = false;
   const ph = document.getElementById('sig-placeholder'); if (ph) ph.style.display = '';
 }
@@ -9664,7 +9712,7 @@ function openSignaturePad(title, subtitle, onSave) {
       </div>
     </div>`;
   openModal(title, body, async () => {
-    if (!_sigPad || !_sigPad.hasInk) { toast(t('please_sign_first'), 'error'); return false; }
+    if (!_sigPad || !_sigPad.hasInk || sigPadIsBlank()) { toast(t('please_sign_first'), 'error'); return false; }
     const dataUrl = _sigPad.canvas.toDataURL('image/png');
     return await onSave(dataUrl);
   }, { saveLabel: t('save_signature') });
