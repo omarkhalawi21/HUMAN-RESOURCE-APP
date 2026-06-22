@@ -9439,6 +9439,7 @@ function renderWarnings() {
                           ? `<span class="badge badge-green" title="Manager signed">Mgr ✓</span>`
                           : `<button onclick="signWarning('${w.id}','manager')" class="btn btn-ghost btn-sm" title="${escapeHTML(t('mgr_sign_title'))}">${icon('check','w-3.5 h-3.5')} ${escapeHTML(t('sign'))}</button>`) : ''}
                       <button onclick="printWarningLetter('${w.id}')" aria-label="Print warning letter" title="Print letter" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
+                      ${admin ? `<button onclick="reassignWarning('${w.id}')" aria-label="Move warning to another employee" title="Move to another employee" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('users','w-4 h-4')}</button>`:''}
                       ${admin ? `<button onclick="deleteWarning('${w.id}')" aria-label="Delete warning" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
                     </div>
                   </td>
@@ -9546,6 +9547,52 @@ async function deleteWarning(id) {
   state.warnings = state.warnings.filter(w => w.id !== id);
   render();
   toast('Warning deleted', 'success');
+}
+// Move a warning letter from one employee to another. Useful when a
+// warning was issued against the wrong profile (e.g. a duplicate/test
+// account) and needs to land on the real employee's record. Admin/HR
+// only — matches the warnings UPDATE RLS policy (no RPC needed; the
+// policy checks the actor's role, not the row contents).
+function reassignWarning(id) {
+  if (!canManagePeople()) { toast('Admins/HR only', 'error'); return; }
+  const w = (state.warnings||[]).find(x => x.id === id);
+  if (!w) { toast('Warning not found', 'error'); return; }
+  const current = getEmployee(w.employeeId);
+  const currentName = current ? (current.firstName+' '+(current.lastName||'')).trim() : 'Unknown / removed';
+  // Sort the picker: active employees first (alphabetical), then
+  // terminated/pending at the bottom so the real target is easy to find.
+  const opts = state.employees.slice().sort((a,b)=>{
+    const aw = isActiveEmployee(a) ? 0 : 1, bw = isActiveEmployee(b) ? 0 : 1;
+    if (aw !== bw) return aw - bw;
+    return (a.firstName+a.lastName).localeCompare(b.firstName+b.lastName);
+  }).map(e=>{
+    const label = (e.firstName+' '+(e.lastName||'')).trim() + (isActiveEmployee(e) ? '' : e.status==='terminated' ? ' — terminated' : ' — pending');
+    return `<option value="${e.id}" ${e.id===w.employeeId?'selected':''}>${escapeHTML(label)}</option>`;
+  }).join('');
+  const body = `
+    <div class="space-y-4">
+      <div class="bg-slate-50 rounded-xl p-4 text-sm text-slate-600">
+        Currently on <span class="font-semibold text-slate-900">${escapeHTML(currentName)}</span> ·
+        ${escapeHTML(w.severity||'verbal')} · ${fmtDate(w.date)}${w.reason?` · ${escapeHTML((w.reason||'').slice(0,60))}${(w.reason||'').length>60?'…':''}`:''}
+      </div>
+      <div>
+        <label class="label">Move this warning to</label>
+        <select id="reassign-emp" class="input">${opts}</select>
+        <div class="text-xs text-slate-500 mt-1">The printed letter's National ID stays as originally entered — re-issue if it must match the new employee's IQAMA.</div>
+      </div>
+    </div>`;
+  openModal('Move warning to another employee', body, async () => {
+    const newId = document.getElementById('reassign-emp')?.value;
+    if (!newId) { toast('Pick an employee', 'error'); return; }
+    if (newId === w.employeeId) { closeModal(); return; }
+    const { error } = await sb.from('warnings').update({ employee_id: newId }).eq('id', id);
+    if (error) { toast(humanizeError(error), 'error'); return; }
+    w.employeeId = newId;
+    closeModal();
+    render();
+    const dest = getEmployee(newId);
+    toast(`Warning moved to ${dest ? (dest.firstName+' '+(dest.lastName||'')).trim() : 'employee'}`, 'success');
+  }, { saveLabel: 'Move warning' });
 }
 /* -------------------- PDPL DOCUMENTS -------------------- */
 // Shared CSS for the long bilingual legal documents (Privacy Notice,
