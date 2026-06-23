@@ -3879,6 +3879,23 @@ CREATE POLICY leave_travel_delete_admin ON public.leave_travel
   USING (public.is_admin());
 
 -- =============================================================
+-- 68. ADVANCES vs LOANS — kind + installment months
+--     The advances table now also stores LOANS. An advance is recovered
+--     in full from the next payroll run; a loan is repaid in equal
+--     installments over up to 3 months (installment_months). Existing
+--     rows backfill to kind='advance' so behaviour is unchanged.
+--     No RLS change — loans reuse the advances policies (same table).
+-- =============================================================
+ALTER TABLE public.advances
+  ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'advance';
+ALTER TABLE public.advances
+  ADD COLUMN IF NOT EXISTS installment_months integer;
+
+-- Belt-and-braces: any pre-existing NULL kind (shouldn't happen given the
+-- DEFAULT, but safe if the column existed before) becomes 'advance'.
+UPDATE public.advances SET kind = 'advance' WHERE kind IS NULL;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
