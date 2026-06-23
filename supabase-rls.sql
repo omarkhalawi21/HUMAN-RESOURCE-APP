@@ -3882,7 +3882,7 @@ CREATE POLICY leave_travel_delete_admin ON public.leave_travel
 -- 68. ADVANCES vs LOANS — kind + installment months
 --     The advances table now also stores LOANS. An advance is recovered
 --     in full from the next payroll run; a loan is repaid in equal
---     installments over up to 3 months (installment_months). Existing
+--     installments over up to 2 months (installment_months). Existing
 --     rows backfill to kind='advance' so behaviour is unchanged.
 --     No RLS change — loans reuse the advances policies (same table).
 -- =============================================================
