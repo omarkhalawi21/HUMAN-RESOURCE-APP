@@ -6159,7 +6159,7 @@ function calcPayroll(ym) {
       const total = Math.round((Number(a.amount) || 0) * 100) / 100;
       const reason = (a.reason || '').trim();
       if (a.kind === 'loan') {
-        const months = Math.min(3, Math.max(1, Number(a.installmentMonths) || 1));
+        const months = Math.min(2, Math.max(1, Number(a.installmentMonths) || 1));
         const paid = Number(a.installmentsPaid) || 0;
         if (paid >= months) return; // already fully repaid
         const per = Math.round((total / months) * 100) / 100;
@@ -10091,7 +10091,7 @@ function renderAdvances() {
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Advances &amp; Loans</div>
           <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('advances'))}</h2>
-          <p class="text-slate-500 mt-1 text-sm max-w-md">${admin ? 'Review and approve advance & loan requests. Advances are deducted in full from the next payroll; loans are spread over up to 3 monthly installments.' : 'Need a portion of your salary early, or a short-term loan? Submit a request below.'}</p>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">${admin ? 'Review and approve advance & loan requests. Advances are deducted in full from the next payroll; loans are spread over up to 2 monthly installments.' : 'Need a portion of your salary early, or a short-term loan? Submit a request below.'}</p>
         </div>
         <button onclick="openAdvanceModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('request_advance'))}</button>
       </div>
@@ -10124,7 +10124,7 @@ function renderAdvances() {
                         ? `<span class="badge badge-green">Repaid ${fmtDate(a.repaidAt)}</span>`
                         : a.status==='approved'
                           ? (a.kind==='loan'
-                              ? `<span class="badge badge-amber">${a.installmentsPaid||0}/${Math.min(3,Math.max(1,a.installmentMonths||1))} installments paid</span>`
+                              ? `<span class="badge badge-amber">${a.installmentsPaid||0}/${Math.min(2,Math.max(1,a.installmentMonths||1))} installments paid</span>`
                               : '<span class="badge badge-amber">Outstanding</span>')
                           : '—'}</td>
                   <td class="!text-end whitespace-nowrap">
@@ -10167,7 +10167,7 @@ function advanceTypeChanged() {
     : (kind==='advance' ? 'Maximum 50% of monthly salary' : 'Maximum one month of salary');
   const note = document.getElementById('adv-note');
   if (note) note.innerHTML = kind === 'loan'
-    ? `${icon('warning','w-4 h-4 inline')} Once approved, the loan is repaid in equal installments over the chosen period (max 3 months), deducted automatically each payroll run until cleared.`
+    ? `${icon('warning','w-4 h-4 inline')} Once approved, the loan is repaid in equal installments over the chosen period (max 2 months), deducted automatically each payroll run until cleared.`
     : `${icon('warning','w-4 h-4 inline')} Once approved, the full amount is automatically deducted from the employee's next payroll run.`;
   const ack = document.getElementById('adv-ack-label');
   if (ack) ack.textContent = kind === 'loan'
@@ -10195,15 +10195,14 @@ function openAdvanceModal() {
         <label class="label">Type</label>
         <select id="adv-kind" class="input" onchange="advanceTypeChanged()">
           <option value="advance" selected>Advance — repaid in full from next payroll</option>
-          <option value="loan">Loan — repaid in installments (max 3 months)</option>
+          <option value="loan">Loan — repaid in installments (max 2 months)</option>
         </select>
       </div>
       <div class="col-span-2 hidden" id="adv-months-wrap">
         <label class="label">Repayment period</label>
         <select id="adv-months" class="input">
           <option value="1">1 month</option>
-          <option value="2">2 months</option>
-          <option value="3" selected>3 months</option>
+          <option value="2" selected>2 months</option>
         </select>
       </div>
       <div class="col-span-2">
@@ -10230,7 +10229,7 @@ function openAdvanceModal() {
     const kind = ($('#adv-kind')?.value === 'loan') ? 'loan' : 'advance';
     const amount = Number($('#adv-amt').value)||0;
     const reason = $('#adv-reason').value.trim();
-    const months = kind === 'loan' ? Math.min(3, Math.max(1, Number($('#adv-months')?.value)||1)) : null;
+    const months = kind === 'loan' ? Math.min(2, Math.max(1, Number($('#adv-months')?.value)||1)) : null;
     if (amount <= 0) { toast('Enter a valid amount', 'error'); return false; }
     if (!reason) { toast('Please provide a reason', 'error'); return false; }
     if (!$('#adv-ack')?.checked) { toast('Please confirm you understand the repayment terms', 'error'); return false; }
@@ -10283,7 +10282,7 @@ function printAdvanceSlip(id) {
   const decider = a.decidedBy ? getEmployee(a.decidedBy) : null;
   const c = state.settings;
   const isLoan = a.kind === 'loan';
-  const loanMonths = Math.min(3, Math.max(1, Number(a.installmentMonths)||1));
+  const loanMonths = Math.min(2, Math.max(1, Number(a.installmentMonths)||1));
   const docTitle = isLoan ? 'SALARY LOAN SLIP' : 'SALARY ADVANCE SLIP';
   const repaymentLabel = isLoan
     ? `Repaid in ${loanMonths} equal monthly installment${loanMonths===1?'':'s'} from payroll`
