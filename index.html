@@ -10240,6 +10240,10 @@ function advanceTypeChanged() {
   if (note) note.innerHTML = kind === 'loan'
     ? `${icon('warning','w-4 h-4 inline')} Once approved, the loan is repaid in equal installments over the chosen period (max 3 months), deducted automatically each payroll run until cleared.`
     : `${icon('warning','w-4 h-4 inline')} Once approved, the full amount is automatically deducted from the employee's next payroll run.`;
+  const ack = document.getElementById('adv-ack-label');
+  if (ack) ack.textContent = kind === 'loan'
+    ? 'I understand and agree that this loan will be repaid in equal monthly installments over the selected period.'
+    : 'I understand and agree that the full amount will be deducted from the next salary.';
 }
 function openAdvanceModal() {
   const me = currentEmployee();
@@ -10286,6 +10290,10 @@ function openAdvanceModal() {
     <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 mt-4" id="adv-note">
       ${icon('warning','w-4 h-4 inline')} Once approved, the full amount is automatically deducted from the employee's next payroll run.
     </div>
+    <label class="flex items-start gap-2 mt-3 text-sm text-slate-700 cursor-pointer">
+      <input type="checkbox" id="adv-ack" class="mt-0.5 shrink-0">
+      <span id="adv-ack-label">I understand and agree that the full amount will be deducted from the next salary.</span>
+    </label>
   `;
   openModal(t('request_advance'), form, async () => {
     const empId = admin ? ($('#adv-emp')?.value || me.id) : me.id;
@@ -10296,6 +10304,7 @@ function openAdvanceModal() {
     const months = kind === 'loan' ? Math.min(3, Math.max(1, Number($('#adv-months')?.value)||1)) : null;
     if (amount <= 0) { toast('Enter a valid amount', 'error'); return false; }
     if (!reason) { toast('Please provide a reason', 'error'); return false; }
+    if (!$('#adv-ack')?.checked) { toast('Please confirm you understand the repayment terms', 'error'); return false; }
     // Hard caps: advance ≤ 50% of salary, loan ≤ one month's salary.
     const salary = Number(emp.salary)||0;
     if (salary > 0) {
