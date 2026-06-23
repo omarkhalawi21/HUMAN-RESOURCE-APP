@@ -5475,9 +5475,12 @@ async function openTravelDoc(leaveId, kind) {
   const rec = state.leaveTravel[leaveId];
   if (!rec) return;
   const isVisa = kind === 'visa';
-  const mime = isVisa ? rec.visaMime : rec.ticketMime;
+  const mime = (isVisa ? rec.visaMime : rec.ticketMime) || '';
   const name = (isVisa ? rec.visaName : rec.ticketName) || 'document';
   if (!isAllowedArchiveMime(mime)) { toast(t('doc_cannot_open'), 'error'); return; }
+  const lc = mime.toLowerCase();
+  const isImage = lc.startsWith('image/');
+  const isPdf   = lc.includes('pdf');
   // Open the popup synchronously (inside the click) so the blocker doesn't
   // kill it during the async lazy-fetch below — mirrors previewArchiveDoc.
   const win = window.open('', '_blank');
@@ -5488,7 +5491,28 @@ async function openTravelDoc(leaveId, kind) {
   const url = await ensureLeaveTravelDoc(leaveId, kind);
   const safe = travelDocSafeUrl(url, mime);
   if (!safe) { try { win.close(); } catch (_) {} toast(t('doc_load_failed'), 'error'); return; }
-  try { win.location.href = safe; } catch (_) { try { win.close(); } catch (_) {} }
+  // Embed the data: URL as a sub-resource rather than navigating the window
+  // to it — top-level navigation to a data: URL is blocked by Safari/Chrome
+  // (that was the "uploaded but can't view" bug). Images/PDFs render fine
+  // when embedded inside the about:blank popup — same pattern as
+  // previewArchiveDoc, which is proven to work in this app's Safari.
+  if (isImage || isPdf) {
+    win.document.open();
+    win.document.write(isImage
+      ? `<title>${escapeHTML(name)}</title><body style="margin:0;background:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${escapeHTML(safe)}" style="max-width:100%;max-height:100vh"></body>`
+      : `<title>${escapeHTML(name)}</title><body style="margin:0"><embed src="${escapeHTML(safe)}" type="application/pdf" style="width:100vw;height:100vh"></body>`);
+    win.document.close();
+    return;
+  }
+  // Other allowed types (Word/Excel/txt/csv) have no inline viewer here.
+  // Navigate to a blob: URL (top-level blob nav IS allowed, unlike data:)
+  // so the browser displays or downloads it.
+  try {
+    const blob = new Blob([dataUrlToArrayBuffer(safe)], { type: mime });
+    const objUrl = URL.createObjectURL(blob);
+    win.location.href = objUrl;
+    setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (_) {} }, 60000);
+  } catch (_) { try { win.close(); } catch (_) {} toast(t('doc_load_failed'), 'error'); }
 }
 async function handleTravelFile(ev) {
   _travelFile = null;
