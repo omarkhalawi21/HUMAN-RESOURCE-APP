@@ -4004,6 +4004,18 @@ CREATE POLICY "dci_select_floor_or_ops"
   ON public.daily_count_items FOR SELECT TO authenticated
   USING (public.has_role(ARRAY['admin','head_barista','barista','operations','branch_device']));
 
+-- Extend the system_role CHECK constraint with 'branch_device' so an admin
+-- can actually assign the kiosk role in the employee editor (without this the
+-- UPDATE fails the CHECK and surfaces as "Some fields are invalid").
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista','roaster',
+    'accounting','marketing','maintenance','bakery','employee','branch_device'
+  ));
+
 -- =============================================================
 -- DONE.
 --
