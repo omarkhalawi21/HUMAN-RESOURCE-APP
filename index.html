@@ -20922,7 +20922,7 @@ function renderDeviceStaffPicker(branch){
   const tiles = staff.map(e=>{
     const name = `${e.firstName} ${e.lastName||''}`.trim();
     const initials = ((e.firstName||'?')[0]||'?').toUpperCase() + ((e.lastName||'')[0]||'').toUpperCase();
-    return `<button data-staff-name="${escapeHTML(name.toLowerCase())}" onclick="deviceState.staffId='${e.id}'; deviceState.staffName=${JSON.stringify(name)}; deviceState.view='board'; render();"
+    return `<button data-staff-name="${escapeHTML(name.toLowerCase())}" onclick="devicePickStaff('${e.id}')"
       class="flex flex-col items-center gap-2 p-4 bg-white rounded-2xl shadow-card hover:ring-2 hover:ring-brand-400 transition">
       <span class="w-14 h-14 rounded-full flex items-center justify-center text-white font-semibold text-lg" style="background:${escapeHTML(e.avatarColor||'#a87035')}">${escapeHTML(initials)}</span>
       <span class="text-sm font-medium text-slate-800 text-center leading-tight">${escapeHTML(name)}</span>
@@ -20948,6 +20948,16 @@ function renderDeviceStaffPicker(branch){
         </div>
       </main>
     </div>`;
+}
+// Resolve the tapped staff member by id (avoids embedding the name string
+// in an inline onclick — quotes/apostrophes in names would break the
+// attribute). Sets who's on shift and advances to the shift board.
+function devicePickStaff(id){
+  const e = (state.employees||[]).find(x=>x.id===id);
+  deviceState.staffId = id;
+  deviceState.staffName = e ? `${e.firstName} ${e.lastName||''}`.trim() : '';
+  deviceState.view = 'board';
+  render();
 }
 function invFilterStaff(q){
   const needle = String(q||'').toLowerCase().trim();
