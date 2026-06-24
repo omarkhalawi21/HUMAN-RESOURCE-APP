@@ -3901,11 +3901,14 @@ UPDATE public.advances SET kind = 'advance' WHERE kind IS NULL;
 --     catalog (same items / units / low_at thresholds — no duplicate
 --     item lists). One inventory_shifts row per (branch, business_date,
 --     shift in morning|evening). The OPEN step records opening_qty per
---     item; the CLOSE step records closing_qty + received_qty per item,
---     the shift's foodics_total, and flips status to 'closed'. Counts
---     live in inventory_shift_counts (one row per shift+item). Loaded on
---     demand per branch+month (the series grows unbounded — same perf
---     discipline as daily_counts/attendance), never bulk-loaded.
+--     item; the CLOSE step records closing_qty + received_qty + the
+--     Foodics-sold qty (foodics_qty) PER ITEM, and flips status to
+--     'closed'. Counts live in inventory_shift_counts (one row per
+--     shift+item); foodics_qty drives per-item variance (counted-consumed
+--     vs POS-sold). inventory_shifts.foodics_total is kept as the cached
+--     sum of per-item foodics_qty (for the daily Foodics chart/KPI).
+--     Loaded on demand per branch+month (the series grows unbounded —
+--     same perf discipline as daily_counts/attendance), never bulk-loaded.
 --
 --     New role 'branch_device': a SHARED per-branch iPad login that can
 --     ONLY touch this inventory layer. It is added to the write roles
@@ -3943,8 +3946,12 @@ CREATE TABLE IF NOT EXISTS public.inventory_shift_counts (
   opening_qty  numeric(12,2),
   closing_qty  numeric(12,2),
   received_qty numeric(12,2),
+  foodics_qty  numeric(12,2),
   UNIQUE (shift_id, item_id)
 );
+-- Idempotent guard: adds foodics_qty if an earlier version of this block
+-- (without it) was already run.
+ALTER TABLE public.inventory_shift_counts ADD COLUMN IF NOT EXISTS foodics_qty numeric(12,2);
 CREATE INDEX IF NOT EXISTS inventory_shift_counts_shift_idx ON public.inventory_shift_counts(shift_id);
 
 ALTER TABLE public.inventory_shifts       ENABLE ROW LEVEL SECURITY;

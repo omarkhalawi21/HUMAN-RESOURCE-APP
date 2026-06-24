@@ -20390,6 +20390,7 @@ function mapInventoryShiftCountFromDb(r){
     openingQty:  r.opening_qty ==null ? null : Number(r.opening_qty),
     closingQty:  r.closing_qty ==null ? null : Number(r.closing_qty),
     receivedQty: r.received_qty==null ? null : Number(r.received_qty),
+    foodicsQty:  r.foodics_qty ==null ? null : Number(r.foodics_qty),
   };
 }
 
@@ -20522,7 +20523,26 @@ function invBuildDashboard(branch){
   const todayShifts = invShiftsFor(branch, today);
   const foodicsToday = todayShifts.reduce((s,x)=> s + (x.foodicsTotal||0), 0);
   const consumedToday = todayShifts.reduce((s,x)=> s + x.counts.reduce((a,c)=>a+invConsumed(c),0), 0);
-  return { branch, items, days, catMap, lowList, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  // Per-item variance TODAY: counted-consumed (opening+received−closing) vs
+  // Foodics-sold. A gap flags waste / shrinkage / miscount on that item.
+  const varAgg = {};
+  todayShifts.forEach(s=>{
+    s.counts.forEach(c=>{
+      const v = varAgg[c.itemId] || (varAgg[c.itemId] = { consumed:0, foodics:0, hasFoodics:false });
+      v.consumed += invConsumed(c);
+      if (c.foodicsQty!=null){ v.foodics += c.foodicsQty; v.hasFoodics = true; }
+    });
+  });
+  const varianceList = items.map(it=>{
+    const v = varAgg[it.id]; if (!v || (!v.hasFoodics && !v.consumed)) return null;
+    return {
+      item: it,
+      consumed: Math.round(v.consumed*100)/100,
+      foodics:  v.hasFoodics ? Math.round(v.foodics*100)/100 : null,
+      variance: v.hasFoodics ? Math.round((v.consumed - v.foodics)*100)/100 : null,
+    };
+  }).filter(Boolean).sort((a,b)=> Math.abs(b.variance||0) - Math.abs(a.variance||0));
+  return { branch, items, days, catMap, lowList, varianceList, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20580,6 +20600,17 @@ function invBuildDashboardHTML(branch){
       <td class="py-2 text-right">${r.onHand<=0?`<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">OUT</span>`:`<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700">LOW</span>`}</td>
     </tr>`).join('')
     : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">Nothing below threshold — stock looks healthy.</td></tr>`;
+  const varRows = d.varianceList.length ? d.varianceList.slice(0,30).map(r=>{
+    const vCls = r.variance==null ? 'text-slate-400' : (Math.abs(r.variance) < 0.001 ? 'text-emerald-600' : (r.variance>0 ? 'text-rose-600' : 'text-amber-600'));
+    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance}`;
+    return `<tr class="border-t border-slate-100">
+      <td class="py-2 pr-3 text-slate-800">${escapeHTML(r.item.name)}</td>
+      <td class="py-2 pr-3 text-right text-slate-600">${r.consumed} ${escapeHTML(r.item.unit)}</td>
+      <td class="py-2 pr-3 text-right text-slate-600">${r.foodics==null?'—':r.foodics+' '+escapeHTML(r.item.unit)}</td>
+      <td class="py-2 text-right font-semibold ${vCls}">${vTxt}</td>
+    </tr>`;
+  }).join('')
+    : `<tr><td colspan="4" class="py-6 text-center text-slate-400 text-sm">No closed shifts with Foodics numbers today yet.</td></tr>`;
   return `
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
       ${invStatCard("Today's shifts", `${d.openCount}`, `${d.openCount} open · ${[d.morning,d.evening].filter(s=>s&&s.status==='closed').length} closed`)}
@@ -20616,6 +20647,22 @@ function invBuildDashboardHTML(branch){
           <tbody>${lowRows}</tbody>
         </table>
       </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-sm font-semibold text-slate-800">Stock vs Foodics variance · today</div>
+        <span class="text-[11px] text-slate-400">consumed − sold · <span class="text-rose-600 font-medium">+ over</span> / <span class="text-amber-600 font-medium">− under</span></span>
+      </div>
+      <div class="text-xs text-slate-500 mb-2">Gap between what physically left the shelf (opening + received − closing) and what Foodics recorded as sold — a flag for waste, giveaways, or miscounts.</div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
+          <th class="py-1 pr-3 font-semibold">Item</th>
+          <th class="py-1 pr-3 font-semibold text-right">Consumed</th>
+          <th class="py-1 pr-3 font-semibold text-right">Foodics sold</th>
+          <th class="py-1 font-semibold text-right">Variance</th>
+        </tr></thead>
+        <tbody>${varRows}</tbody>
+      </table>
     </div>`;
 }
 
@@ -20692,17 +20739,16 @@ function invRenderEntry(branch){
       const openVal = c && c.openingQty!=null ? c.openingQty : '—';
       return `<div class="flex items-center gap-2 py-2 border-b border-slate-50">
         <div class="flex-1 min-w-0"><div class="text-sm font-medium text-slate-800 truncate">${escapeHTML(it.name)}</div><div class="text-[11px] text-slate-400">opened: ${openVal} ${escapeHTML(it.unit)}</div></div>
-        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input text-right text-base w-20 py-2" placeholder="0"></div>
-        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input text-right text-lg w-24 py-2.5" placeholder="0"></div>
+        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input text-right text-base w-16 py-2" placeholder="0"></div>
+        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-brand-600">Foodics</div><input id="inv-${it.id}-food" type="number" inputmode="decimal" step="any" value="${c&&c.foodicsQty!=null?c.foodicsQty:''}" class="input text-right text-base w-16 py-2" placeholder="0"></div>
+        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input text-right text-lg w-20 py-2.5" placeholder="0"></div>
       </div>`;
     }).join('');
     return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(DC_CATEGORIES[cat]||cat)}</div>${rows}</div>`;
   }).join('');
   const foodicsBox = isClose ? `
-    <div class="bg-brand-50 border border-brand-200 rounded-2xl p-4 mb-4">
-      <label class="text-sm font-semibold text-slate-800">Foodics number (end of shift)</label>
-      <div class="text-xs text-slate-500 mb-2">Enter the Foodics sales/cups total for this shift — used for the variance dashboard.</div>
-      <input id="inv-foodics" type="number" inputmode="decimal" step="any" value="${existing&&existing.foodicsTotal!=null?existing.foodicsTotal:''}" class="input text-lg py-3 w-full max-w-xs" placeholder="0">
+    <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 mb-4 text-xs text-slate-600">
+      For each item enter <span class="font-semibold text-brand-700">Foodics</span> (units sold per the POS), <span class="font-semibold text-slate-700">Received</span> (deliveries this shift) and <span class="font-semibold text-slate-700">Closing</span> (what's left). Consumed vs Foodics drives the per-item variance dashboard.
     </div>` : `
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4 text-xs text-slate-500">
       Recording <span class="font-semibold text-slate-700">opening stock</span> for the ${invShiftLabel(shift).toLowerCase()} shift. Values are pre-filled from the last closing count — adjust where needed.
@@ -20762,17 +20808,22 @@ async function invSaveClose(shiftId, branch, shift){
     if (error){ toast('Could not open shift: ' + error.message, 'error'); return; }
     shiftId = shiftRow.id;
   }
-  const { error } = await sb.from('inventory_shifts').update({
-    status:'closed', closed_by:actor.id, closed_by_name:actor.name, closed_at:nowISO,
-    foodics_total: invNum('inv-foodics'), updated_at:nowISO,
-  }).eq('id', shiftId);
-  if (error){ toast('Could not close shift: ' + error.message, 'error'); return; }
+  // Gather per-item closing / received / Foodics-sold first, so the shift's
+  // foodics_total can be cached as the sum of per-item Foodics.
+  let foodicsSum = null;
   const rows = invActiveItems().map(it=>{
     const closing = invNum('inv-'+it.id+'-close');
     const recv    = invNum('inv-'+it.id+'-recv');
-    if (closing==null && recv==null) return null;
-    return { shift_id:shiftId, item_id:it.id, closing_qty:closing, received_qty:recv };
+    const food    = invNum('inv-'+it.id+'-food');
+    if (food!=null) foodicsSum = (foodicsSum||0) + food;
+    if (closing==null && recv==null && food==null) return null;
+    return { shift_id:shiftId, item_id:it.id, closing_qty:closing, received_qty:recv, foodics_qty:food };
   }).filter(Boolean);
+  const { error } = await sb.from('inventory_shifts').update({
+    status:'closed', closed_by:actor.id, closed_by_name:actor.name, closed_at:nowISO,
+    foodics_total: foodicsSum, updated_at:nowISO,
+  }).eq('id', shiftId);
+  if (error){ toast('Could not close shift: ' + error.message, 'error'); return; }
   if (rows.length){
     const { error:e2 } = await sb.from('inventory_shift_counts').upsert(rows, { onConflict:'shift_id,item_id' });
     if (e2){ toast('Closed shift, but counts failed: ' + e2.message, 'error'); }
