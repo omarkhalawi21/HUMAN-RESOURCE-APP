@@ -3896,6 +3896,108 @@ ALTER TABLE public.advances
 UPDATE public.advances SET kind = 'advance' WHERE kind IS NULL;
 
 -- =============================================================
+-- 69. INVENTORY SHIFTS — two-touchpoint per-shift stock (open + close)
+--     A branch-floor inventory layer that REUSES the daily_count_items
+--     catalog (same items / units / low_at thresholds — no duplicate
+--     item lists). One inventory_shifts row per (branch, business_date,
+--     shift in morning|evening). The OPEN step records opening_qty per
+--     item; the CLOSE step records closing_qty + received_qty per item,
+--     the shift's foodics_total, and flips status to 'closed'. Counts
+--     live in inventory_shift_counts (one row per shift+item). Loaded on
+--     demand per branch+month (the series grows unbounded — same perf
+--     discipline as daily_counts/attendance), never bulk-loaded.
+--
+--     New role 'branch_device': a SHARED per-branch iPad login that can
+--     ONLY touch this inventory layer. It is added to the write roles
+--     here and to daily_count_items SELECT (so the kiosk can read the
+--     item catalogue). Floor (barista/head_barista) + operations + the
+--     device write; destructive DELETE stays admin/head_barista.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_shifts (
+  id              uuid primary key default gen_random_uuid(),
+  branch          text not null,
+  business_date   date not null,
+  shift           text not null default 'morning',
+  status          text not null default 'open',
+  opened_by       uuid references public.employees(id),
+  opened_by_name  text,
+  opened_at       timestamptz,
+  closed_by       uuid references public.employees(id),
+  closed_by_name  text,
+  closed_at       timestamptz,
+  foodics_total   numeric(12,2),
+  note            text,
+  recorded_by     uuid default auth.uid(),
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  CONSTRAINT inventory_shifts_shift_chk  CHECK (shift  IN ('morning','evening')),
+  CONSTRAINT inventory_shifts_status_chk CHECK (status IN ('open','closed')),
+  UNIQUE (branch, business_date, shift)
+);
+CREATE INDEX IF NOT EXISTS inventory_shifts_branch_date_idx ON public.inventory_shifts(branch, business_date);
+
+CREATE TABLE IF NOT EXISTS public.inventory_shift_counts (
+  id           uuid primary key default gen_random_uuid(),
+  shift_id     uuid not null references public.inventory_shifts(id) ON DELETE CASCADE,
+  item_id      uuid not null references public.daily_count_items(id) ON DELETE CASCADE,
+  opening_qty  numeric(12,2),
+  closing_qty  numeric(12,2),
+  received_qty numeric(12,2),
+  UNIQUE (shift_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS inventory_shift_counts_shift_idx ON public.inventory_shift_counts(shift_id);
+
+ALTER TABLE public.inventory_shifts       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory_shift_counts ENABLE ROW LEVEL SECURITY;
+
+-- Idempotent: drop any existing policies on both tables before recreating.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename IN ('inventory_shifts','inventory_shift_counts')
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "ish_select_floor_ops_device"
+  ON public.inventory_shifts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "ish_insert_floor_ops_device"
+  ON public.inventory_shifts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "ish_update_floor_ops_device"
+  ON public.inventory_shifts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "ish_delete_admin_or_head_barista"
+  ON public.inventory_shifts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+CREATE POLICY "isc_select_floor_ops_device"
+  ON public.inventory_shift_counts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "isc_insert_floor_ops_device"
+  ON public.inventory_shift_counts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "isc_update_floor_ops_device"
+  ON public.inventory_shift_counts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "isc_delete_admin_or_head_barista"
+  ON public.inventory_shift_counts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+-- Let the shared branch-device login read the item catalogue (the kiosk
+-- needs item names/units/categories/low_at). Re-create the SELECT policy
+-- idempotently with 'branch_device' added — no other change.
+DROP POLICY IF EXISTS "dci_select_floor_or_ops" ON public.daily_count_items;
+CREATE POLICY "dci_select_floor_or_ops"
+  ON public.daily_count_items FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations','branch_device']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

@@ -22,6 +22,12 @@
 <!-- Self-hosted Tailwind, pre-built via `npm run build`. Source: tailwind.input.css + tailwind.config.js. -->
 <link rel="stylesheet" href="tailwind.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
+<!-- Chart.js for the Inventory hub dashboard (consumption / Foodics /
+     category charts). UMD build from jsdelivr (already a CSP script-src).
+     Renders to <canvas> only — no extra network/CSP entries needed. The
+     app degrades gracefully if it fails: initInvCharts() guards on
+     `typeof Chart`. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap" rel="stylesheet">
@@ -763,6 +769,7 @@ function emptyState() {
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
+    inventoryShiftsCache: {}, // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, businessDate, shift, status, openedByName, closedByName, foodicsTotal, counts:[{itemId, openingQty, closingQty, receivedQty}] }] } — reuses the daily_count_items catalog
     bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
     bakeryTransfersCache: {}, // on-demand per YYYY-MM (all branches): { "2026-05": [{ id, productId, branch, transferDate, qty }] }
     bakeryIngredients: [],  // catalog: [{ id, name, sortOrder, active }]
@@ -1057,6 +1064,13 @@ const ROLES = {
   maintenance:  { label: 'Maintenance' },
   bakery:       { label: 'Bakery' },
   employee:     { label: 'Employee' },
+  // Shared per-branch iPad login for the Inventory hub. NOT a person —
+  // it's a kiosk account locked to one branch that can ONLY reach the
+  // shift-stock + dashboard screens (no HR/payroll/employee data). On
+  // entry, staff tap their name from the roster so every count is still
+  // attributed to a real employee. See render()'s branch_device gate,
+  // loadBranchDeviceData(), and renderDeviceApp().
+  branch_device:{ label: 'Branch Device (iPad)' },
 };
 function roleLabel(key) { return ROLES[key]?.label || (key||'Employee'); }
 
@@ -1742,9 +1756,63 @@ function extrasToDb(empId, x) {
 const ATTENDANCE_BULK_LOAD_DAYS = 540;
 
 /* -------------------- LOAD ALL FROM SUPABASE -------------------- */
+// Slim bootstrap for a shared branch-device (iPad) login. Loads ONLY
+// what the Inventory hub needs — company settings, branches, the staff
+// roster (names only, no salary/iqama columns), and the daily_count_items
+// catalog. Shift data itself is loaded on demand per branch+month like
+// the other count series. Deliberately omits payroll, attendance, leave,
+// receipts, etc. so none of it is ever in memory on a counter tablet.
+async function loadBranchDeviceData() {
+  const [companyR, branchesR, employeesR, extrasR, dciR] = await Promise.all([
+    sb.from('companies').select('*').limit(1).maybeSingle(),
+    sb.from('branches').select('*').order('name'),
+    // Names-only projection — no salary, leave balances, iqama, or consent
+    // columns are fetched (the "who's on shift?" picker needs just names).
+    sb.from('employees')
+      .select('id, user_id, first_name, last_name, email, system_role, status, job_title, department, avatar_color')
+      .order('first_name'),
+    // RLS lets this device read only its OWN extras row, which is all
+    // dcDefaultBranch() needs to know which branch this iPad is locked to.
+    sb.from('employee_extras').select('employee_id, branch'),
+    sb.from('daily_count_items').select('*').order('sort_order'),
+  ]);
+  if (companyR.data) {
+    const c = mapCompanyFromDb(companyR.data);
+    state.companyId = c._id;
+    state.settings = {
+      ...state.settings,
+      companyName: c.companyName,
+      workStart: c.workStart, workEnd: c.workEnd,
+      currency: c.currency, lang: c.lang || state.settings.lang,
+    };
+  }
+  state.branches  = (branchesR.data  || []).map(mapBranchFromDb);
+  state.employees = (employeesR.data || []).map(mapEmployeeFromDb);
+  state.users = state.employees.filter(e => e.user_id).map(e => ({
+    id: 'u-'+e.id, username: e.email, role: e.systemRole || 'employee', employeeId: e.id, user_id: e.user_id
+  }));
+  state.empExtras = {};
+  (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
+  state.dailyCountItems = (dciR.data || []).map(mapDailyCountItemFromDb);
+}
+
 async function loadAll() {
   isLoadingData = true;
   try {
+    // Role probe FIRST. A shared branch-device iPad login must never
+    // bulk-load salaries / payroll / HR data into memory (it sits on a
+    // café counter and could be inspected). One tiny query resolves the
+    // role; a branch_device gets a slim, sensitive-data-free loader and
+    // we return before the big HR Promise.all below.
+    const uid = state.session?.userId;
+    if (uid) {
+      const { data: meRow } = await sb.from('employees')
+        .select('system_role').eq('user_id', uid).maybeSingle();
+      if (meRow && meRow.system_role === 'branch_device') {
+        await loadBranchDeviceData();
+        return; // finally{} still resets isLoadingData
+      }
+    }
     const attendanceCutoff = new Date(Date.now() - ATTENDANCE_BULK_LOAD_DAYS*86400000).toISOString().slice(0,10);
     // Cross-branch alerts card: short week lookbacks (latest per
     // item/branch is derived in JS). Bounded — weeks × 3 branches ×
@@ -2451,7 +2519,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -2699,6 +2767,8 @@ async function logout() {
   bakeryTransfersState = { date:'', view:'entry', draft:null };
   bakeryStockState     = { date:'', view:'entry', draft:null };
   bakeryPurchasesState = { ym:'', draft:null };
+  inventoryHubState   = { branch:'', view:'dashboard', shift:'morning', draft:null };
+  deviceState         = { staffId:'', staffName:'', view:'today', shift:'morning', draft:null, search:'' };
   // Sec #7 — drop any unresolved partial-failure bookkeeping. The DB
   // state survives logout, so the next admin login can still inspect
   // advances/deductions directly to confirm what landed.
@@ -2765,6 +2835,7 @@ function renderShell(routeContent) {
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
+    { key:'inventory_hub',icon:'report',    label:'Inventory hub',   show:hasRole('admin','operations','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'daily_count',  icon:'box',       label:'Daily count',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'weekly_count', icon:'box',       label:'Weekly count',    show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'expiry_check', icon:'calendar',  label:'Expiry checklist',show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
@@ -20281,6 +20352,551 @@ async function submitConsent() {
   render();
 }
 
+/* ==================================================================
+   INVENTORY HUB — two-touchpoint shift stock (open + close), Foodics
+   capture, a chart-rich dashboard, and a locked-down branch-device
+   (iPad) kiosk. REUSES the daily_count_items catalog (state.dailyCountItems)
+   so item names / units / low-stock thresholds live in ONE place.
+
+   Two surfaces, one engine:
+     • HQ  (admin/operations/head_barista/barista) → nav route 'inventory_hub'
+            via renderInventoryHub() inside the normal app shell.
+     • iPad (branch_device role) → full-screen kiosk via renderDeviceApp(),
+            gated in render() before the sidebar ever renders.
+   Both call the same invRenderBody()/board/entry/dashboard helpers.
+   ================================================================== */
+let inventoryHubState = { branch:'', view:'dashboard', shift:'morning', entryMode:'open', draft:null };
+let deviceState       = { staffId:'', staffName:'', view:'board', shift:'morning', entryMode:'open', draft:null, search:'' };
+
+const INV_SHIFTS = ['morning','evening'];
+function invShiftLabel(s){ return s==='evening' ? 'Evening' : 'Morning'; }
+const INV_MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const INV_CHART_COLORS = ['#a87035','#c8986a','#7a4f25','#e0c3a0','#5c3a1a','#b5835a','#d8b892','#8a5a2b','#4a2f15'];
+
+function mapInventoryShiftFromDb(r){
+  return {
+    id:r.id, branch:r.branch||'', businessDate:r.business_date||'',
+    shift:r.shift||'morning', status:r.status||'open',
+    openedBy:r.opened_by, openedByName:r.opened_by_name||'', openedAt:r.opened_at,
+    closedBy:r.closed_by, closedByName:r.closed_by_name||'', closedAt:r.closed_at,
+    foodicsTotal: r.foodics_total==null ? null : Number(r.foodics_total),
+    note:r.note||'',
+    counts:[], // attached after the inventory_shift_counts query
+  };
+}
+function mapInventoryShiftCountFromDb(r){
+  return {
+    id:r.id, shiftId:r.shift_id, itemId:r.item_id,
+    openingQty:  r.opening_qty ==null ? null : Number(r.opening_qty),
+    closingQty:  r.closing_qty ==null ? null : Number(r.closing_qty),
+    receivedQty: r.received_qty==null ? null : Number(r.received_qty),
+  };
+}
+
+function invCacheKey(branch, ym){ return branch + '|' + ym; }
+const _invLoading = new Set();
+// On-demand month load — the shift series grows unbounded, so it is never
+// bulk-loaded. Fetch one branch+month of shifts, then their counts in one
+// follow-up query, and attach counts onto each shift row.
+async function loadInventoryShifts(branch, ym){
+  const key = invCacheKey(branch, ym);
+  if (state.inventoryShiftsCache[key] || _invLoading.has(key)) return;
+  _invLoading.add(key);
+  const [y,m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data:shifts, error } = await sb.from('inventory_shifts').select('*')
+    .eq('branch', branch).gte('business_date', from).lte('business_date', to)
+    .order('business_date');
+  if (error){
+    toast('Failed to load shifts: ' + error.message, 'error');
+    state.inventoryShiftsCache[key] = []; // cache empty to avoid a refetch loop
+    _invLoading.delete(key); render(); return;
+  }
+  const rows = (shifts || []).map(mapInventoryShiftFromDb);
+  if (rows.length){
+    const ids = rows.map(s=>s.id);
+    const { data:counts } = await sb.from('inventory_shift_counts').select('*').in('shift_id', ids);
+    const byShift = {};
+    (counts || []).map(mapInventoryShiftCountFromDb).forEach(c=>{ (byShift[c.shiftId] = byShift[c.shiftId] || []).push(c); });
+    rows.forEach(s=>{ s.counts = byShift[s.id] || []; });
+  }
+  state.inventoryShiftsCache[key] = rows;
+  _invLoading.delete(key);
+  render();
+}
+function invInvalidate(branch, ym){ const k = invCacheKey(branch, ym); delete state.inventoryShiftsCache[k]; _invLoading.delete(k); }
+
+/* ---- context helpers (device vs HQ) ---- */
+function invIsDevice(){ return currentRole() === 'branch_device'; }
+function invUIState(){ return invIsDevice() ? deviceState : inventoryHubState; }
+function invCanPickBranch(){ return !invIsDevice() && hasRole('admin','operations'); }
+function invBranch(){
+  if (invIsDevice() || hasRole('head_barista','barista')) return dcDefaultBranch();
+  return inventoryHubState.branch || dcDefaultBranch();
+}
+// Who gets attributed for a count: the tapped-in staff member on a shared
+// iPad, otherwise the signed-in employee.
+function invActor(){
+  if (invIsDevice()) return { id: deviceState.staffId || null, name: deviceState.staffName || 'Branch device' };
+  const e = currentEmployee();
+  return { id: e?.id || null, name: e ? `${e.firstName} ${e.lastName||''}`.trim() : 'Staff' };
+}
+function invActiveItems(){
+  return (state.dailyCountItems || []).filter(i=>i.active).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+}
+// Mirror dcFlag's default low threshold (2 for pieces, 1 for weighed goods).
+function invThreshold(it){ return it.lowAt != null ? it.lowAt : (it.unit==='pcs' ? 2 : 1); }
+function invConsumed(c){ return c && c.closingQty!=null ? Math.max(0, (c.openingQty||0)+(c.receivedQty||0)-(c.closingQty||0)) : 0; }
+function invNum(id){ const el=document.getElementById(id); if(!el) return null; const v=String(el.value).trim(); if(v==='') return null; const n=Number(v); return isFinite(n) ? n : null; }
+function invDayLabel(iso){ const d=new Date(iso); return INV_MONTHS_SHORT[d.getUTCMonth()] + ' ' + d.getUTCDate(); }
+
+function invShiftsFor(branch, dateISO){
+  const key = invCacheKey(branch, dateISO.slice(0,7));
+  return (state.inventoryShiftsCache[key] || []).filter(s=>s.businessDate===dateISO);
+}
+function invFindShift(branch, dateISO, shift){ return invShiftsFor(branch, dateISO).find(s=>s.shift===shift) || null; }
+// Latest known closing qty for an item at a branch, across all cached
+// months — used to seed the next opening and to compute "on hand" for the
+// low-stock list. Returns { qty, date, shift } or null.
+function invLatestClosing(branch, itemId){
+  let best=null, bestStamp='';
+  Object.keys(state.inventoryShiftsCache).forEach(k=>{
+    if (k.indexOf(branch+'|') !== 0) return;
+    (state.inventoryShiftsCache[k] || []).forEach(s=>{
+      if (s.status!=='closed') return;
+      const c = s.counts.find(x=>x.itemId===itemId);
+      if (!c || c.closingQty==null) return;
+      const stamp = s.businessDate + (s.shift==='evening' ? '-2' : '-1');
+      if (!best || stamp > bestStamp){ best = { qty:c.closingQty, date:s.businessDate, shift:s.shift }; bestStamp = stamp; }
+    });
+  });
+  return best;
+}
+
+function invEnsureLoaded(branch){
+  const ym = todayISO().slice(0,7), pm = prevYm(ym);
+  const need = [ym, pm].filter(m => !state.inventoryShiftsCache[invCacheKey(branch, m)]);
+  need.forEach(m => loadInventoryShifts(branch, m));
+  return need.length > 0;
+}
+
+/* ---- dashboard data + Chart.js ---- */
+let _invChartData = null;
+const _invCharts = {};
+function invBuildDashboard(branch){
+  const items = invActiveItems();
+  const today = todayISO();
+  const days = [];
+  for (let i=13;i>=0;i--){ const d = wcAddDays(today, -i); days.push({ date:d, label:invDayLabel(d), consumed:0, foodics:0 }); }
+  const dayMap = {}; days.forEach(d=>dayMap[d.date]=d);
+  // Walk the cached months that cover the 14-day window.
+  const ymNow = today.slice(0,7);
+  [ymNow, prevYm(ymNow)].forEach(ym=>{
+    (state.inventoryShiftsCache[invCacheKey(branch, ym)] || []).forEach(s=>{
+      const dy = dayMap[s.businessDate]; if (!dy) return;
+      if (s.foodicsTotal!=null) dy.foodics += s.foodicsTotal;
+      s.counts.forEach(c=>{ dy.consumed += invConsumed(c); });
+    });
+  });
+  // Consumption by category (this month).
+  const catMap = {};
+  (state.inventoryShiftsCache[invCacheKey(branch, ymNow)] || []).forEach(s=>{
+    s.counts.forEach(c=>{
+      const used = invConsumed(c); if (!used) return;
+      const it = items.find(i=>i.id===c.itemId); if (!it) return;
+      catMap[it.category] = (catMap[it.category]||0) + used;
+    });
+  });
+  // Low stock / needs ordering — based on latest closing vs threshold.
+  const lowList = [];
+  items.forEach(it=>{
+    const lc = invLatestClosing(branch, it.id);
+    if (!lc) return;
+    const thr = invThreshold(it);
+    if (lc.qty <= thr) lowList.push({ item:it, onHand:lc.qty, thr, date:lc.date });
+  });
+  lowList.sort((a,b)=>(a.onHand-a.thr)-(b.onHand-b.thr));
+  const morning = invFindShift(branch, today, 'morning');
+  const evening = invFindShift(branch, today, 'evening');
+  const todayShifts = invShiftsFor(branch, today);
+  const foodicsToday = todayShifts.reduce((s,x)=> s + (x.foodicsTotal||0), 0);
+  const consumedToday = todayShifts.reduce((s,x)=> s + x.counts.reduce((a,c)=>a+invConsumed(c),0), 0);
+  return { branch, items, days, catMap, lowList, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+}
+function initInvCharts(){
+  if (typeof Chart === 'undefined' || !_invChartData) return;
+  Object.keys(_invCharts).forEach(k=>{ try{ _invCharts[k].destroy(); }catch(_){} delete _invCharts[k]; });
+  const d = _invChartData;
+  const ctxC = document.getElementById('invConsumptionChart');
+  if (ctxC){
+    _invCharts.cons = new Chart(ctxC, {
+      type:'line',
+      data:{ labels:d.days.map(x=>x.label), datasets:[{ label:'Units consumed', data:d.days.map(x=>Math.round(x.consumed*100)/100), borderColor:'#a87035', backgroundColor:'rgba(168,112,53,0.12)', fill:true, tension:0.35, pointRadius:2, borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ font:{ size:10 } } }, x:{ ticks:{ font:{ size:10 }, maxRotation:0, autoSkip:true } } } }
+    });
+  }
+  const ctxF = document.getElementById('invFoodicsChart');
+  if (ctxF){
+    _invCharts.food = new Chart(ctxF, {
+      type:'bar',
+      data:{ labels:d.days.map(x=>x.label), datasets:[{ label:'Foodics', data:d.days.map(x=>Math.round(x.foodics*100)/100), backgroundColor:'#c8986a', borderRadius:4 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ font:{ size:10 } } }, x:{ ticks:{ font:{ size:10 }, maxRotation:0, autoSkip:true } } } }
+    });
+  }
+  const ctxK = document.getElementById('invCategoryChart');
+  if (ctxK){
+    const cats = Object.keys(d.catMap).filter(k=>d.catMap[k]>0);
+    _invCharts.cat = new Chart(ctxK, {
+      type:'doughnut',
+      data:{ labels:cats.map(c=>DC_CATEGORIES[c]||c), datasets:[{ data:cats.map(c=>Math.round(d.catMap[c]*100)/100), backgroundColor:INV_CHART_COLORS, borderWidth:0 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right', labels:{ font:{ size:10 }, boxWidth:12 } } }, cutout:'58%' }
+    });
+  }
+}
+
+/* ---- dashboard view (HTML) ---- */
+function invStatCard(label, value, sub){
+  return `<div class="bg-white rounded-2xl shadow-card p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(label)}</div>
+    <div class="font-display text-2xl font-semibold text-slate-900 mt-1">${value}</div>
+    ${sub ? `<div class="text-xs text-slate-500 mt-1">${sub}</div>` : ''}
+  </div>`;
+}
+function invShiftPill(shift, s){
+  if (!s) return `<span class="text-xs text-slate-400">${invShiftLabel(shift)}: not started</span>`;
+  const cls = s.status==='closed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700';
+  return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${cls}">${invShiftLabel(shift)}: ${s.status==='closed'?'closed':'open'}</span>`;
+}
+function invBuildDashboardHTML(branch){
+  const d = invBuildDashboard(branch);
+  _invChartData = d;
+  const lowRows = d.lowList.length ? d.lowList.slice(0,20).map(r=>`
+    <tr class="border-t border-slate-100">
+      <td class="py-2 pr-3 text-slate-800">${escapeHTML(r.item.name)}</td>
+      <td class="py-2 pr-3 text-slate-500">${escapeHTML(DC_CATEGORIES[r.item.category]||r.item.category)}</td>
+      <td class="py-2 pr-3 text-right font-semibold ${r.onHand<=0?'text-rose-600':'text-amber-600'}">${r.onHand} ${escapeHTML(r.item.unit)}</td>
+      <td class="py-2 pr-3 text-right text-slate-400">${r.thr} ${escapeHTML(r.item.unit)}</td>
+      <td class="py-2 text-right">${r.onHand<=0?`<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">OUT</span>`:`<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700">LOW</span>`}</td>
+    </tr>`).join('')
+    : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">Nothing below threshold — stock looks healthy.</td></tr>`;
+  return `
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      ${invStatCard("Today's shifts", `${d.openCount}`, `${d.openCount} open · ${[d.morning,d.evening].filter(s=>s&&s.status==='closed').length} closed`)}
+      ${invStatCard('Needs ordering', `${d.lowList.length}`, `low or out of stock`)}
+      ${invStatCard('Foodics today', `${d.foodicsToday}`, `across today's shifts`)}
+      ${invStatCard('Consumed today', `${Math.round(d.consumedToday*100)/100}`, `units used today`)}
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-sm font-semibold text-slate-800 mb-2">Consumption · last 14 days</div>
+        <div class="relative h-56"><canvas id="invConsumptionChart"></canvas></div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-sm font-semibold text-slate-800 mb-2">Foodics · last 14 days</div>
+        <div class="relative h-56"><canvas id="invFoodicsChart"></canvas></div>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="bg-white rounded-2xl shadow-card p-4">
+        <div class="text-sm font-semibold text-slate-800 mb-2">Consumption by category · this month</div>
+        <div class="relative h-64"><canvas id="invCategoryChart"></canvas></div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-4 lg:col-span-2 overflow-x-auto">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold text-slate-800">Needs ordering / low stock</div>
+          <a href="#/weekly_count" class="text-xs text-brand-700 font-semibold hover:underline">Weekly count →</a>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
+            <th class="py-1 pr-3 font-semibold">Item</th><th class="py-1 pr-3 font-semibold">Category</th>
+            <th class="py-1 pr-3 font-semibold text-right">On hand</th><th class="py-1 pr-3 font-semibold text-right">Reorder at</th>
+            <th class="py-1 font-semibold text-right">Status</th>
+          </tr></thead>
+          <tbody>${lowRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* ---- shift board (today's morning + evening) ---- */
+function invShiftCardHTML(branch, shift){
+  const today = todayISO();
+  const s = invFindShift(branch, today, shift);
+  let body, actions;
+  if (!s){
+    body = `<div class="text-sm text-slate-500">Not started yet.</div>`;
+    actions = `<button onclick="invGoEntry('${shift}','open')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Start ${invShiftLabel(shift).toLowerCase()} · opening stock</button>`;
+  } else if (s.status==='open'){
+    const consumed = s.counts.reduce((a,c)=>a+invConsumed(c),0);
+    body = `<div class="text-sm text-slate-600">Opened by <span class="font-medium text-slate-800">${escapeHTML(s.openedByName||'—')}</span></div>
+            <div class="text-xs text-slate-400 mt-0.5">${s.counts.filter(c=>c.openingQty!=null).length} items have an opening count</div>`;
+    actions = `<button onclick="invGoEntry('${shift}','close')" class="btn btn-primary btn-sm">Close shift · closing + Foodics</button>
+               <button onclick="invGoEntry('${shift}','open')" class="btn btn-ghost btn-sm">Edit opening</button>`;
+  } else {
+    const consumed = Math.round(s.counts.reduce((a,c)=>a+invConsumed(c),0)*100)/100;
+    body = `<div class="text-sm text-slate-600">Closed by <span class="font-medium text-slate-800">${escapeHTML(s.closedByName||'—')}</span></div>
+            <div class="flex gap-4 mt-1 text-xs"><span class="text-slate-500">Foodics <span class="font-semibold text-slate-800">${s.foodicsTotal==null?'—':s.foodicsTotal}</span></span><span class="text-slate-500">Consumed <span class="font-semibold text-slate-800">${consumed}</span></span></div>`;
+    actions = `<button onclick="invGoEntry('${shift}','close')" class="btn btn-ghost btn-sm">View / edit closing</button>`;
+  }
+  return `<div class="bg-white rounded-2xl shadow-card p-5">
+    <div class="flex items-center justify-between mb-2">
+      <div class="font-display text-lg font-semibold text-slate-900">${invShiftLabel(shift)} shift</div>
+      ${invShiftPill(shift, s)}
+    </div>
+    ${body}
+    <div class="flex flex-wrap gap-2 mt-4">${actions}</div>
+  </div>`;
+}
+function invRenderBoard(branch){
+  const today = todayISO();
+  const d = invBuildDashboard(branch);
+  const lowAlert = d.lowList.length ? `
+    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+      <div class="flex items-center gap-2 text-amber-800 font-semibold text-sm">${icon('warning','w-4 h-4')} ${d.lowList.length} item${d.lowList.length===1?'':'s'} need ordering</div>
+      <div class="text-xs text-amber-700 mt-1">${d.lowList.slice(0,8).map(r=>escapeHTML(r.item.name)+' ('+r.onHand+')').join(' · ')}${d.lowList.length>8?' …':''}</div>
+    </div>` : '';
+  return `
+    <div class="mb-4 text-sm text-slate-500">${escapeHTML(invDayLabel(today))} · ${escapeHTML(branch)}</div>
+    ${lowAlert}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      ${invShiftCardHTML(branch, 'morning')}
+      ${invShiftCardHTML(branch, 'evening')}
+    </div>`;
+}
+
+/* ---- shift entry form (open = opening stock; close = closing + received + Foodics) ---- */
+function invGoEntry(shift, mode){ const s=invUIState(); s.shift=shift; s.entryMode=mode; s.view='entry'; render(); }
+function invGoBack(){ const s=invUIState(); s.view='board'; render(); }
+function invRenderEntry(branch){
+  const s = invUIState();
+  const today = todayISO();
+  const shift = s.shift, mode = s.entryMode || 'open';
+  const items = invActiveItems();
+  const existing = invFindShift(branch, today, shift);
+  const countByItem = {};
+  if (existing) existing.counts.forEach(c=>{ countByItem[c.itemId] = c; });
+  const isClose = mode === 'close';
+  const groups = DC_CAT_ORDER.map(cat=>{
+    const its = items.filter(i=>i.category===cat);
+    if (!its.length) return '';
+    const rows = its.map(it=>{
+      const c = countByItem[it.id];
+      const seedOpen = c && c.openingQty!=null ? c.openingQty : (invLatestClosing(branch, it.id)?.qty ?? '');
+      if (!isClose){
+        return `<div class="flex items-center gap-3 py-2 border-b border-slate-50">
+          <div class="flex-1 min-w-0"><div class="text-sm font-medium text-slate-800 truncate">${escapeHTML(it.name)}</div><div class="text-[11px] text-slate-400">${escapeHTML(it.unit)}</div></div>
+          <input id="inv-${it.id}-open" type="number" inputmode="decimal" step="any" value="${seedOpen}" class="input text-right text-lg w-28 py-2.5" placeholder="0">
+        </div>`;
+      }
+      const openVal = c && c.openingQty!=null ? c.openingQty : '—';
+      return `<div class="flex items-center gap-2 py-2 border-b border-slate-50">
+        <div class="flex-1 min-w-0"><div class="text-sm font-medium text-slate-800 truncate">${escapeHTML(it.name)}</div><div class="text-[11px] text-slate-400">opened: ${openVal} ${escapeHTML(it.unit)}</div></div>
+        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input text-right text-base w-20 py-2" placeholder="0"></div>
+        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input text-right text-lg w-24 py-2.5" placeholder="0"></div>
+      </div>`;
+    }).join('');
+    return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(DC_CATEGORIES[cat]||cat)}</div>${rows}</div>`;
+  }).join('');
+  const foodicsBox = isClose ? `
+    <div class="bg-brand-50 border border-brand-200 rounded-2xl p-4 mb-4">
+      <label class="text-sm font-semibold text-slate-800">Foodics number (end of shift)</label>
+      <div class="text-xs text-slate-500 mb-2">Enter the Foodics sales/cups total for this shift — used for the variance dashboard.</div>
+      <input id="inv-foodics" type="number" inputmode="decimal" step="any" value="${existing&&existing.foodicsTotal!=null?existing.foodicsTotal:''}" class="input text-lg py-3 w-full max-w-xs" placeholder="0">
+    </div>` : `
+    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4 text-xs text-slate-500">
+      Recording <span class="font-semibold text-slate-700">opening stock</span> for the ${invShiftLabel(shift).toLowerCase()} shift. Values are pre-filled from the last closing count — adjust where needed.
+    </div>`;
+  const saveCall = isClose
+    ? `invSaveClose('${existing?existing.id:''}','${branch}','${shift}')`
+    : `invSaveOpen('${branch}','${shift}')`;
+  const actor = invActor();
+  return `
+    <div class="max-w-2xl mx-auto">
+      <button onclick="invGoBack()" class="text-sm text-slate-500 hover:text-slate-800 mb-3 inline-flex items-center gap-1">← Back to shifts</button>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="font-display text-xl font-semibold text-slate-900">${isClose?'Close':'Open'} · ${invShiftLabel(shift)} shift</div>
+            <div class="text-xs text-slate-500">${escapeHTML(branch)} · ${escapeHTML(invDayLabel(today))} · ${escapeHTML(actor.name)}</div>
+          </div>
+        </div>
+        ${foodicsBox}
+        ${groups}
+        <div class="flex gap-2 mt-5 sticky bottom-0 bg-white pt-3">
+          <button onclick="${saveCall}" class="btn btn-primary flex-1 py-3 text-base">${isClose?'Save & close shift':'Save opening stock'}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function invSaveOpen(branch, shift){
+  const today = todayISO();
+  const actor = invActor();
+  const nowISO = new Date().toISOString();
+  const { data:shiftRow, error } = await sb.from('inventory_shifts').upsert({
+    branch, business_date:today, shift, status:'open',
+    opened_by: actor.id, opened_by_name: actor.name, opened_at: nowISO, updated_at: nowISO,
+  }, { onConflict:'branch,business_date,shift' }).select().single();
+  if (error){ toast('Could not start shift: ' + error.message, 'error'); return; }
+  const rows = invActiveItems().map(it=>({ shift_id:shiftRow.id, item_id:it.id, opening_qty: invNum('inv-'+it.id+'-open') })).filter(r=>r.opening_qty!=null);
+  if (rows.length){
+    const { error:e2 } = await sb.from('inventory_shift_counts').upsert(rows, { onConflict:'shift_id,item_id' });
+    if (e2){ toast('Saved shift, but counts failed: ' + e2.message, 'error'); }
+  }
+  toast(`${invShiftLabel(shift)} shift opened`, 'success');
+  const s = invUIState(); s.view = 'board';
+  invInvalidate(branch, today.slice(0,7));
+  await loadInventoryShifts(branch, today.slice(0,7));
+}
+async function invSaveClose(shiftId, branch, shift){
+  const today = todayISO();
+  const actor = invActor();
+  const nowISO = new Date().toISOString();
+  // If somehow there's no open shift (e.g. closing straight away), create it.
+  if (!shiftId){
+    const { data:shiftRow, error } = await sb.from('inventory_shifts').upsert({
+      branch, business_date:today, shift, status:'open',
+      opened_by: actor.id, opened_by_name: actor.name, opened_at: nowISO, updated_at: nowISO,
+    }, { onConflict:'branch,business_date,shift' }).select().single();
+    if (error){ toast('Could not open shift: ' + error.message, 'error'); return; }
+    shiftId = shiftRow.id;
+  }
+  const { error } = await sb.from('inventory_shifts').update({
+    status:'closed', closed_by:actor.id, closed_by_name:actor.name, closed_at:nowISO,
+    foodics_total: invNum('inv-foodics'), updated_at:nowISO,
+  }).eq('id', shiftId);
+  if (error){ toast('Could not close shift: ' + error.message, 'error'); return; }
+  const rows = invActiveItems().map(it=>{
+    const closing = invNum('inv-'+it.id+'-close');
+    const recv    = invNum('inv-'+it.id+'-recv');
+    if (closing==null && recv==null) return null;
+    return { shift_id:shiftId, item_id:it.id, closing_qty:closing, received_qty:recv };
+  }).filter(Boolean);
+  if (rows.length){
+    const { error:e2 } = await sb.from('inventory_shift_counts').upsert(rows, { onConflict:'shift_id,item_id' });
+    if (e2){ toast('Closed shift, but counts failed: ' + e2.message, 'error'); }
+  }
+  toast(`${invShiftLabel(shift)} shift closed`, 'success');
+  const s = invUIState(); s.view = 'board';
+  invInvalidate(branch, today.slice(0,7));
+  await loadInventoryShifts(branch, today.slice(0,7));
+}
+
+/* ---- the shared body (board / dashboard / entry) ---- */
+function invRenderBody(branch){
+  const s = invUIState();
+  if (s.view === 'entry')     return invRenderEntry(branch);
+  if (s.view === 'dashboard') return invBuildDashboardHTML(branch);
+  return invRenderBoard(branch);
+}
+function invTabs(active){
+  const tab = (key,label) => `<button onclick="invUIState().view='${key}'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${active===key?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">${label}</button>`;
+  return `<div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">${tab('board','Shifts')}${tab('dashboard','Dashboard')}</div>`;
+}
+
+/* ---- HQ surface (inside the app shell) ---- */
+function renderInventoryHub(){
+  const branch = invBranch();
+  if (inventoryHubState.view==='entry' && !inventoryHubState.shift) inventoryHubState.shift='morning';
+  const branchSel = invCanPickBranch()
+    ? `<select class="pill" onchange="inventoryHubState.branch=this.value; inventoryHubState.view='dashboard'; render();">
+        ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+      </select>`
+    : `<span class="pill">${escapeHTML(branch)}</span>`;
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Inventory hub</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(branch)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Open &amp; close shifts · track stock vs Foodics · spot what needs ordering.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">${branchSel}${inventoryHubState.view==='entry'?'':invTabs(inventoryHubState.view)}</div>
+    </div>`;
+  if (invEnsureLoaded(branch)){
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)}…</div>`;
+  }
+  return header + invRenderBody(branch);
+}
+
+/* ---- branch-device (iPad) kiosk surface ---- */
+function renderDeviceApp(){
+  const branch = dcDefaultBranch();
+  if (!deviceState.staffId) return renderDeviceStaffPicker(branch);
+  let body;
+  if (invEnsureLoaded(branch)){
+    body = `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)}…</div>`;
+  } else {
+    body = invRenderBody(branch);
+  }
+  return renderDeviceShell(branch, body);
+}
+function renderDeviceShell(branch, bodyHTML){
+  const view = deviceState.view==='entry' ? 'entry' : deviceState.view;
+  const tab = (key,label) => `<button onclick="deviceState.view='${key}'; render();" class="px-4 py-2 text-sm font-medium rounded-lg ${view===key?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-100'}">${label}</button>`;
+  const tabs = deviceState.view==='entry' ? '' : `<div class="inline-flex bg-white border border-slate-200 rounded-xl p-1">${tab('board','Shifts')}${tab('dashboard','Dashboard')}</div>`;
+  return `
+    <div class="min-h-screen bg-slate-50">
+      <header class="sticky top-0 z-20 bg-white border-b border-slate-200">
+        <div class="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            <img src="logo.png" alt="logo" class="w-9 h-9 object-contain shrink-0" onerror="this.style.visibility='hidden'" />
+            <div class="min-w-0">
+              <div class="font-display font-semibold text-slate-900 leading-tight truncate">${escapeHTML(branch)} · Inventory</div>
+              <div class="text-[11px] text-slate-500 truncate">On shift: <span class="font-semibold text-brand-700">${escapeHTML(deviceState.staffName)}</span></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            ${tabs}
+            <button onclick="deviceState.staffId=''; deviceState.staffName=''; deviceState.view='board'; render();" class="btn btn-ghost btn-sm">Switch user</button>
+            <button onclick="logout()" class="btn btn-ghost btn-sm">Sign out</button>
+          </div>
+        </div>
+      </header>
+      <main class="max-w-5xl mx-auto px-4 py-5">${bodyHTML}</main>
+    </div>`;
+}
+function renderDeviceStaffPicker(branch){
+  const staff = (state.employees||[])
+    .filter(e => e.status==='active' && e.systemRole!=='branch_device')
+    .sort((a,b)=> (a.firstName||'').localeCompare(b.firstName||''));
+  const tiles = staff.map(e=>{
+    const name = `${e.firstName} ${e.lastName||''}`.trim();
+    const initials = ((e.firstName||'?')[0]||'?').toUpperCase() + ((e.lastName||'')[0]||'').toUpperCase();
+    return `<button data-staff-name="${escapeHTML(name.toLowerCase())}" onclick="deviceState.staffId='${e.id}'; deviceState.staffName=${JSON.stringify(name)}; deviceState.view='board'; render();"
+      class="flex flex-col items-center gap-2 p-4 bg-white rounded-2xl shadow-card hover:ring-2 hover:ring-brand-400 transition">
+      <span class="w-14 h-14 rounded-full flex items-center justify-center text-white font-semibold text-lg" style="background:${escapeHTML(e.avatarColor||'#a87035')}">${escapeHTML(initials)}</span>
+      <span class="text-sm font-medium text-slate-800 text-center leading-tight">${escapeHTML(name)}</span>
+    </button>`;
+  }).join('');
+  return `
+    <div class="min-h-screen bg-slate-50">
+      <header class="bg-white border-b border-slate-200">
+        <div class="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <img src="logo.png" alt="logo" class="w-9 h-9 object-contain" onerror="this.style.visibility='hidden'" />
+            <div class="font-display font-semibold text-slate-900">${escapeHTML(branch)} · Inventory</div>
+          </div>
+          <button onclick="logout()" class="btn btn-ghost btn-sm">Sign out</button>
+        </div>
+      </header>
+      <main class="max-w-5xl mx-auto px-4 py-8">
+        <h2 class="font-display text-2xl font-semibold text-slate-900 text-center">Who's on shift?</h2>
+        <p class="text-sm text-slate-500 text-center mt-1 mb-5">Tap your name to start. Every count is recorded under it.</p>
+        <input oninput="invFilterStaff(this.value)" placeholder="Search your name…" class="input w-full max-w-sm mx-auto block mb-6 py-3 text-base" />
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          ${tiles || `<div class="col-span-full text-center text-slate-400 text-sm py-8">No active staff found.</div>`}
+        </div>
+      </main>
+    </div>`;
+}
+function invFilterStaff(q){
+  const needle = String(q||'').toLowerCase().trim();
+  document.querySelectorAll('[data-staff-name]').forEach(el=>{
+    el.style.display = el.getAttribute('data-staff-name').indexOf(needle) >= 0 ? '' : 'none';
+  });
+}
+
 function render() {
   document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
   document.documentElement.lang = state.settings.lang;
@@ -20304,6 +20920,17 @@ function render() {
   if (me.status === 'pending') { stopClockTicker(); app.innerHTML = renderPendingApprovalGate(); return; }
   // Block access entirely if this employee has been terminated.
   if (me.status === 'terminated') { stopClockTicker(); app.innerHTML = renderTerminatedGate(); return; }
+  // Shared branch-device (iPad) login: a locked-down kiosk that shows ONLY
+  // the Inventory hub for its one branch. No sidebar, no HR routes, no PDPL
+  // consent gate (it's a device, not a person — the staff who tap in are
+  // the consenting parties and they're already onboarded). Intercept here
+  // so any hash the device lands on still renders the kiosk.
+  if (currentRole() === 'branch_device') {
+    stopClockTicker();
+    app.innerHTML = renderDeviceApp();
+    initInvCharts();
+    return;
+  }
   // Block access to the app until PDPL consent is recorded.
   if (!hasGivenConsent()) { stopClockTicker(); app.innerHTML = renderConsentGate(); return; }
   startClockTicker();
@@ -20329,6 +20956,7 @@ function render() {
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
+    case 'inventory_hub': content = hasRole('admin','operations','head_barista','barista') ? renderInventoryHub() : renderRoleDashboard(); break;
     case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
     case 'weekly_count': content = hasRole('admin','head_barista','barista') ? renderWeeklyCount() : renderRoleDashboard(); break;
     case 'expiry_check': content = hasRole('admin','head_barista','barista') ? renderExpiryCheck() : renderRoleDashboard(); break;
@@ -20354,6 +20982,10 @@ function render() {
   app.innerHTML = renderShell(content);
   const newNav = document.getElementById('sidebar-nav');
   if (newNav && prevSidebarScroll) newNav.scrollTop = prevSidebarScroll;
+  // Charts are canvas-based, so they must be (re)instantiated after the
+  // shell's innerHTML lands. initInvCharts() no-ops if the hub canvases
+  // aren't present or Chart.js failed to load.
+  if (route === 'inventory_hub') initInvCharts();
 }
 
 /* -------------------- INIT -------------------- */
