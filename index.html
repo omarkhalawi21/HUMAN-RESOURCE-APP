@@ -20739,17 +20739,25 @@ function invRenderEntry(branch){
       const c = countByItem[it.id];
       const seedOpen = c && c.openingQty!=null ? c.openingQty : (invLatestClosing(branch, it.id)?.qty ?? '');
       if (!isClose){
-        return `<div class="flex items-center gap-3 py-2 border-b border-slate-50">
-          <div class="flex-1 min-w-0"><div class="text-sm font-medium text-slate-800 truncate">${escapeHTML(it.name)}</div><div class="text-[11px] text-slate-400">${escapeHTML(it.unit)}</div></div>
-          <input id="inv-${it.id}-open" type="number" inputmode="decimal" step="any" value="${seedOpen}" class="input text-right text-lg w-28 py-2.5" placeholder="0">
+        return `<div class="py-2.5 border-b border-slate-50">
+          <div class="flex items-end justify-between gap-2 mb-1">
+            <span class="text-sm font-medium text-slate-800">${escapeHTML(it.name)}</span>
+            <span class="text-[11px] uppercase tracking-wide text-slate-400 shrink-0">${escapeHTML(it.unit)}</span>
+          </div>
+          <input id="inv-${it.id}-open" type="number" inputmode="decimal" step="any" value="${seedOpen}" class="input w-full text-right text-lg py-2.5" placeholder="0">
         </div>`;
       }
       const openVal = c && c.openingQty!=null ? c.openingQty : '—';
-      return `<div class="flex items-center gap-2 py-2 border-b border-slate-50">
-        <div class="flex-1 min-w-0"><div class="text-sm font-medium text-slate-800 truncate">${escapeHTML(it.name)}</div><div class="text-[11px] text-slate-400">opened: ${openVal} ${escapeHTML(it.unit)}</div></div>
-        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input text-right text-base w-16 py-2" placeholder="0"></div>
-        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-brand-600">Foodics</div><input id="inv-${it.id}-food" type="number" inputmode="decimal" step="any" value="${c&&c.foodicsQty!=null?c.foodicsQty:''}" class="input text-right text-base w-16 py-2" placeholder="0"></div>
-        <div class="text-center"><div class="text-[10px] uppercase tracking-wide text-slate-400">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input text-right text-lg w-20 py-2.5" placeholder="0"></div>
+      return `<div class="py-2.5 border-b border-slate-50">
+        <div class="flex items-end justify-between gap-2 mb-1">
+          <span class="text-sm font-medium text-slate-800">${escapeHTML(it.name)}</span>
+          <span class="text-[11px] text-slate-400 shrink-0">opened: ${openVal} ${escapeHTML(it.unit)}</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
+          <div><div class="text-[10px] uppercase tracking-wide text-brand-600 mb-0.5">Foodics</div><input id="inv-${it.id}-food" type="number" inputmode="decimal" step="any" value="${c&&c.foodicsQty!=null?c.foodicsQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
+          <div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input w-full text-right text-lg py-2.5" placeholder="0"></div>
+        </div>
       </div>`;
     }).join('');
     return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(DC_CATEGORIES[cat]||cat)}</div>${rows}</div>`;
