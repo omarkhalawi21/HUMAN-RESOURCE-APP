@@ -4078,6 +4078,35 @@ UPDATE public.daily_count_items SET active = false
  WHERE category = 'espresso' AND lower(name) NOT IN ('colombia esp','guji esp');
 
 -- =============================================================
+-- 71. BRANCH ROSTER — names-only staff list for one branch (kiosk picker)
+--     A shared branch-device login can read only its OWN employee_extras row
+--     (RLS), so it can't filter the "Who's on shift?" picker to its branch
+--     client-side. This SECURITY DEFINER function returns ONLY id + names +
+--     avatar colour for ACTIVE, non-device staff whose employee_extras.branch
+--     matches p_branch — no salary / iqama / contact data crosses. Branch
+--     match is case-insensitive (branch names are stored upper-case but be
+--     defensive). EXECUTE granted to authenticated (names are low-sensitivity);
+--     the frontend calls it via sb.rpc('branch_roster', { p_branch }).
+-- =============================================================
+CREATE OR REPLACE FUNCTION public.branch_roster(p_branch text)
+RETURNS TABLE (id uuid, first_name text, last_name text, avatar_color text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT e.id, e.first_name, e.last_name, e.avatar_color
+  FROM public.employees e
+  JOIN public.employee_extras x ON x.employee_id = e.id
+  WHERE e.status = 'active'
+    AND COALESCE(e.system_role, 'employee') <> 'branch_device'
+    AND upper(COALESCE(x.branch, '')) = upper(COALESCE(p_branch, ''))
+  ORDER BY e.first_name, e.last_name;
+$$;
+REVOKE ALL ON FUNCTION public.branch_roster(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.branch_roster(text) TO authenticated;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
