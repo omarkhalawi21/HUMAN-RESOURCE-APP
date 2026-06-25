@@ -4017,6 +4017,67 @@ ALTER TABLE public.employees
   ));
 
 -- =============================================================
+-- 70. INVENTORY BEAN CATALOG — align v60 + espresso to the branches' real list
+--     Reuses daily_count_items (the inventory shift open/close form + Daily
+--     count list active items per category; beans are entered in kg). Fully
+--     idempotent & re-runnable, case-insensitive name match. Beans dropped
+--     from the list are DEACTIVATED (active=false), never deleted, so any
+--     past counts that reference them survive. The real lists (owner-given):
+--       espresso (2): Colombia ESP, Guji ESP
+--       v60 (10): Manos, Ethiopia, Brazil, Grape, Panama, Beni Suliman,
+--                 Gadeb, Candy, Haraz, Peach
+--     (retires V60 Chel-Chel + C.O.D-Oromio from the original seed.)
+-- =============================================================
+-- (a) The seed shipped Gadeb as 'Ethiopia Gadeb'; branches call it 'V60 Gadeb'.
+--     Rename in place so its history carries over (no new item, no orphan).
+UPDATE public.daily_count_items
+   SET name = 'V60 Gadeb'
+ WHERE category = 'v60' AND lower(name) = 'ethiopia gadeb';
+
+-- (b) Insert any of the 10 desired V60 beans that don't exist yet (kg).
+INSERT INTO public.daily_count_items (name, unit, category, tracks_waste, sort_order, active)
+SELECT v.name, 'kg', 'v60', false, v.so, true
+FROM (VALUES
+  ('V60 Manos',162),('V60 Ethiopia',164),('V60 Brazil',166),('V60 Grape',168),
+  ('V60 Panama',170),('V60 Beni Suliman',172),('V60 Gadeb',174),('V60 Candy',176),
+  ('V60 Haraz',178),('V60 Peach',180)
+) AS v(name, so)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.daily_count_items d
+   WHERE d.category = 'v60' AND lower(d.name) = lower(v.name)
+);
+
+-- (c) Ensure the 10 are active, in kg, and cleanly ordered.
+UPDATE public.daily_count_items SET active = true, unit = 'kg',
+  sort_order = CASE lower(name)
+    WHEN 'v60 manos' THEN 162 WHEN 'v60 ethiopia' THEN 164 WHEN 'v60 brazil' THEN 166
+    WHEN 'v60 grape' THEN 168 WHEN 'v60 panama' THEN 170 WHEN 'v60 beni suliman' THEN 172
+    WHEN 'v60 gadeb' THEN 174 WHEN 'v60 candy' THEN 176 WHEN 'v60 haraz' THEN 178
+    WHEN 'v60 peach' THEN 180 ELSE sort_order END
+ WHERE category = 'v60' AND lower(name) IN
+   ('v60 manos','v60 ethiopia','v60 brazil','v60 grape','v60 panama',
+    'v60 beni suliman','v60 gadeb','v60 candy','v60 haraz','v60 peach');
+
+-- (d) Retire any other V60 beans (e.g. Chel-Chel, C.O.D-Oromio) — deactivate.
+UPDATE public.daily_count_items SET active = false
+ WHERE category = 'v60' AND lower(name) NOT IN
+   ('v60 manos','v60 ethiopia','v60 brazil','v60 grape','v60 panama',
+    'v60 beni suliman','v60 gadeb','v60 candy','v60 haraz','v60 peach');
+
+-- (e) Espresso — ensure the 2 kinds (active, kg); retire any others.
+INSERT INTO public.daily_count_items (name, unit, category, tracks_waste, sort_order, active)
+SELECT v.name, 'kg', 'espresso', false, v.so, true
+FROM (VALUES ('Colombia ESP',142),('Guji ESP',144)) AS v(name, so)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.daily_count_items d
+   WHERE d.category = 'espresso' AND lower(d.name) = lower(v.name)
+);
+UPDATE public.daily_count_items SET active = true, unit = 'kg'
+ WHERE category = 'espresso' AND lower(name) IN ('colombia esp','guji esp');
+UPDATE public.daily_count_items SET active = false
+ WHERE category = 'espresso' AND lower(name) NOT IN ('colombia esp','guji esp');
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
