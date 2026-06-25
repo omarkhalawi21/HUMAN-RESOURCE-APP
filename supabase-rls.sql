@@ -4223,6 +4223,16 @@ CREATE POLICY "idr_delete_admin_head" ON public.inventory_drinks FOR DELETE TO a
 ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS drink_id uuid references public.inventory_drinks(id) ON DELETE SET NULL;
 
 -- =============================================================
+-- 75. INVENTORY USAGE — owner consumption reasons
+--     Owners also take coffee/sweets — tracked but exempt from the staff
+--     1+1 allowance. Widen the usage-log reason CHECK with owner_coffee /
+--     owner_food (idempotent drop-then-add).
+-- =============================================================
+ALTER TABLE public.inventory_usage_log DROP CONSTRAINT IF EXISTS inventory_usage_reason_chk;
+ALTER TABLE public.inventory_usage_log ADD CONSTRAINT inventory_usage_reason_chk
+  CHECK (reason IN ('staff_coffee','staff_food','owner_coffee','owner_food','customer_comp','other'));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
