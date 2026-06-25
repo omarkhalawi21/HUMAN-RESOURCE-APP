@@ -20410,6 +20410,7 @@ function mapInventoryShiftFromDb(r){
     wasteSpillage: r.waste_spillage_g==null ? null : Number(r.waste_spillage_g),
     note:r.note||'',
     counts:[], // attached after the inventory_shift_counts query
+    usage:[],  // attached after the inventory_usage_log query
   };
 }
 function mapInventoryShiftCountFromDb(r){
@@ -20420,6 +20421,63 @@ function mapInventoryShiftCountFromDb(r){
     receivedQty: r.received_qty==null ? null : Number(r.received_qty),
     foodicsQty:  r.foodics_qty ==null ? null : Number(r.foodics_qty),
   };
+}
+function mapInventoryUsageFromDb(r){
+  return {
+    id:r.id, shiftId:r.shift_id, itemId:r.item_id,
+    reason:r.reason||'staff_coffee', employeeId:r.employee_id||null,
+    qty: r.qty==null ? 0 : Number(r.qty), note:r.note||'',
+  };
+}
+// Staff & customer usage-log reasons. Calibration/dial-in/remakes/training/
+// spillage live in the shift waste log (grams) — these are the ATTRIBUTED,
+// per-product, per-person uses entered in servings (drinks/pieces).
+const INV_USAGE_REASONS = [
+  { key:'staff_coffee',  label:'Staff coffee' },
+  { key:'staff_food',    label:'Staff food' },
+  { key:'customer_comp', label:'Customer comp' },
+  { key:'other',         label:'Other' },
+];
+function invUsageReasonLabel(k){ return (INV_USAGE_REASONS.find(r=>r.key===k)||{}).label || k; }
+// Staff list for the usage dropdowns — branch roster on a device, else all
+// active non-device employees.
+function invStaffList(){
+  if (invIsDevice() && Array.isArray(state.deviceRoster)) return state.deviceRoster.slice();
+  return (state.employees||[]).filter(e=>e.status==='active' && e.systemRole!=='branch_device')
+    .map(e=>({ id:e.id, firstName:e.firstName, lastName:e.lastName }));
+}
+function invEmpName(id){
+  if (!id) return 'Unattributed';
+  const e = (state.employees||[]).find(x=>x.id===id)
+         || (Array.isArray(state.deviceRoster) ? state.deviceRoster.find(x=>x.id===id) : null);
+  return e ? `${e.firstName} ${e.lastName||''}`.trim() : 'Staff';
+}
+function invProductOptions(selectedId){
+  return DC_CAT_ORDER.map(cat=>{
+    const its = invActiveItems().filter(i=>i.category===cat);
+    if (!its.length) return '';
+    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===selectedId?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
+  }).join('');
+}
+// One editable line in the "Staff & customer log". Values are read back on
+// save by class (no per-row ids) from inside #inv-usage-rows.
+function invUsageRowHTML(u){
+  u = u || {};
+  const reasonOpts = INV_USAGE_REASONS.map(r=>`<option value="${r.key}" ${u.reason===r.key?'selected':''}>${r.label}</option>`).join('');
+  const empOpts = `<option value="">— person —</option>` + invStaffList()
+    .sort((a,b)=>(a.firstName||'').localeCompare(b.firstName||''))
+    .map(e=>`<option value="${e.id}" ${u.employeeId===e.id?'selected':''}>${escapeHTML(`${e.firstName} ${e.lastName||''}`.trim())}</option>`).join('');
+  return `<div class="usage-row grid grid-cols-12 gap-1.5 items-center mb-1.5">
+    <select class="usage-reason input col-span-3 py-2 text-sm">${reasonOpts}</select>
+    <select class="usage-emp input col-span-3 py-2 text-sm">${empOpts}</select>
+    <select class="usage-item input col-span-3 py-2 text-sm">${invProductOptions(u.itemId)}</select>
+    <input class="usage-qty input col-span-2 py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="qty" value="${u.qty!=null&&u.qty!==0?u.qty:''}">
+    <button type="button" onclick="this.closest('.usage-row').remove()" aria-label="Remove line" class="col-span-1 text-slate-400 hover:text-rose-600 text-center text-lg leading-none">&times;</button>
+  </div>`;
+}
+function invUsageAddRow(){
+  const c = document.getElementById('inv-usage-rows');
+  if (c) c.insertAdjacentHTML('beforeend', invUsageRowHTML({}));
 }
 
 function invCacheKey(branch, ym){ return branch + '|' + ym; }
@@ -20445,10 +20503,14 @@ async function loadInventoryShifts(branch, ym){
   const rows = (shifts || []).map(mapInventoryShiftFromDb);
   if (rows.length){
     const ids = rows.map(s=>s.id);
-    const { data:counts } = await sb.from('inventory_shift_counts').select('*').in('shift_id', ids);
-    const byShift = {};
+    const [{ data:counts }, { data:usage }] = await Promise.all([
+      sb.from('inventory_shift_counts').select('*').in('shift_id', ids),
+      sb.from('inventory_usage_log').select('*').in('shift_id', ids),
+    ]);
+    const byShift = {}, byUsage = {};
     (counts || []).map(mapInventoryShiftCountFromDb).forEach(c=>{ (byShift[c.shiftId] = byShift[c.shiftId] || []).push(c); });
-    rows.forEach(s=>{ s.counts = byShift[s.id] || []; });
+    (usage  || []).map(mapInventoryUsageFromDb).forEach(u=>{ (byUsage[u.shiftId] = byUsage[u.shiftId] || []).push(u); });
+    rows.forEach(s=>{ s.counts = byShift[s.id] || []; s.usage = byUsage[s.id] || []; });
   }
   state.inventoryShiftsCache[key] = rows;
   _invLoading.delete(key);
@@ -20579,7 +20641,26 @@ function invBuildDashboard(branch){
     a.training += s.wasteTraining||0; a.spillage += s.wasteSpillage||0; return a;
   }, { dialin:0, remakes:0, training:0, spillage:0 });
   wasteToday.total = wasteToday.dialin + wasteToday.remakes + wasteToday.training + wasteToday.spillage;
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  // Staff & customer usage TODAY. qty is in servings; a bean → grams via dose,
+  // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
+  // pooled. This is the "where did it go" breakdown that explains variance.
+  const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
+  todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
+    const it = items.find(i=>i.id===u.itemId); if (!it) return;
+    const isBean = it.doseG!=null;
+    const grams  = isBean ? u.qty * (it.doseG||0) : 0;
+    const sweets = isBean ? 0 : u.qty;
+    if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += sweets; return; }
+    const k = u.employeeId || '_none';
+    const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeG:0, sweets:0 });
+    a.coffeeG += grams; a.sweets += sweets;
+  }));
+  const staffUsage = Object.values(staffAgg)
+    .map(a=>({ ...a, coffeeG: Math.round(a.coffeeG), sweets: Math.round(a.sweets*100)/100 }))
+    .filter(a=>a.coffeeG>0 || a.sweets>0)
+    .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
+  comps.coffeeG = Math.round(comps.coffeeG); comps.sweets = Math.round(comps.sweets*100)/100;
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, comps, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20714,6 +20795,26 @@ function invBuildDashboardHTML(branch){
         ${wTile('Spillage', d.wasteToday.spillage)}
         ${wTile('Total waste', d.wasteToday.total, true)}
       </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-sm font-semibold text-slate-800">Staff consumption · today</div>
+        ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Customer comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span> coffee${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
+      </div>
+      <div class="text-xs text-slate-500 mb-2">Coffee &amp; sweets taken by staff (and comped to customers) — part of the variance, not sales.</div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
+          <th class="py-1 pr-3 font-semibold">Employee</th>
+          <th class="py-1 pr-3 font-semibold text-right">Coffee</th>
+          <th class="py-1 font-semibold text-right">Sweets</th>
+        </tr></thead>
+        <tbody>${d.staffUsage.length ? d.staffUsage.map(a=>`
+          <tr class="border-t border-slate-100">
+            <td class="py-2 pr-3 text-slate-800">${escapeHTML(a.name)}</td>
+            <td class="py-2 pr-3 text-right text-slate-600">${a.coffeeG?`${a.coffeeG} g`:'—'}</td>
+            <td class="py-2 text-right text-slate-600">${a.sweets?`${a.sweets} pcs`:'—'}</td>
+          </tr>`).join('') : `<tr><td colspan="3" class="py-6 text-center text-slate-400 text-sm">No staff consumption logged today.</td></tr>`}</tbody>
+      </table>
     </div>`;
 }
 
@@ -20817,7 +20918,19 @@ function invRenderEntry(branch){
     </div>
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
       <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold mb-2">Daily waste log <span class="text-slate-400 font-normal normal-case">· grams</span></div>
+      <div class="text-[11px] text-slate-400 mb-2">Coffee lost to operations (no person). Calibration / dial-in goes here.</div>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${wasteFields}</div>
+    </div>
+    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold">Staff &amp; customer log</div>
+        <button type="button" onclick="invUsageAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+      </div>
+      <div class="text-[11px] text-slate-400 mb-2">Coffee/sweets taken by staff or comped to customers — pick reason · person · product · qty (drinks or pieces).</div>
+      <div class="hidden sm:grid grid-cols-12 gap-1.5 text-[10px] uppercase tracking-wide text-slate-400 mb-1 px-1">
+        <div class="col-span-3">Reason</div><div class="col-span-3">Person</div><div class="col-span-3">Product</div><div class="col-span-2 text-right">Qty</div><div class="col-span-1"></div>
+      </div>
+      <div id="inv-usage-rows">${(existing&&existing.usage?existing.usage:[]).map(u=>invUsageRowHTML(u)).join('')}</div>
     </div>` : `
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4 text-xs text-slate-500">
       Recording <span class="font-semibold text-slate-700">opening stock</span> for the ${invShiftLabel(shift).toLowerCase()} shift. Values are pre-filled from the last closing count — adjust where needed.
@@ -20946,6 +21059,25 @@ async function invSaveClose(shiftId, branch, shift){
   if (rows.length){
     const { error:e2 } = await sb.from('inventory_shift_counts').upsert(rows, { onConflict:'shift_id,item_id' });
     if (e2){ toast('Closed shift, but counts failed: ' + e2.message, 'error'); }
+  }
+  // Staff & customer usage log — replace this shift's rows (delete-then-insert,
+  // since there's no natural unique key and rows are freely added/removed).
+  const usageRows = [];
+  document.querySelectorAll('#inv-usage-rows .usage-row').forEach(row=>{
+    const itemId = row.querySelector('.usage-item')?.value;
+    const qty = Number(row.querySelector('.usage-qty')?.value);
+    if (!itemId || !isFinite(qty) || qty===0) return;
+    usageRows.push({
+      shift_id: shiftId, item_id: itemId,
+      reason: row.querySelector('.usage-reason')?.value || 'other',
+      employee_id: row.querySelector('.usage-emp')?.value || null,
+      qty,
+    });
+  });
+  await sb.from('inventory_usage_log').delete().eq('shift_id', shiftId);
+  if (usageRows.length){
+    const { error:e3 } = await sb.from('inventory_usage_log').insert(usageRows);
+    if (e3){ toast('Closed shift, but staff log failed: ' + e3.message, 'error'); }
   }
   toast(`${invShiftLabel(shift)} shift closed`, 'success');
   const s = invUIState(); s.view = 'board';
