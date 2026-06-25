@@ -20453,6 +20453,8 @@ function invUsageGrams(u, it){
 const INV_USAGE_REASONS = [
   { key:'staff_coffee',  label:'Staff coffee' },
   { key:'staff_food',    label:'Staff food' },
+  { key:'owner_coffee',  label:'Owner coffee' },
+  { key:'owner_food',    label:'Owner food' },
   { key:'customer_comp', label:'Customer comp' },
   { key:'other',         label:'Other' },
 ];
@@ -20525,9 +20527,16 @@ function invUsageDrinkChanged(sel){
 function invUsageRowHTML(u){
   u = u || {};
   const reasonOpts = INV_USAGE_REASONS.map(r=>`<option value="${r.key}" ${u.reason===r.key?'selected':''}>${r.label}</option>`).join('');
-  const empOpts = `<option value="">— person —</option>` + invStaffList()
-    .sort((a,b)=>(a.firstName||'').localeCompare(b.firstName||''))
-    .map(e=>`<option value="${e.id}" ${u.employeeId===e.id?'selected':''}>${escapeHTML(`${e.firstName} ${e.lastName||''}`.trim())}</option>`).join('');
+  const optFor = e => `<option value="${e.id}" ${u.employeeId===e.id?'selected':''}>${escapeHTML(`${e.firstName} ${e.lastName||''}`.trim())}</option>`;
+  const sortByName = (a,b)=>(a.firstName||'').localeCompare(b.firstName||'');
+  const staff = invStaffList().slice().sort(sortByName);
+  const staffIds = new Set(staff.map(s=>s.id));
+  // Owners/management aren't branch floor staff but still consume — list them
+  // so an owner row can be attributed (see Owner coffee/food reasons).
+  const owners = (state.employees||[]).filter(e=>e.status==='active' && e.systemRole==='admin' && !staffIds.has(e.id)).sort(sortByName);
+  const empOpts = `<option value="">— person —</option>`
+    + `<optgroup label="Staff">${staff.map(optFor).join('')}</optgroup>`
+    + (owners.length ? `<optgroup label="Owners / Management">${owners.map(optFor).join('')}</optgroup>` : '');
   return `<div class="usage-row flex flex-wrap gap-1.5 items-center mb-2 pb-2 border-b border-slate-100">
     <div class="w-28"><select class="usage-reason input w-full py-2 text-sm" title="Reason">${reasonOpts}</select></div>
     <div class="w-32"><select class="usage-emp input w-full py-2 text-sm" title="Person">${empOpts}</select></div>
@@ -20766,13 +20775,15 @@ function invBuildDashboard(branch){
   // Staff & customer usage TODAY. qty is in servings; a bean → grams via dose,
   // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
   // pooled. This is the "where did it go" breakdown that explains variance.
-  const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
+  const staffAgg = {}; const comps = { coffeeG:0, sweets:0 }; const owners = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId); if (!it) return;
     const grams   = invUsageGrams(u, it);              // drink dose, else bean dose, else 0
     const isCoffee = !!u.drinkId || it.doseG!=null;    // a drink or a bean = coffee
     const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
     if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
+    // Owners consume too, but they have no 1+1 allowance — pool them separately.
+    if (u.reason==='owner_coffee' || u.reason==='owner_food'){ owners.coffeeG += grams; owners.sweets += pcs; return; }
     const k = u.employeeId || '_none';
     const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeDrinks:0, coffeeG:0, sweets:0 });
     if (u.reason==='staff_coffee'){ a.coffeeDrinks += u.qty; a.coffeeG += grams; }
@@ -20788,8 +20799,9 @@ function invBuildDashboard(branch){
     .filter(a=>a.coffeeDrinks>0 || a.sweets>0 || a.coffeeG>0)
     .sort((x,y)=> (Number(y.over)-Number(x.over)) || ((y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000)));
   const staffOverCount = staffUsage.filter(a=>a.over).length;
-  comps.coffeeG = Math.round(comps.coffeeG); comps.sweets = Math.round(comps.sweets*100)/100;
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  comps.coffeeG  = Math.round(comps.coffeeG);  comps.sweets  = Math.round(comps.sweets*100)/100;
+  owners.coffeeG = Math.round(owners.coffeeG); owners.sweets = Math.round(owners.sweets*100)/100;
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, owners, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20930,6 +20942,7 @@ function invBuildDashboardHTML(branch){
         <div class="text-sm font-semibold text-slate-800">Staff consumption · today</div>
         <div class="flex items-center gap-2 flex-wrap">
           ${d.staffOverCount ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3.5 h-3.5')} ${d.staffOverCount} over allowance</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">all within allowance</span>`}
+          ${(d.owners.coffeeG||d.owners.sweets) ? `<span class="text-[11px] text-slate-500">Owners: <span class="font-semibold text-slate-700">${d.owners.coffeeG} g</span>${d.owners.sweets?` · <span class="font-semibold text-slate-700">${d.owners.sweets}</span> sweets`:''}</span>` : ''}
           ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span>${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
         </div>
       </div>
