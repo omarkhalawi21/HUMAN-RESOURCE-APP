@@ -20439,6 +20439,9 @@ const INV_USAGE_REASONS = [
   { key:'other',         label:'Other' },
 ];
 function invUsageReasonLabel(k){ return (INV_USAGE_REASONS.find(r=>r.key===k)||{}).label || k; }
+// Free staff allowance per person per day — 1 coffee + 1 sweet. Anything
+// beyond is flagged on the dashboard and warned at close (over = excess cost).
+const INV_STAFF_ALLOWANCE = { coffee: 1, sweet: 1 };
 // Staff list for the usage dropdowns — branch roster on a device, else all
 // active non-device employees.
 function invStaffList(){
@@ -20649,18 +20652,24 @@ function invBuildDashboard(branch){
     const it = items.find(i=>i.id===u.itemId); if (!it) return;
     const isBean = it.doseG!=null;
     const grams  = isBean ? u.qty * (it.doseG||0) : 0;
-    const sweets = isBean ? 0 : u.qty;
-    if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += sweets; return; }
+    if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += (isBean?0:u.qty); return; }
     const k = u.employeeId || '_none';
-    const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeG:0, sweets:0 });
-    a.coffeeG += grams; a.sweets += sweets;
+    const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeDrinks:0, coffeeG:0, sweets:0 });
+    if (u.reason==='staff_coffee'){ a.coffeeDrinks += u.qty; a.coffeeG += grams; }
+    else if (u.reason==='staff_food'){ a.sweets += (isBean?0:u.qty); }
+    else { a.coffeeG += grams; a.sweets += (isBean?0:u.qty); } // 'other' — counted, not against the allowance
   }));
   const staffUsage = Object.values(staffAgg)
-    .map(a=>({ ...a, coffeeG: Math.round(a.coffeeG), sweets: Math.round(a.sweets*100)/100 }))
-    .filter(a=>a.coffeeG>0 || a.sweets>0)
-    .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
+    .map(a=>{
+      const coffeeOver = Math.max(0, a.coffeeDrinks - INV_STAFF_ALLOWANCE.coffee);
+      const sweetOver  = Math.max(0, a.sweets       - INV_STAFF_ALLOWANCE.sweet);
+      return { ...a, coffeeDrinks: Math.round(a.coffeeDrinks*100)/100, coffeeG: Math.round(a.coffeeG), sweets: Math.round(a.sweets*100)/100, coffeeOver, sweetOver, over: coffeeOver>0 || sweetOver>0 };
+    })
+    .filter(a=>a.coffeeDrinks>0 || a.sweets>0 || a.coffeeG>0)
+    .sort((x,y)=> (Number(y.over)-Number(x.over)) || ((y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000)));
+  const staffOverCount = staffUsage.filter(a=>a.over).length;
   comps.coffeeG = Math.round(comps.coffeeG); comps.sweets = Math.round(comps.sweets*100)/100;
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, comps, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20797,11 +20806,14 @@ function invBuildDashboardHTML(branch){
       </div>
     </div>
     <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
-      <div class="flex items-center justify-between mb-1">
+      <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <div class="text-sm font-semibold text-slate-800">Staff consumption · today</div>
-        ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Customer comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span> coffee${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
+        <div class="flex items-center gap-2 flex-wrap">
+          ${d.staffOverCount ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3.5 h-3.5')} ${d.staffOverCount} over allowance</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">all within allowance</span>`}
+          ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span>${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
+        </div>
       </div>
-      <div class="text-xs text-slate-500 mb-2">Coffee &amp; sweets taken by staff (and comped to customers) — part of the variance, not sales.</div>
+      <div class="text-xs text-slate-500 mb-2">Allowance: <span class="font-medium text-slate-600">${INV_STAFF_ALLOWANCE.coffee} coffee + ${INV_STAFF_ALLOWANCE.sweet} sweet</span> per person/day. Anything beyond is over-allowance (excess cost), shown in red.</div>
       <table class="w-full text-sm">
         <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
           <th class="py-1 pr-3 font-semibold">Employee</th>
@@ -20809,10 +20821,10 @@ function invBuildDashboardHTML(branch){
           <th class="py-1 font-semibold text-right">Sweets</th>
         </tr></thead>
         <tbody>${d.staffUsage.length ? d.staffUsage.map(a=>`
-          <tr class="border-t border-slate-100">
-            <td class="py-2 pr-3 text-slate-800">${escapeHTML(a.name)}</td>
-            <td class="py-2 pr-3 text-right text-slate-600">${a.coffeeG?`${a.coffeeG} g`:'—'}</td>
-            <td class="py-2 text-right text-slate-600">${a.sweets?`${a.sweets} pcs`:'—'}</td>
+          <tr class="border-t border-slate-100 ${a.over?'bg-rose-50':''}">
+            <td class="py-2 pr-3 text-slate-800">${escapeHTML(a.name)}${a.over?` <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-700 align-middle">OVER</span>`:''}</td>
+            <td class="py-2 pr-3 text-right ${a.coffeeOver?'text-rose-600 font-semibold':'text-slate-600'}">${a.coffeeDrinks?`${a.coffeeDrinks} ${a.coffeeDrinks===1?'coffee':'coffees'}${a.coffeeG?` <span class="text-[10px] text-slate-400 font-normal">${a.coffeeG} g</span>`:''}${a.coffeeOver?` (+${a.coffeeOver})`:''}`:'—'}</td>
+            <td class="py-2 text-right ${a.sweetOver?'text-rose-600 font-semibold':'text-slate-600'}">${a.sweets?`${a.sweets} pcs${a.sweetOver?` (+${a.sweetOver})`:''}`:'—'}</td>
           </tr>`).join('') : `<tr><td colspan="3" class="py-6 text-center text-slate-400 text-sm">No staff consumption logged today.</td></tr>`}</tbody>
       </table>
     </div>`;
@@ -21078,6 +21090,20 @@ async function invSaveClose(shiftId, branch, shift){
   if (usageRows.length){
     const { error:e3 } = await sb.from('inventory_usage_log').insert(usageRows);
     if (e3){ toast('Closed shift, but staff log failed: ' + e3.message, 'error'); }
+  }
+  // Soft allowance check (1 coffee + 1 sweet per person). Non-blocking — the
+  // count still saves; this just flags excess so the closer is aware.
+  const perEmp = {};
+  usageRows.forEach(r=>{
+    if (!r.employee_id) return;
+    const e = perEmp[r.employee_id] || (perEmp[r.employee_id] = { coffee:0, sweet:0 });
+    if (r.reason==='staff_coffee') e.coffee += r.qty;
+    else if (r.reason==='staff_food') e.sweet += r.qty;
+  });
+  const over = Object.keys(perEmp).filter(id => perEmp[id].coffee > INV_STAFF_ALLOWANCE.coffee || perEmp[id].sweet > INV_STAFF_ALLOWANCE.sweet);
+  if (over.length){
+    const names = over.map(invEmpName).join(', ');
+    toast(`Heads up: ${names} over the ${INV_STAFF_ALLOWANCE.coffee} coffee + ${INV_STAFF_ALLOWANCE.sweet} sweet staff allowance — logged anyway.`, 'info');
   }
   toast(`${invShiftLabel(shift)} shift closed`, 'success');
   const s = invUIState(); s.view = 'board';
