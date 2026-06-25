@@ -770,6 +770,7 @@ function emptyState() {
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
     inventoryDrinks: [],    // catalog: [{ id, name, gramsPer, sortOrder, active }] — staff/comp drink recipes (grams per drink); bean is chosen per log
+    inventoryOwners: [],    // catalog: [{ id, name, sortOrder, active }] — owners pick-list for owner consumption (not employees)
     deviceRoster: null,     // branch-device only: [{id,firstName,lastName,avatarColor}] for the device's branch (via branch_roster RPC). null = not scoped (RPC unavailable) → picker falls back to all active staff.
     inventoryShiftsCache: {}, // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, businessDate, shift, status, openedByName, closedByName, foodicsTotal, counts:[{itemId, openingQty, closingQty, receivedQty}] }] } — reuses the daily_count_items catalog
     bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
@@ -1766,7 +1767,7 @@ const ATTENDANCE_BULK_LOAD_DAYS = 540;
 // the other count series. Deliberately omits payroll, attendance, leave,
 // receipts, etc. so none of it is ever in memory on a counter tablet.
 async function loadBranchDeviceData() {
-  const [companyR, branchesR, employeesR, extrasR, dciR, drinksR] = await Promise.all([
+  const [companyR, branchesR, employeesR, extrasR, dciR, drinksR, ownersR] = await Promise.all([
     sb.from('companies').select('*').limit(1).maybeSingle(),
     sb.from('branches').select('*').order('name'),
     // Names-only projection — no salary, leave balances, iqama, or consent
@@ -1779,6 +1780,7 @@ async function loadBranchDeviceData() {
     sb.from('employee_extras').select('employee_id, branch'),
     sb.from('daily_count_items').select('*').order('sort_order'),
     sb.from('inventory_drinks').select('*').order('sort_order'),
+    sb.from('inventory_owners').select('*').order('sort_order'),
   ]);
   if (companyR.data) {
     const c = mapCompanyFromDb(companyR.data);
@@ -1799,6 +1801,7 @@ async function loadBranchDeviceData() {
   (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   state.dailyCountItems = (dciR.data || []).map(mapDailyCountItemFromDb);
   state.inventoryDrinks = (drinksR.data || []).map(mapInventoryDrinkFromDb);
+  state.inventoryOwners = (ownersR.data || []).map(mapInventoryOwnerFromDb);
   // Branch-scoped staff roster for the "Who's on shift?" picker. The device
   // can't read other staff's branch via RLS, so a SECURITY DEFINER function
   // (branch_roster, SQL block 71) returns just the names for THIS branch.
@@ -1834,7 +1837,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1945,6 +1948,8 @@ async function loadAll() {
         .select('id, leave_id, ticket_mime, ticket_name, ticket_uploaded_at, ticket_uploaded_by, visa_mime, visa_name, visa_uploaded_at, visa_uploaded_by, created_at, updated_at'),
       // Inventory drinks recipe catalog (small, bounded) — staff/comp drink doses.
       sb.from('inventory_drinks').select('*').order('sort_order'),
+      // Inventory owners pick-list (small) — owner consumption attribution.
+      sb.from('inventory_owners').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2009,6 +2014,7 @@ async function loadAll() {
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.dailyCountItems    = (dailyCountItemsR.data || []).map(mapDailyCountItemFromDb);
     state.inventoryDrinks    = (inventoryDrinksR.data || []).map(mapInventoryDrinkFromDb);
+    state.inventoryOwners    = (inventoryOwnersR.data || []).map(mapInventoryOwnerFromDb);
     state.dailyCountsToday   = (dailyCountsTodayR.data || []).map(mapDailyCountFromDb);
     state.alertWeeklyCounts  = (alertWeeklyR.data || []).map(mapWeeklyCountFromDb);
     state.alertExpiryChecks  = (alertExpiryR.data || []).map(mapExpiryCheckFromDb);
@@ -20430,13 +20436,13 @@ function mapInventoryShiftCountFromDb(r){
 }
 function mapInventoryUsageFromDb(r){
   return {
-    id:r.id, shiftId:r.shift_id, itemId:r.item_id, drinkId:r.drink_id||null,
+    id:r.id, shiftId:r.shift_id, itemId:r.item_id, drinkId:r.drink_id||null, ownerId:r.owner_id||null,
     reason:r.reason||'staff_coffee', employeeId:r.employee_id||null,
     qty: r.qty==null ? 0 : Number(r.qty), note:r.note||'',
   };
 }
 function mapInventoryDrinkFromDb(r){
-  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), sortOrder:Number(r.sort_order)||0, active:r.active!==false };
+  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), category:r.category||'espresso', sortOrder:Number(r.sort_order)||0, active:r.active!==false };
 }
 function invActiveDrinks(){ return (state.inventoryDrinks||[]).filter(d=>d.active).slice().sort((a,b)=>a.sortOrder-b.sortOrder); }
 function invDrinkById(id){ return (state.inventoryDrinks||[]).find(d=>d.id===id) || null; }
@@ -20447,12 +20453,17 @@ function invUsageGrams(u, it){
   if (it && it.doseG!=null) return u.qty * (it.doseG||0);
   return 0;
 }
+function mapInventoryOwnerFromDb(r){ return { id:r.id, name:r.name||'', sortOrder:Number(r.sort_order)||0, active:r.active!==false }; }
+function invActiveOwners(){ return (state.inventoryOwners||[]).filter(o=>o.active).slice().sort((a,b)=>a.sortOrder-b.sortOrder); }
+function invOwnerName(id){ const o=(state.inventoryOwners||[]).find(x=>x.id===id); return o ? o.name : 'Owner'; }
 // Staff & customer usage-log reasons. Calibration/dial-in/remakes/training/
 // spillage live in the shift waste log (grams) — these are the ATTRIBUTED,
 // per-product, per-person uses entered in servings (drinks/pieces).
 const INV_USAGE_REASONS = [
   { key:'staff_coffee',  label:'Staff coffee' },
   { key:'staff_food',    label:'Staff food' },
+  { key:'owner_coffee',  label:'Owner coffee' },
+  { key:'owner_food',    label:'Owner food' },
   { key:'customer_comp', label:'Customer comp' },
   { key:'other',         label:'Other' },
 ];
@@ -20487,29 +20498,58 @@ function invUsageWhatOptions(u){
   const sGroup = sweets.length ? `<optgroup label="Sweets">${sweets.map(it=>`<option value="item:${it.id}" ${('item:'+it.id)===selSweet?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>` : '';
   return dGroup + sGroup;
 }
-// The bean select: every bean (espresso + V60) — the "manual, all beans"
-// choice. Only used when a drink is selected.
-function invUsageBeanOptions(u){
-  const sel = u.drinkId ? u.itemId : (invIsBeanItem(u.itemId) ? u.itemId : '');
-  return ['espresso','v60'].map(cat=>{
+// The bean select, scoped to the selected drink's category: an espresso drink
+// → Colombia/Guji only; a V60 drink → V60 beans; "Manual Espresso" (any) →
+// all 12. Updated live by invUsageDrinkChanged when the drink changes.
+function invBeanOptionsHTML(drinkCat, selId){
+  const cats = drinkCat==='any' ? ['espresso','v60'] : [drinkCat];
+  return cats.map(cat=>{
     const its = invActiveItems().filter(i=>i.category===cat);
     if (!its.length) return '';
-    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===sel?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
+    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===selId?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
   }).join('');
+}
+function invUsageBeanOptions(u){
+  const sel = u.drinkId ? u.itemId : (invIsBeanItem(u.itemId) ? u.itemId : '');
+  let cat = 'espresso';
+  if (u.drinkId){ const d = invDrinkById(u.drinkId); cat = d ? (d.category||'espresso') : 'espresso'; }
+  else if (!invIsSweetItem(u.itemId)){ cat = (invActiveDrinks()[0]||{}).category || 'espresso'; } // fresh row defaults to the first drink
+  return invBeanOptionsHTML(cat, sel);
+}
+// When the drink/sweet select changes: re-scope the bean options to the drink's
+// category, and hide the bean picker entirely for a sweet.
+function invUsageDrinkChanged(sel){
+  const row = sel.closest('.usage-row'); if (!row) return;
+  const beanSel = row.querySelector('.usage-bean');
+  const beanBox = beanSel ? beanSel.closest('.usage-bean-box') : null;
+  const val = sel.value || '';
+  if (val.indexOf('drink:')===0){
+    const d = invDrinkById(val.slice(6));
+    beanSel.innerHTML = invBeanOptionsHTML(d ? (d.category||'espresso') : 'espresso', beanSel.value);
+    if (beanBox) beanBox.style.display = '';
+  } else {
+    if (beanBox) beanBox.style.display = 'none'; // a sweet — no bean
+  }
 }
 // One editable line in the "Staff & customer log". Read back on save by class
 // from inside #inv-usage-rows. Flex-wraps to a 2nd line on narrow screens.
 function invUsageRowHTML(u){
   u = u || {};
   const reasonOpts = INV_USAGE_REASONS.map(r=>`<option value="${r.key}" ${u.reason===r.key?'selected':''}>${r.label}</option>`).join('');
-  const empOpts = `<option value="">— person —</option>` + invStaffList()
-    .sort((a,b)=>(a.firstName||'').localeCompare(b.firstName||''))
-    .map(e=>`<option value="${e.id}" ${u.employeeId===e.id?'selected':''}>${escapeHTML(`${e.firstName} ${e.lastName||''}`.trim())}</option>`).join('');
+  const optFor = e => `<option value="${e.id}" ${(!u.ownerId && u.employeeId===e.id)?'selected':''}>${escapeHTML(`${e.firstName} ${e.lastName||''}`.trim())}</option>`;
+  const sortByName = (a,b)=>(a.firstName||'').localeCompare(b.firstName||'');
+  const staff = invStaffList().slice().sort(sortByName);
+  // Owners are a simple pick-list (inventory_owners) — not employees. An owner
+  // option's value is prefixed own:<id> so save knows it's an owner_id.
+  const owners = invActiveOwners();
+  const empOpts = `<option value="">— person —</option>`
+    + `<optgroup label="Staff">${staff.map(optFor).join('')}</optgroup>`
+    + (owners.length ? `<optgroup label="Owners">${owners.map(o=>`<option value="own:${o.id}" ${u.ownerId===o.id?'selected':''}>${escapeHTML(o.name)}</option>`).join('')}</optgroup>` : '');
   return `<div class="usage-row flex flex-wrap gap-1.5 items-center mb-2 pb-2 border-b border-slate-100">
     <div class="w-28"><select class="usage-reason input w-full py-2 text-sm" title="Reason">${reasonOpts}</select></div>
     <div class="w-32"><select class="usage-emp input w-full py-2 text-sm" title="Person">${empOpts}</select></div>
-    <div class="w-40"><select class="usage-what input w-full py-2 text-sm" title="Drink or sweet">${invUsageWhatOptions(u)}</select></div>
-    <div class="w-28"><select class="usage-bean input w-full py-2 text-sm" title="Bean (for drinks)">${invUsageBeanOptions(u)}</select></div>
+    <div class="w-40"><select class="usage-what input w-full py-2 text-sm" title="Drink or sweet" onchange="invUsageDrinkChanged(this)">${invUsageWhatOptions(u)}</select></div>
+    <div class="w-28 usage-bean-box"${(!u.drinkId && invIsSweetItem(u.itemId)) ? ' style="display:none"' : ''}><select class="usage-bean input w-full py-2 text-sm" title="Bean (for drinks)">${invUsageBeanOptions(u)}</select></div>
     <div class="w-16"><input class="usage-qty input w-full py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="qty" value="${u.qty!=null&&u.qty!==0?u.qty:''}"></div>
     <button type="button" onclick="this.closest('.usage-row').remove()" aria-label="Remove line" class="text-slate-400 hover:text-rose-600 text-lg leading-none px-1">&times;</button>
   </div>`;
@@ -20540,15 +20580,22 @@ function openInventoryDrinkEdit(id){
     <div><label class="label">Drink name</label><input id="idr-name" class="input" placeholder="e.g. Flat White" value="${escapeHTML(e.name||'')}"></div>
     <div class="grid grid-cols-2 gap-3">
       <div><label class="label">Grams per drink</label><input id="idr-grams" type="number" step="0.1" class="input" value="${e.gramsPer!=null?e.gramsPer:20}"></div>
-      <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+      <div><label class="label">Bean choices</label><select id="idr-cat" class="input">
+        <option value="espresso" ${((e.category||'espresso')==='espresso')?'selected':''}>Espresso (Colombia / Guji)</option>
+        <option value="v60" ${e.category==='v60'?'selected':''}>V60 / Filter beans</option>
+        <option value="any" ${e.category==='any'?'selected':''}>Any bean</option>
+      </select></div>
     </div>
-    <label class="flex items-center gap-2 text-sm text-slate-700"><input id="idr-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+      <div class="flex items-end"><label class="flex items-center gap-2 text-sm text-slate-700 pb-2"><input id="idr-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label></div>
+    </div>
     ${d?`<button type="button" onclick="deleteInventoryDrink('${d.id}')" class="text-xs text-rose-600 hover:underline">Delete this drink</button>`:''}
   </div>`;
   openModal(d?'Edit drink':'Add drink', form, async ()=>{
     const name = $('#idr-name').value.trim();
     if (!name){ toast('Drink name required', 'error'); return false; }
-    const row = { name, grams_per: Number($('#idr-grams').value)||0, sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
+    const row = { name, grams_per: Number($('#idr-grams').value)||0, category: $('#idr-cat').value||'espresso', sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
     if (d){
       const { data, error } = await sb.from('inventory_drinks').update(row).eq('id', d.id).select().single();
       if (error){ toast(humanizeError(error), 'error'); return false; }
@@ -20569,6 +20616,52 @@ function deleteInventoryDrink(id){
     state.inventoryDrinks = (state.inventoryDrinks||[]).filter(x=>x.id!==id);
     toast('Drink deleted', 'success');
     openInventoryDrinksModal();
+  });
+}
+// Manage the owners pick-list (admin/head_barista). List → tap to edit.
+function openInventoryOwnersModal(){
+  const owners = (state.inventoryOwners||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const list = owners.length ? owners.map(o=>`
+    <button type="button" onclick="openInventoryOwnerEdit('${o.id}')" class="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left mb-2">
+      <span class="text-sm font-medium text-slate-800">${escapeHTML(o.name)}${o.active?'':' <span class="text-[10px] text-slate-400">(inactive)</span>'}</span>
+    </button>`).join('') : `<div class="text-sm text-slate-400 text-center py-4">No owners yet.</div>`;
+  openModal('Owners', `<div><div class="text-xs text-slate-500 mb-3">Owners who take coffee/sweets. They appear in the person picker under "Owners".</div>${list}<button type="button" onclick="openInventoryOwnerEdit()" class="btn btn-ghost btn-sm mt-1">${icon('plus','w-4 h-4')} Add owner</button></div>`, async ()=>true, { saveLabel:'Done' });
+}
+function openInventoryOwnerEdit(id){
+  const o = id ? (state.inventoryOwners||[]).find(x=>x.id===id) : null;
+  const e = o || {};
+  const form = `<div class="space-y-4">
+    <div><label class="label">Owner name</label><input id="iow-name" class="input" placeholder="e.g. Abdallah Alqatani" value="${escapeHTML(e.name||'')}"></div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="label">Sort order</label><input id="iow-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+      <div class="flex items-end"><label class="flex items-center gap-2 text-sm text-slate-700 pb-2"><input id="iow-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label></div>
+    </div>
+    ${o?`<button type="button" onclick="deleteInventoryOwner('${o.id}')" class="text-xs text-rose-600 hover:underline">Delete this owner</button>`:''}
+  </div>`;
+  openModal(o?'Edit owner':'Add owner', form, async ()=>{
+    const name = $('#iow-name').value.trim();
+    if (!name){ toast('Owner name required', 'error'); return false; }
+    const row = { name, sort_order: Number($('#iow-sort').value)||0, active: $('#iow-active').checked };
+    if (o){
+      const { data, error } = await sb.from('inventory_owners').update(row).eq('id', o.id).select().single();
+      if (error){ toast(humanizeError(error), 'error'); return false; }
+      Object.assign(o, mapInventoryOwnerFromDb(data));
+    } else {
+      const { data, error } = await sb.from('inventory_owners').insert(row).select().single();
+      if (error){ toast(humanizeError(error), 'error'); return false; }
+      state.inventoryOwners.push(mapInventoryOwnerFromDb(data));
+    }
+    toast('Owner saved', 'success');
+    return true;
+  }, { saveLabel:'Save' });
+}
+function deleteInventoryOwner(id){
+  if (!confirm('Delete this owner? Past logs are kept.')) return;
+  sb.from('inventory_owners').delete().eq('id', id).then(({ error })=>{
+    if (error){ toast(humanizeError(error), 'error'); return; }
+    state.inventoryOwners = (state.inventoryOwners||[]).filter(x=>x.id!==id);
+    toast('Owner deleted', 'success');
+    openInventoryOwnersModal();
   });
 }
 
@@ -20737,12 +20830,22 @@ function invBuildDashboard(branch){
   // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
   // pooled. This is the "where did it go" breakdown that explains variance.
   const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
+  const ownerAgg = {}; const ownersTotal = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId); if (!it) return;
     const grams   = invUsageGrams(u, it);              // drink dose, else bean dose, else 0
     const isCoffee = !!u.drinkId || it.doseG!=null;    // a drink or a bean = coffee
     const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
     if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
+    // Owners consume too, but they have no 1+1 allowance — aggregate per person.
+    if (u.reason==='owner_coffee' || u.reason==='owner_food'){
+      ownersTotal.coffeeG += grams; ownersTotal.sweets += pcs;
+      const ok = u.ownerId || ('emp:'+(u.employeeId||'_none'));
+      const oname = u.ownerId ? invOwnerName(u.ownerId) : invEmpName(u.employeeId);
+      const o = ownerAgg[ok] || (ownerAgg[ok] = { id:u.ownerId||u.employeeId||null, name: oname, coffeeG:0, sweets:0 });
+      o.coffeeG += grams; o.sweets += pcs;
+      return;
+    }
     const k = u.employeeId || '_none';
     const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeDrinks:0, coffeeG:0, sweets:0 });
     if (u.reason==='staff_coffee'){ a.coffeeDrinks += u.qty; a.coffeeG += grams; }
@@ -20758,8 +20861,13 @@ function invBuildDashboard(branch){
     .filter(a=>a.coffeeDrinks>0 || a.sweets>0 || a.coffeeG>0)
     .sort((x,y)=> (Number(y.over)-Number(x.over)) || ((y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000)));
   const staffOverCount = staffUsage.filter(a=>a.over).length;
-  comps.coffeeG = Math.round(comps.coffeeG); comps.sweets = Math.round(comps.sweets*100)/100;
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  comps.coffeeG  = Math.round(comps.coffeeG);  comps.sweets  = Math.round(comps.sweets*100)/100;
+  ownersTotal.coffeeG = Math.round(ownersTotal.coffeeG); ownersTotal.sweets = Math.round(ownersTotal.sweets*100)/100;
+  const ownerUsage = Object.values(ownerAgg)
+    .map(o=>({ ...o, coffeeG: Math.round(o.coffeeG), sweets: Math.round(o.sweets*100)/100 }))
+    .filter(o=>o.coffeeG>0 || o.sweets>0)
+    .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20917,6 +21025,25 @@ function invBuildDashboardHTML(branch){
             <td class="py-2 text-right ${a.sweetOver?'text-rose-600 font-semibold':'text-slate-600'}">${a.sweets?`${a.sweets} pcs${a.sweetOver?` (+${a.sweetOver})`:''}`:'—'}</td>
           </tr>`).join('') : `<tr><td colspan="3" class="py-6 text-center text-slate-400 text-sm">No staff consumption logged today.</td></tr>`}</tbody>
       </table>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-sm font-semibold text-slate-800">Owner consumption · today</div>
+        <span class="text-[11px] text-slate-400">no allowance · tracked as cost</span>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
+          <th class="py-1 pr-3 font-semibold">Owner</th>
+          <th class="py-1 pr-3 font-semibold text-right">Coffee</th>
+          <th class="py-1 font-semibold text-right">Sweets</th>
+        </tr></thead>
+        <tbody>${d.ownerUsage.length ? d.ownerUsage.map(o=>`
+          <tr class="border-t border-slate-100">
+            <td class="py-2 pr-3 text-slate-800">${escapeHTML(o.name)}</td>
+            <td class="py-2 pr-3 text-right text-slate-600">${o.coffeeG?`${o.coffeeG} g`:'—'}</td>
+            <td class="py-2 text-right text-slate-600">${o.sweets?`${o.sweets} pcs`:'—'}</td>
+          </tr>`).join('') : `<tr><td colspan="3" class="py-6 text-center text-slate-400 text-sm">No owner consumption logged today.</td></tr>`}</tbody>
+      </table>
     </div>`;
 }
 
@@ -21027,7 +21154,7 @@ function invRenderEntry(branch){
       <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold">Staff &amp; customer log</div>
         <div class="flex items-center gap-1">
-          ${hasRole('admin','head_barista') ? `<button type="button" onclick="openInventoryDrinksModal()" class="btn btn-ghost btn-sm">Manage drinks</button>` : ''}
+          ${hasRole('admin','head_barista') ? `<button type="button" onclick="openInventoryOwnersModal()" class="btn btn-ghost btn-sm">Owners</button><button type="button" onclick="openInventoryDrinksModal()" class="btn btn-ghost btn-sm">Drinks</button>` : ''}
           <button type="button" onclick="invUsageAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
         </div>
       </div>
@@ -21177,10 +21304,14 @@ async function invSaveClose(shiftId, branch, shift){
       item_id  = whatVal.slice(5);
     }
     if (!item_id) return;
+    // Person can be a staff member (plain id) or an owner (own:<id>).
+    const personVal = row.querySelector('.usage-emp')?.value || '';
+    const isOwner = personVal.indexOf('own:')===0;
     usageRows.push({
       shift_id: shiftId, item_id, drink_id,
       reason: row.querySelector('.usage-reason')?.value || 'other',
-      employee_id: row.querySelector('.usage-emp')?.value || null,
+      employee_id: isOwner ? null : (personVal || null),
+      owner_id:    isOwner ? personVal.slice(4) : null,
       qty,
     });
   });

@@ -4182,18 +4182,24 @@ CREATE TABLE IF NOT EXISTS public.inventory_drinks (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
   grams_per   numeric(8,2) not null default 20,
+  category    text not null default 'espresso',  -- which beans the drink can use: espresso | v60 | any
   sort_order  int not null default 0,
   active      boolean not null default true,
   created_at  timestamptz not null default now()
 );
+-- Idempotent guard if an earlier version of this block (without category) ran.
+ALTER TABLE public.inventory_drinks ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'espresso';
 -- Starter espresso menu (idempotent — only seeds when the table is empty).
-INSERT INTO public.inventory_drinks (name, grams_per, sort_order)
-SELECT v.name, v.g, v.so FROM (VALUES
-  ('Manual Espresso',20,10),('Espresso',20,20),('Double Espresso',40,30),
-  ('Americano',20,40),('Latte',20,50),('Cappuccino',20,60),
-  ('Flat White',40,70),('Cortado',20,80),('Macchiato',20,90)
-) AS v(name,g,so)
+-- Espresso drinks → bean pick is Colombia/Guji; "Manual Espresso" → any bean.
+INSERT INTO public.inventory_drinks (name, grams_per, category, sort_order)
+SELECT v.name, v.g, v.cat, v.so FROM (VALUES
+  ('Manual Espresso',20,'any',     10),('Espresso',20,'espresso',20),('Double Espresso',40,'espresso',30),
+  ('Americano',20,'espresso',40),('Latte',20,'espresso',50),('Cappuccino',20,'espresso',60),
+  ('Flat White',40,'espresso',70),('Cortado',20,'espresso',80),('Macchiato',20,'espresso',90)
+) AS v(name,g,cat,so)
 WHERE NOT EXISTS (SELECT 1 FROM public.inventory_drinks);
+-- If the menu was already seeded without categories, set Manual Espresso to 'any'.
+UPDATE public.inventory_drinks SET category='any' WHERE lower(name)='manual espresso' AND category IS DISTINCT FROM 'any';
 
 CREATE INDEX IF NOT EXISTS inventory_drinks_sort_idx ON public.inventory_drinks(sort_order);
 
@@ -4215,6 +4221,52 @@ CREATE POLICY "idr_delete_admin_head" ON public.inventory_drinks FOR DELETE TO a
   USING (public.has_role(ARRAY['admin','head_barista']));
 
 ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS drink_id uuid references public.inventory_drinks(id) ON DELETE SET NULL;
+
+-- =============================================================
+-- 75. INVENTORY USAGE — owner consumption reasons
+--     Owners also take coffee/sweets — tracked but exempt from the staff
+--     1+1 allowance. Widen the usage-log reason CHECK with owner_coffee /
+--     owner_food (idempotent drop-then-add).
+-- =============================================================
+ALTER TABLE public.inventory_usage_log DROP CONSTRAINT IF EXISTS inventory_usage_reason_chk;
+ALTER TABLE public.inventory_usage_log ADD CONSTRAINT inventory_usage_reason_chk
+  CHECK (reason IN ('staff_coffee','staff_food','owner_coffee','owner_food','customer_comp','other'));
+
+-- =============================================================
+-- 76. INVENTORY OWNERS — a simple owners list for consumption logging
+--     Owners aren't employees and have no app role. This is just a short
+--     pick-list (seeded with the business owners; manage in-app). A usage row
+--     for an owner sets owner_id; the dashboard's per-owner card reads it.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_owners (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  sort_order  int not null default 0,
+  active      boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+INSERT INTO public.inventory_owners (name, sort_order)
+SELECT v.name, v.so FROM (VALUES ('Abdallah Alqatani',10),('Omar',20)) AS v(name,so)
+WHERE NOT EXISTS (SELECT 1 FROM public.inventory_owners);
+
+ALTER TABLE public.inventory_owners ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='inventory_owners'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.inventory_owners', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "iow_select_floor_ops_device" ON public.inventory_owners FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "iow_insert_admin_head" ON public.inventory_owners FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "iow_update_admin_head" ON public.inventory_owners FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "iow_delete_admin_head" ON public.inventory_owners FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS owner_id uuid references public.inventory_owners(id) ON DELETE SET NULL;
 
 -- =============================================================
 -- DONE.
