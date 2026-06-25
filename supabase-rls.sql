@@ -4182,18 +4182,24 @@ CREATE TABLE IF NOT EXISTS public.inventory_drinks (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
   grams_per   numeric(8,2) not null default 20,
+  category    text not null default 'espresso',  -- which beans the drink can use: espresso | v60 | any
   sort_order  int not null default 0,
   active      boolean not null default true,
   created_at  timestamptz not null default now()
 );
+-- Idempotent guard if an earlier version of this block (without category) ran.
+ALTER TABLE public.inventory_drinks ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'espresso';
 -- Starter espresso menu (idempotent — only seeds when the table is empty).
-INSERT INTO public.inventory_drinks (name, grams_per, sort_order)
-SELECT v.name, v.g, v.so FROM (VALUES
-  ('Manual Espresso',20,10),('Espresso',20,20),('Double Espresso',40,30),
-  ('Americano',20,40),('Latte',20,50),('Cappuccino',20,60),
-  ('Flat White',40,70),('Cortado',20,80),('Macchiato',20,90)
-) AS v(name,g,so)
+-- Espresso drinks → bean pick is Colombia/Guji; "Manual Espresso" → any bean.
+INSERT INTO public.inventory_drinks (name, grams_per, category, sort_order)
+SELECT v.name, v.g, v.cat, v.so FROM (VALUES
+  ('Manual Espresso',20,'any',     10),('Espresso',20,'espresso',20),('Double Espresso',40,'espresso',30),
+  ('Americano',20,'espresso',40),('Latte',20,'espresso',50),('Cappuccino',20,'espresso',60),
+  ('Flat White',40,'espresso',70),('Cortado',20,'espresso',80),('Macchiato',20,'espresso',90)
+) AS v(name,g,cat,so)
 WHERE NOT EXISTS (SELECT 1 FROM public.inventory_drinks);
+-- If the menu was already seeded without categories, set Manual Espresso to 'any'.
+UPDATE public.inventory_drinks SET category='any' WHERE lower(name)='manual espresso' AND category IS DISTINCT FROM 'any';
 
 CREATE INDEX IF NOT EXISTS inventory_drinks_sort_idx ON public.inventory_drinks(sort_order);
 
