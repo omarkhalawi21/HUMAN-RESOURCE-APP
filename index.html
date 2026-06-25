@@ -769,6 +769,7 @@ function emptyState() {
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
+    deviceRoster: null,     // branch-device only: [{id,firstName,lastName,avatarColor}] for the device's branch (via branch_roster RPC). null = not scoped (RPC unavailable) → picker falls back to all active staff.
     inventoryShiftsCache: {}, // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, businessDate, shift, status, openedByName, closedByName, foodicsTotal, counts:[{itemId, openingQty, closingQty, receivedQty}] }] } — reuses the daily_count_items catalog
     bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
     bakeryTransfersCache: {}, // on-demand per YYYY-MM (all branches): { "2026-05": [{ id, productId, branch, transferDate, qty }] }
@@ -1794,6 +1795,15 @@ async function loadBranchDeviceData() {
   state.empExtras = {};
   (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   state.dailyCountItems = (dciR.data || []).map(mapDailyCountItemFromDb);
+  // Branch-scoped staff roster for the "Who's on shift?" picker. The device
+  // can't read other staff's branch via RLS, so a SECURITY DEFINER function
+  // (branch_roster, SQL block 71) returns just the names for THIS branch.
+  // null = function unavailable → picker falls back to all active staff.
+  const devBranch = dcDefaultBranch();
+  const { data: roster, error: rErr } = await sb.rpc('branch_roster', { p_branch: devBranch });
+  state.deviceRoster = rErr ? null : (roster || []).map(r => ({
+    id: r.id, firstName: r.first_name || '', lastName: r.last_name || '', avatarColor: r.avatar_color || '#a87035'
+  }));
 }
 
 async function loadAll() {
@@ -20681,7 +20691,7 @@ function invShiftCardHTML(branch, shift){
   let body, actions;
   if (!s){
     body = `<div class="text-sm text-slate-500">Not started yet.</div>`;
-    actions = `<button onclick="invGoEntry('${shift}','open')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Start ${invShiftLabel(shift).toLowerCase()} · opening stock</button>`;
+    actions = `<button onclick="invStartOpen('${shift}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Start ${invShiftLabel(shift).toLowerCase()} · opening stock</button>`;
   } else if (s.status==='open'){
     const consumed = s.counts.reduce((a,c)=>a+invConsumed(c),0);
     body = `<div class="text-sm text-slate-600">Opened by <span class="font-medium text-slate-800">${escapeHTML(s.openedByName||'—')}</span></div>
@@ -20792,7 +20802,10 @@ function invRenderEntry(branch){
     </div>`;
 }
 
-async function invSaveOpen(branch, shift){
+// Persist an opening shift. valueFn(item) returns that item's opening qty
+// (from the live form inputs, or from a carried-over map). Shared by the
+// editable form (invSaveOpen) and the carry-over confirm popup (invStartOpen).
+async function invPersistOpen(branch, shift, valueFn){
   const today = todayISO();
   const actor = invActor();
   const nowISO = new Date().toISOString();
@@ -20801,7 +20814,7 @@ async function invSaveOpen(branch, shift){
     opened_by: actor.id, opened_by_name: actor.name, opened_at: nowISO, updated_at: nowISO,
   }, { onConflict:'branch,business_date,shift' }).select().single();
   if (error){ toast('Could not start shift: ' + error.message, 'error'); return; }
-  const rows = invActiveItems().map(it=>({ shift_id:shiftRow.id, item_id:it.id, opening_qty: invNum('inv-'+it.id+'-open') })).filter(r=>r.opening_qty!=null);
+  const rows = invActiveItems().map(it=>({ shift_id:shiftRow.id, item_id:it.id, opening_qty: valueFn(it) })).filter(r=>r.opening_qty!=null);
   if (rows.length){
     const { error:e2 } = await sb.from('inventory_shift_counts').upsert(rows, { onConflict:'shift_id,item_id' });
     if (e2){ toast('Saved shift, but counts failed: ' + e2.message, 'error'); }
@@ -20810,6 +20823,49 @@ async function invSaveOpen(branch, shift){
   const s = invUIState(); s.view = 'board';
   invInvalidate(branch, today.slice(0,7));
   await loadInventoryShifts(branch, today.slice(0,7));
+}
+async function invSaveOpen(branch, shift){
+  return invPersistOpen(branch, shift, it => invNum('inv-'+it.id+'-open'));
+}
+
+// The most recent CLOSED shift for a branch (yesterday's evening, or this
+// morning when opening the evening shift) — the source of carry-over opening.
+function invLastClosedShift(branch){
+  let best=null, bestStamp='';
+  Object.keys(state.inventoryShiftsCache).forEach(k=>{
+    if (k.indexOf(branch+'|') !== 0) return;
+    (state.inventoryShiftsCache[k] || []).forEach(s=>{
+      if (s.status!=='closed') return;
+      const stamp = s.businessDate + (s.shift==='evening' ? '2' : '1');
+      if (!best || stamp > bestStamp){ best = s; bestStamp = stamp; }
+    });
+  });
+  return best;
+}
+// Start an opening shift. If there's a previous closing to carry over, show a
+// one-tap confirm popup pre-filled with those numbers; otherwise fall straight
+// through to the manual entry form (the first count of all time).
+function invStartOpen(shift){
+  const branch = invBranch();
+  const items = invActiveItems();
+  const last = invLastClosedShift(branch);
+  const carried = {};
+  if (last) last.counts.forEach(c=>{ if (c.closingQty!=null) carried[c.itemId] = c.closingQty; });
+  if (!Object.keys(carried).length){ invGoEntry(shift, 'open'); return; }
+  const srcLabel = `${invShiftLabel(last.shift)} · ${invDayLabel(last.businessDate)}`;
+  const list = items.map(it => carried[it.id]!=null
+    ? `<div class="flex items-center justify-between py-1.5 border-b border-slate-50 text-sm">
+         <span class="text-slate-700">${escapeHTML(it.name)}</span>
+         <span class="font-semibold text-slate-900">${carried[it.id]} ${escapeHTML(it.unit)}</span>
+       </div>` : '').join('');
+  const body = `
+    <p class="text-sm text-slate-600 mb-3">Opening stock is carried over from the <span class="font-semibold text-slate-800">${escapeHTML(srcLabel)}</span> closing count. Press <span class="font-semibold">Confirm</span> to open the ${invShiftLabel(shift).toLowerCase()} shift with these numbers — or adjust if something changed.</p>
+    <div class="max-h-80 overflow-y-auto rounded-xl border border-slate-100 px-3">${list}</div>
+    <button onclick="closeModal(); invGoEntry('${shift}','open');" class="mt-3 text-sm text-brand-700 font-medium hover:underline">Adjust numbers instead →</button>`;
+  openModal(`Open ${invShiftLabel(shift).toLowerCase()} shift`, body, async ()=>{
+    await invPersistOpen(branch, shift, it => (carried[it.id]!=null ? carried[it.id] : null));
+    return true;
+  }, { saveLabel:'Confirm & open shift' });
 }
 async function invSaveClose(shiftId, branch, shift){
   const today = todayISO();
@@ -20924,9 +20980,17 @@ function renderDeviceShell(branch, bodyHTML){
     </div>`;
 }
 function renderDeviceStaffPicker(branch){
-  const staff = (state.employees||[])
-    .filter(e => e.status==='active' && e.systemRole!=='branch_device')
-    .sort((a,b)=> (a.firstName||'').localeCompare(b.firstName||''));
+  // Prefer the branch-scoped roster (branch_roster RPC). If it's null the
+  // function isn't deployed yet — fall back to all active staff so the kiosk
+  // still works (just not branch-filtered).
+  const scoped = Array.isArray(state.deviceRoster);
+  const staff = (scoped
+      ? state.deviceRoster
+      : (state.employees||[]).filter(e => e.status==='active' && e.systemRole!=='branch_device'))
+    .slice().sort((a,b)=> (a.firstName||'').localeCompare(b.firstName||''));
+  const emptyMsg = scoped
+    ? `No staff are assigned to ${escapeHTML(branch)} yet — set each person's Branch in their employee profile.`
+    : `No active staff found.`;
   const tiles = staff.map(e=>{
     const name = `${e.firstName} ${e.lastName||''}`.trim();
     const initials = ((e.firstName||'?')[0]||'?').toUpperCase() + ((e.lastName||'')[0]||'').toUpperCase();
@@ -20952,7 +21016,7 @@ function renderDeviceStaffPicker(branch){
         <p class="text-sm text-slate-500 text-center mt-1 mb-5">Tap your name to start. Every count is recorded under it.</p>
         <input oninput="invFilterStaff(this.value)" placeholder="Search your name…" class="input w-full max-w-sm mx-auto block mb-6 py-3 text-base" />
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          ${tiles || `<div class="col-span-full text-center text-slate-400 text-sm py-8">No active staff found.</div>`}
+          ${tiles || `<div class="col-span-full text-center text-slate-400 text-sm py-8">${escapeHTML(emptyMsg)}</div>`}
         </div>
       </main>
     </div>`;
@@ -20961,7 +21025,8 @@ function renderDeviceStaffPicker(branch){
 // in an inline onclick — quotes/apostrophes in names would break the
 // attribute). Sets who's on shift and advances to the shift board.
 function devicePickStaff(id){
-  const e = (state.employees||[]).find(x=>x.id===id);
+  const e = (Array.isArray(state.deviceRoster) ? state.deviceRoster : []).find(x=>x.id===id)
+         || (state.employees||[]).find(x=>x.id===id);
   deviceState.staffId = id;
   deviceState.staffName = e ? `${e.firstName} ${e.lastName||''}`.trim() : '';
   deviceState.view = 'board';
