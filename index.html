@@ -1066,6 +1066,12 @@ const ROLES = {
   maintenance:  { label: 'Maintenance' },
   bakery:       { label: 'Bakery' },
   employee:     { label: 'Employee' },
+  // Business owners. NOT an access grant — owners have no privileged gates
+  // (they fall through to a basic dashboard if they ever log in). The role
+  // exists so owners are selectable in the inventory "Owners / Management"
+  // person picker for owner coffee/sweet consumption, without making them
+  // full admins.
+  owner:        { label: 'Owner' },
   // Shared per-branch iPad login for the Inventory hub. NOT a person —
   // it's a kiosk account locked to one branch that can ONLY reach the
   // shift-stock + dashboard screens (no HR/payroll/employee data). On
@@ -13365,8 +13371,10 @@ function renderRoleDashboard() {
   if (role === 'bakery')       return renderBakeryDashboard();
   if (role === 'head_barista') return renderHeadBaristaDashboard();
   if (role === 'roaster')      return renderRoasterDashboard();
-  // Personal-view roles share one focused employee dashboard.
-  if (role === 'barista' || role === 'employee') {
+  // Personal-view roles share one focused employee dashboard. 'owner' is a
+  // non-privileged tag (used only for inventory consumption attribution); if
+  // an owner ever logs in, give them the same basic view, never the HR one.
+  if (role === 'barista' || role === 'employee' || role === 'owner') {
     return renderBaristaDashboard();
   }
   // admin and hr still use the existing HR dashboard.
@@ -20533,7 +20541,7 @@ function invUsageRowHTML(u){
   const staffIds = new Set(staff.map(s=>s.id));
   // Owners/management aren't branch floor staff but still consume — list them
   // so an owner row can be attributed (see Owner coffee/food reasons).
-  const owners = (state.employees||[]).filter(e=>e.status==='active' && e.systemRole==='admin' && !staffIds.has(e.id)).sort(sortByName);
+  const owners = (state.employees||[]).filter(e=>e.status==='active' && (e.systemRole==='owner' || e.systemRole==='admin') && !staffIds.has(e.id)).sort(sortByName);
   const empOpts = `<option value="">— person —</option>`
     + `<optgroup label="Staff">${staff.map(optFor).join('')}</optgroup>`
     + (owners.length ? `<optgroup label="Owners / Management">${owners.map(optFor).join('')}</optgroup>` : '');

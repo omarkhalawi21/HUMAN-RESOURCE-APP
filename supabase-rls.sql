@@ -4233,6 +4233,21 @@ ALTER TABLE public.inventory_usage_log ADD CONSTRAINT inventory_usage_reason_chk
   CHECK (reason IN ('staff_coffee','staff_food','owner_coffee','owner_food','customer_comp','other'));
 
 -- =============================================================
+-- 76. EMPLOYEES — add 'owner' system role (business owners)
+--     A non-privileged tag so owners are selectable in the inventory
+--     "Owners / Management" person picker without granting HR-admin access.
+--     Idempotent drop-then-add of the system_role CHECK with 'owner' added.
+-- =============================================================
+ALTER TABLE public.employees
+  DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees
+  ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista','roaster',
+    'accounting','marketing','maintenance','bakery','employee','branch_device','owner'
+  ));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
