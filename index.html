@@ -20775,15 +20775,22 @@ function invBuildDashboard(branch){
   // Staff & customer usage TODAY. qty is in servings; a bean → grams via dose,
   // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
   // pooled. This is the "where did it go" breakdown that explains variance.
-  const staffAgg = {}; const comps = { coffeeG:0, sweets:0 }; const owners = { coffeeG:0, sweets:0 };
+  const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
+  const ownerAgg = {}; const ownersTotal = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId); if (!it) return;
     const grams   = invUsageGrams(u, it);              // drink dose, else bean dose, else 0
     const isCoffee = !!u.drinkId || it.doseG!=null;    // a drink or a bean = coffee
     const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
     if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
-    // Owners consume too, but they have no 1+1 allowance — pool them separately.
-    if (u.reason==='owner_coffee' || u.reason==='owner_food'){ owners.coffeeG += grams; owners.sweets += pcs; return; }
+    // Owners consume too, but they have no 1+1 allowance — aggregate per person.
+    if (u.reason==='owner_coffee' || u.reason==='owner_food'){
+      ownersTotal.coffeeG += grams; ownersTotal.sweets += pcs;
+      const ok = u.employeeId || '_none';
+      const o = ownerAgg[ok] || (ownerAgg[ok] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeG:0, sweets:0 });
+      o.coffeeG += grams; o.sweets += pcs;
+      return;
+    }
     const k = u.employeeId || '_none';
     const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeDrinks:0, coffeeG:0, sweets:0 });
     if (u.reason==='staff_coffee'){ a.coffeeDrinks += u.qty; a.coffeeG += grams; }
@@ -20800,8 +20807,12 @@ function invBuildDashboard(branch){
     .sort((x,y)=> (Number(y.over)-Number(x.over)) || ((y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000)));
   const staffOverCount = staffUsage.filter(a=>a.over).length;
   comps.coffeeG  = Math.round(comps.coffeeG);  comps.sweets  = Math.round(comps.sweets*100)/100;
-  owners.coffeeG = Math.round(owners.coffeeG); owners.sweets = Math.round(owners.sweets*100)/100;
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, owners, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  ownersTotal.coffeeG = Math.round(ownersTotal.coffeeG); ownersTotal.sweets = Math.round(ownersTotal.sweets*100)/100;
+  const ownerUsage = Object.values(ownerAgg)
+    .map(o=>({ ...o, coffeeG: Math.round(o.coffeeG), sweets: Math.round(o.sweets*100)/100 }))
+    .filter(o=>o.coffeeG>0 || o.sweets>0)
+    .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20942,7 +20953,6 @@ function invBuildDashboardHTML(branch){
         <div class="text-sm font-semibold text-slate-800">Staff consumption · today</div>
         <div class="flex items-center gap-2 flex-wrap">
           ${d.staffOverCount ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3.5 h-3.5')} ${d.staffOverCount} over allowance</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">all within allowance</span>`}
-          ${(d.owners.coffeeG||d.owners.sweets) ? `<span class="text-[11px] text-slate-500">Owners: <span class="font-semibold text-slate-700">${d.owners.coffeeG} g</span>${d.owners.sweets?` · <span class="font-semibold text-slate-700">${d.owners.sweets}</span> sweets`:''}</span>` : ''}
           ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span>${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
         </div>
       </div>
@@ -20959,6 +20969,25 @@ function invBuildDashboardHTML(branch){
             <td class="py-2 pr-3 text-right ${a.coffeeOver?'text-rose-600 font-semibold':'text-slate-600'}">${a.coffeeDrinks?`${a.coffeeDrinks} ${a.coffeeDrinks===1?'coffee':'coffees'}${a.coffeeG?` <span class="text-[10px] text-slate-400 font-normal">${a.coffeeG} g</span>`:''}${a.coffeeOver?` (+${a.coffeeOver})`:''}`:'—'}</td>
             <td class="py-2 text-right ${a.sweetOver?'text-rose-600 font-semibold':'text-slate-600'}">${a.sweets?`${a.sweets} pcs${a.sweetOver?` (+${a.sweetOver})`:''}`:'—'}</td>
           </tr>`).join('') : `<tr><td colspan="3" class="py-6 text-center text-slate-400 text-sm">No staff consumption logged today.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
+      <div class="flex items-center justify-between mb-1">
+        <div class="text-sm font-semibold text-slate-800">Owner consumption · today</div>
+        <span class="text-[11px] text-slate-400">no allowance · tracked as cost</span>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
+          <th class="py-1 pr-3 font-semibold">Owner</th>
+          <th class="py-1 pr-3 font-semibold text-right">Coffee</th>
+          <th class="py-1 font-semibold text-right">Sweets</th>
+        </tr></thead>
+        <tbody>${d.ownerUsage.length ? d.ownerUsage.map(o=>`
+          <tr class="border-t border-slate-100">
+            <td class="py-2 pr-3 text-slate-800">${escapeHTML(o.name)}</td>
+            <td class="py-2 pr-3 text-right text-slate-600">${o.coffeeG?`${o.coffeeG} g`:'—'}</td>
+            <td class="py-2 text-right text-slate-600">${o.sweets?`${o.sweets} pcs`:'—'}</td>
+          </tr>`).join('') : `<tr><td colspan="3" class="py-6 text-center text-slate-400 text-sm">No owner consumption logged today.</td></tr>`}</tbody>
       </table>
     </div>`;
 }
