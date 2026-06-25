@@ -5249,6 +5249,50 @@ function _clockGuardExit(g) {
   _clockBusy = false;
   if (g && g.btn) { g.btn.disabled = false; g.btn.style.opacity = ''; g.btn.style.pointerEvents = ''; }
 }
+// Shared location capture + branch geofence for BOTH clock-in and clock-out,
+// so the same physical-presence restriction applies to each. Returns
+// { location, branch } on success ({location:null} when location isn't
+// required), or null if it failed (a toast was already shown). `action` is a
+// label used in the messages ('Clock-in' / 'Clock-out').
+async function captureClockLocation(action) {
+  let location = null, branch = null;
+  const branchesActive = (state.branches||[]).filter(b => b.isActive);
+  const requireBranch = branchesActive.length > 0;
+  if (state.settings.requireLocation || requireBranch) {
+    if (!navigator.geolocation) {
+      toast('This device does not support location. Ask your admin for help.', 'error');
+      return null;
+    }
+    toast('Capturing location...');
+    let pos;
+    try {
+      pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, enableHighAccuracy: true }));
+    } catch(e) {
+      toast('Could not get your location. Please enable location permissions and try again.', 'error');
+      return null;
+    }
+    const lat = pos.coords.latitude, lng = pos.coords.longitude, acc = pos.coords.accuracy || 0;
+    location = { lat, lng, label: 'Captured' };
+    if (requireBranch) {
+      const near = nearestBranch(lat, lng, acc);
+      if (!near) {
+        toast('No active branches configured. Ask your admin.', 'error'); return null;
+      }
+      if (!near.within) {
+        const dist = Math.round(near.distance);
+        toast(`You are ${dist}m from "${near.branch.name}". ${action} only works at a branch location.`, 'error');
+        return null;
+      }
+      if (near.branch.isHeadOffice && !HEAD_OFFICE_ROLES.includes(realRole())) {
+        toast(`"${near.branch.name}" is the head office — ${action.toLowerCase()} here is for office staff only (admin, operations, accounting, marketing).`, 'error');
+        return null;
+      }
+      branch = near.branch;
+      location.label = near.branch.name;
+    }
+  }
+  return { location, branch };
+}
 async function clockIn(ev) {
   const g = _clockGuardEnter(ev);
   if (!g) return;
@@ -5271,45 +5315,9 @@ async function clockIn(ev) {
   // 15-minute grace period — clock-ins more than 15 min after shift start
   // are flagged late.
   const status = lateMin > 15 ? 'late' : 'present';
-  let location = null;
-  let branch = null;
-  const branchesActive = (state.branches||[]).filter(b => b.isActive);
-  const requireBranch = branchesActive.length > 0;
-
-  if (state.settings.requireLocation || requireBranch) {
-    if (!navigator.geolocation) {
-      toast('This device does not support location. Ask your admin for help.', 'error');
-      return;
-    }
-    toast('Capturing location...');
-    let pos;
-    try {
-      pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, enableHighAccuracy: true }));
-    } catch(e) {
-      toast('Could not get your location. Please enable location permissions and try again.', 'error');
-      return;
-    }
-    const lat = pos.coords.latitude, lng = pos.coords.longitude, acc = pos.coords.accuracy || 0;
-    location = { lat, lng, label: 'Captured' };
-
-    if (requireBranch) {
-      const near = nearestBranch(lat, lng, acc);
-      if (!near) {
-        toast('No active branches configured. Ask your admin.', 'error'); return;
-      }
-      if (!near.within) {
-        const dist = Math.round(near.distance);
-        toast(`You are ${dist}m from "${near.branch.name}". Clock-in only works at a branch location.`, 'error');
-        return;
-      }
-      if (near.branch.isHeadOffice && !HEAD_OFFICE_ROLES.includes(realRole())) {
-        toast(`"${near.branch.name}" is the head office — clock-in here is for office staff only (admin, operations, accounting, marketing).`, 'error');
-        return;
-      }
-      branch = near.branch;
-      location.label = near.branch.name;
-    }
-  }
+  const geo = await captureClockLocation('Clock-in');
+  if (!geo) return;
+  const location = geo.location, branch = geo.branch;
 
   const { data, error } = await sb.from('attendance').insert({
     employee_id: me.id, date: todayISO(),
@@ -5341,6 +5349,11 @@ async function clockOut(ev) {
   const rec = state.attendance.find(a => a.employeeId===me.id && a.date===today);
   if (!rec) { toast('No clock-in found', 'error'); return; }
   if (rec.clockOut) { toast('You already clocked out today.'); return; }  // never double clock-out
+  // Same physical-presence restriction as clock-in: you must be at a branch
+  // (and pass the head-office role gate) to clock out. Gate only — clock-in's
+  // captured location/branch on the row is preserved.
+  const geo = await captureClockLocation('Clock-out');
+  if (!geo) return;
   const newOut = nowHHMM();
   // Catch the "clocked in & out at the same time" mistake: if the clock-in
   // was only minutes ago, make them confirm. Genuine short shifts still go
