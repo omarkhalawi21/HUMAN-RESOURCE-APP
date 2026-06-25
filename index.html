@@ -1469,6 +1469,7 @@ function mapDailyCountItemFromDb(r) {
     tracksWaste: !!r.tracks_waste,
     sortOrder: Number(r.sort_order) || 0,
     lowAt: r.low_at == null ? null : Number(r.low_at),
+    doseG: r.dose_g == null ? null : Number(r.dose_g),
     active: r.active !== false,
   };
 }
@@ -15266,6 +15267,10 @@ function openDailyCountItemModal(editing) {
         <div><label class="label">Sort order</label><input id="dci-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
         <div><label class="label">Reorder at (low)</label><input id="dci-low" type="number" step="0.01" class="input" placeholder="default" value="${e.lowAt!=null?e.lowAt:''}"></div>
       </div>
+      <div>
+        <label class="label">Standard dose — g per cup/shot <span class="text-slate-400 font-normal">(beans only; powers theoretical-usage variance)</span></label>
+        <input id="dci-dose" type="number" step="0.1" class="input" placeholder="e.g. 20" value="${e.doseG!=null?e.doseG:''}">
+      </div>
       <div class="flex items-center gap-4 pb-1">
         <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-waste" type="checkbox" ${e.tracksWaste?'checked':''}> Tracks waste</label>
         <label class="flex items-center gap-2 text-sm text-slate-700"><input id="dci-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
@@ -15282,6 +15287,7 @@ function openDailyCountItemModal(editing) {
       tracks_waste: $('#dci-waste').checked,
       sort_order: Number($('#dci-sort').value) || 0,
       low_at: dcNum($('#dci-low').value),
+      dose_g: dcNum($('#dci-dose').value),
       active: $('#dci-active').checked,
     };
     if (editing) {
@@ -20398,6 +20404,10 @@ function mapInventoryShiftFromDb(r){
     openedBy:r.opened_by, openedByName:r.opened_by_name||'', openedAt:r.opened_at,
     closedBy:r.closed_by, closedByName:r.closed_by_name||'', closedAt:r.closed_at,
     foodicsTotal: r.foodics_total==null ? null : Number(r.foodics_total),
+    wasteDialin:   r.waste_dialin_g  ==null ? null : Number(r.waste_dialin_g),
+    wasteRemakes:  r.waste_remakes_g ==null ? null : Number(r.waste_remakes_g),
+    wasteTraining: r.waste_training_g==null ? null : Number(r.waste_training_g),
+    wasteSpillage: r.waste_spillage_g==null ? null : Number(r.waste_spillage_g),
     note:r.note||'',
     counts:[], // attached after the inventory_shift_counts query
   };
@@ -20541,26 +20551,35 @@ function invBuildDashboard(branch){
   const todayShifts = invShiftsFor(branch, today);
   const foodicsToday = todayShifts.reduce((s,x)=> s + (x.foodicsTotal||0), 0);
   const consumedToday = todayShifts.reduce((s,x)=> s + x.counts.reduce((a,c)=>a+invConsumed(c),0), 0);
-  // Per-item variance TODAY: counted-consumed (opening+received−closing) vs
-  // Foodics-sold. A gap flags waste / shrinkage / miscount on that item.
+  // Per-item variance TODAY: ACTUAL consumption (opening+received−closing, kg)
+  // vs THEORETICAL usage (cups sold × recipe dose). The gap = waste / shrinkage
+  // / miscount. cups are stored in foodicsQty; dose (g/serving) on the item.
   const varAgg = {};
   todayShifts.forEach(s=>{
     s.counts.forEach(c=>{
-      const v = varAgg[c.itemId] || (varAgg[c.itemId] = { consumed:0, foodics:0, hasFoodics:false });
+      const v = varAgg[c.itemId] || (varAgg[c.itemId] = { consumed:0, cups:0, hasCups:false });
       v.consumed += invConsumed(c);
-      if (c.foodicsQty!=null){ v.foodics += c.foodicsQty; v.hasFoodics = true; }
+      if (c.foodicsQty!=null){ v.cups += c.foodicsQty; v.hasCups = true; }
     });
   });
   const varianceList = items.map(it=>{
-    const v = varAgg[it.id]; if (!v || (!v.hasFoodics && !v.consumed)) return null;
+    const v = varAgg[it.id]; if (!v || (!v.hasCups && !v.consumed)) return null;
+    const theo = (it.doseG!=null && v.hasCups) ? (v.cups * it.doseG / 1000) : null; // kg
     return {
       item: it,
-      consumed: Math.round(v.consumed*100)/100,
-      foodics:  v.hasFoodics ? Math.round(v.foodics*100)/100 : null,
-      variance: v.hasFoodics ? Math.round((v.consumed - v.foodics)*100)/100 : null,
+      consumed: Math.round(v.consumed*1000)/1000,                         // kg
+      cups: v.hasCups ? v.cups : null,
+      theoretical: theo!=null ? Math.round(theo*1000)/1000 : null,        // kg
+      variance: theo!=null ? Math.round((v.consumed - theo)*1000) : null, // grams, signed
     };
   }).filter(Boolean).sort((a,b)=> Math.abs(b.variance||0) - Math.abs(a.variance||0));
-  return { branch, items, days, catMap, lowList, varianceList, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  // Daily waste log totals (grams) across today's shifts.
+  const wasteToday = todayShifts.reduce((a,s)=>{
+    a.dialin   += s.wasteDialin  ||0; a.remakes  += s.wasteRemakes ||0;
+    a.training += s.wasteTraining||0; a.spillage += s.wasteSpillage||0; return a;
+  }, { dialin:0, remakes:0, training:0, spillage:0 });
+  wasteToday.total = wasteToday.dialin + wasteToday.remakes + wasteToday.training + wasteToday.spillage;
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
@@ -20619,16 +20638,20 @@ function invBuildDashboardHTML(branch){
     </tr>`).join('')
     : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">Nothing below threshold — stock looks healthy.</td></tr>`;
   const varRows = d.varianceList.length ? d.varianceList.slice(0,30).map(r=>{
-    const vCls = r.variance==null ? 'text-slate-400' : (Math.abs(r.variance) < 0.001 ? 'text-emerald-600' : (r.variance>0 ? 'text-rose-600' : 'text-amber-600'));
-    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance}`;
+    const vCls = r.variance==null ? 'text-slate-400' : (Math.abs(r.variance) < 1 ? 'text-emerald-600' : (r.variance>0 ? 'text-rose-600' : 'text-amber-600'));
+    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance} g`;
     return `<tr class="border-t border-slate-100">
       <td class="py-2 pr-3 text-slate-800">${escapeHTML(r.item.name)}</td>
       <td class="py-2 pr-3 text-right text-slate-600">${r.consumed} ${escapeHTML(r.item.unit)}</td>
-      <td class="py-2 pr-3 text-right text-slate-600">${r.foodics==null?'—':r.foodics+' '+escapeHTML(r.item.unit)}</td>
+      <td class="py-2 pr-3 text-right text-slate-600">${r.theoretical==null?`<span class="text-slate-300">no dose</span>`:`${r.theoretical} ${escapeHTML(r.item.unit)} <span class="text-[10px] text-slate-400">(${r.cups} cups)</span>`}</td>
       <td class="py-2 text-right font-semibold ${vCls}">${vTxt}</td>
     </tr>`;
   }).join('')
-    : `<tr><td colspan="4" class="py-6 text-center text-slate-400 text-sm">No closed shifts with Foodics numbers today yet.</td></tr>`;
+    : `<tr><td colspan="4" class="py-6 text-center text-slate-400 text-sm">No closed shifts with cups + dose today yet.</td></tr>`;
+  const wTile = (lbl,g,strong)=>`<div class="rounded-xl ${strong?'bg-brand-50 border border-brand-200':'bg-slate-50'} p-3">
+      <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">${lbl}</div>
+      <div class="font-display text-xl font-semibold ${strong?'text-brand-700':'text-slate-900'} mt-0.5">${Math.round(g)}<span class="text-xs font-normal text-slate-400"> g</span></div>
+    </div>`;
   return `
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
       ${invStatCard("Today's shifts", `${d.openCount}`, `${d.openCount} open · ${[d.morning,d.evening].filter(s=>s&&s.status==='closed').length} closed`)}
@@ -20668,19 +20691,29 @@ function invBuildDashboardHTML(branch){
     </div>
     <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
       <div class="flex items-center justify-between mb-1">
-        <div class="text-sm font-semibold text-slate-800">Stock vs Foodics variance · today</div>
-        <span class="text-[11px] text-slate-400">consumed − sold · <span class="text-rose-600 font-medium">+ over</span> / <span class="text-amber-600 font-medium">− under</span></span>
+        <div class="text-sm font-semibold text-slate-800">Actual vs theoretical usage · today</div>
+        <span class="text-[11px] text-slate-400">actual − theoretical · <span class="text-rose-600 font-medium">+ over</span> / <span class="text-amber-600 font-medium">− under</span></span>
       </div>
-      <div class="text-xs text-slate-500 mb-2">Gap between what physically left the shelf (opening + received − closing) and what Foodics recorded as sold — a flag for waste, giveaways, or miscounts.</div>
+      <div class="text-xs text-slate-500 mb-2"><span class="font-medium text-slate-600">Actual</span> = opening + received − closing. <span class="font-medium text-slate-600">Theoretical</span> = cups sold × recipe dose. The gap (in grams) is your waste / shrinkage / miscount signal — cross-check it against the waste log below.</div>
       <table class="w-full text-sm">
         <thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left">
           <th class="py-1 pr-3 font-semibold">Item</th>
-          <th class="py-1 pr-3 font-semibold text-right">Consumed</th>
-          <th class="py-1 pr-3 font-semibold text-right">Foodics sold</th>
+          <th class="py-1 pr-3 font-semibold text-right">Actual</th>
+          <th class="py-1 pr-3 font-semibold text-right">Theoretical</th>
           <th class="py-1 font-semibold text-right">Variance</th>
         </tr></thead>
         <tbody>${varRows}</tbody>
       </table>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4 mt-4">
+      <div class="text-sm font-semibold text-slate-800 mb-2">Waste log · today</div>
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        ${wTile('Dial-in', d.wasteToday.dialin)}
+        ${wTile('Remakes', d.wasteToday.remakes)}
+        ${wTile('Training', d.wasteToday.training)}
+        ${wTile('Spillage', d.wasteToday.spillage)}
+        ${wTile('Total waste', d.wasteToday.total, true)}
+      </div>
     </div>`;
 }
 
@@ -20765,16 +20798,26 @@ function invRenderEntry(branch){
         </div>
         <div class="grid grid-cols-3 gap-2">
           <div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
-          <div><div class="text-[10px] uppercase tracking-wide text-brand-600 mb-0.5">Foodics</div><input id="inv-${it.id}-food" type="number" inputmode="decimal" step="any" value="${c&&c.foodicsQty!=null?c.foodicsQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
+          <div><div class="text-[10px] uppercase tracking-wide text-brand-600 mb-0.5">Cups${it.doseG!=null?` <span class="text-slate-300 normal-case">·${it.doseG}g</span>`:''}</div><input id="inv-${it.id}-food" type="number" inputmode="decimal" step="any" value="${c&&c.foodicsQty!=null?c.foodicsQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
           <div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input w-full text-right text-lg py-2.5" placeholder="0"></div>
         </div>
       </div>`;
     }).join('');
     return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(DC_CATEGORIES[cat]||cat)}</div>${rows}</div>`;
   }).join('');
+  const wasteFields = [
+    ['dialin','Dial-in', existing&&existing.wasteDialin!=null?existing.wasteDialin:''],
+    ['remakes','Remakes', existing&&existing.wasteRemakes!=null?existing.wasteRemakes:''],
+    ['training','Training', existing&&existing.wasteTraining!=null?existing.wasteTraining:''],
+    ['spillage','Spillage', existing&&existing.wasteSpillage!=null?existing.wasteSpillage:''],
+  ].map(([k,lbl,val])=>`<div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">${lbl}</div><input id="inv-waste-${k}" type="number" inputmode="decimal" step="any" value="${val}" class="input w-full text-right text-base py-2" placeholder="0"></div>`).join('');
   const foodicsBox = isClose ? `
     <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 mb-4 text-xs text-slate-600">
-      For each item enter <span class="font-semibold text-brand-700">Foodics</span> (units sold per the POS), <span class="font-semibold text-slate-700">Received</span> (deliveries this shift) and <span class="font-semibold text-slate-700">Closing</span> (what's left). Consumed vs Foodics drives the per-item variance dashboard.
+      Per item enter <span class="font-semibold text-brand-700">Cups</span> (drinks sold per the POS), <span class="font-semibold text-slate-700">Received</span> (deliveries), and <span class="font-semibold text-slate-700">Closing</span> (what's left). Cups × recipe dose = theoretical usage; actual vs theoretical drives the variance dashboard.
+    </div>
+    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
+      <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold mb-2">Daily waste log <span class="text-slate-400 font-normal normal-case">· grams</span></div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${wasteFields}</div>
     </div>` : `
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4 text-xs text-slate-500">
       Recording <span class="font-semibold text-slate-700">opening stock</span> for the ${invShiftLabel(shift).toLowerCase()} shift. Values are pre-filled from the last closing count — adjust where needed.
@@ -20894,6 +20937,10 @@ async function invSaveClose(shiftId, branch, shift){
   const { error } = await sb.from('inventory_shifts').update({
     status:'closed', closed_by:actor.id, closed_by_name:actor.name, closed_at:nowISO,
     foodics_total: foodicsSum, updated_at:nowISO,
+    waste_dialin_g:   invNum('inv-waste-dialin'),
+    waste_remakes_g:  invNum('inv-waste-remakes'),
+    waste_training_g: invNum('inv-waste-training'),
+    waste_spillage_g: invNum('inv-waste-spillage'),
   }).eq('id', shiftId);
   if (error){ toast('Could not close shift: ' + error.message, 'error'); return; }
   if (rows.length){
