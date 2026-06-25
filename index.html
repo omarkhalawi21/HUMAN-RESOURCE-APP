@@ -769,6 +769,7 @@ function emptyState() {
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
+    inventoryDrinks: [],    // catalog: [{ id, name, gramsPer, sortOrder, active }] — staff/comp drink recipes (grams per drink); bean is chosen per log
     deviceRoster: null,     // branch-device only: [{id,firstName,lastName,avatarColor}] for the device's branch (via branch_roster RPC). null = not scoped (RPC unavailable) → picker falls back to all active staff.
     inventoryShiftsCache: {}, // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, businessDate, shift, status, openedByName, closedByName, foodicsTotal, counts:[{itemId, openingQty, closingQty, receivedQty}] }] } — reuses the daily_count_items catalog
     bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
@@ -1765,7 +1766,7 @@ const ATTENDANCE_BULK_LOAD_DAYS = 540;
 // the other count series. Deliberately omits payroll, attendance, leave,
 // receipts, etc. so none of it is ever in memory on a counter tablet.
 async function loadBranchDeviceData() {
-  const [companyR, branchesR, employeesR, extrasR, dciR] = await Promise.all([
+  const [companyR, branchesR, employeesR, extrasR, dciR, drinksR] = await Promise.all([
     sb.from('companies').select('*').limit(1).maybeSingle(),
     sb.from('branches').select('*').order('name'),
     // Names-only projection — no salary, leave balances, iqama, or consent
@@ -1777,6 +1778,7 @@ async function loadBranchDeviceData() {
     // dcDefaultBranch() needs to know which branch this iPad is locked to.
     sb.from('employee_extras').select('employee_id, branch'),
     sb.from('daily_count_items').select('*').order('sort_order'),
+    sb.from('inventory_drinks').select('*').order('sort_order'),
   ]);
   if (companyR.data) {
     const c = mapCompanyFromDb(companyR.data);
@@ -1796,6 +1798,7 @@ async function loadBranchDeviceData() {
   state.empExtras = {};
   (extrasR.data || []).forEach(r => { state.empExtras[r.employee_id] = mapExtrasFromDb(r); });
   state.dailyCountItems = (dciR.data || []).map(mapDailyCountItemFromDb);
+  state.inventoryDrinks = (drinksR.data || []).map(mapInventoryDrinkFromDb);
   // Branch-scoped staff roster for the "Who's on shift?" picker. The device
   // can't read other staff's branch via RLS, so a SECURITY DEFINER function
   // (branch_roster, SQL block 71) returns just the names for THIS branch.
@@ -1831,7 +1834,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1940,6 +1943,8 @@ async function loadAll() {
       // columns are excluded — lazy-fetched on view via ensureLeaveTravelDoc.
       sb.from('leave_travel')
         .select('id, leave_id, ticket_mime, ticket_name, ticket_uploaded_at, ticket_uploaded_by, visa_mime, visa_name, visa_uploaded_at, visa_uploaded_by, created_at, updated_at'),
+      // Inventory drinks recipe catalog (small, bounded) — staff/comp drink doses.
+      sb.from('inventory_drinks').select('*').order('sort_order'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2003,6 +2008,7 @@ async function loadAll() {
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
     state.dailyCountItems    = (dailyCountItemsR.data || []).map(mapDailyCountItemFromDb);
+    state.inventoryDrinks    = (inventoryDrinksR.data || []).map(mapInventoryDrinkFromDb);
     state.dailyCountsToday   = (dailyCountsTodayR.data || []).map(mapDailyCountFromDb);
     state.alertWeeklyCounts  = (alertWeeklyR.data || []).map(mapWeeklyCountFromDb);
     state.alertExpiryChecks  = (alertExpiryR.data || []).map(mapExpiryCheckFromDb);
@@ -20424,10 +20430,22 @@ function mapInventoryShiftCountFromDb(r){
 }
 function mapInventoryUsageFromDb(r){
   return {
-    id:r.id, shiftId:r.shift_id, itemId:r.item_id,
+    id:r.id, shiftId:r.shift_id, itemId:r.item_id, drinkId:r.drink_id||null,
     reason:r.reason||'staff_coffee', employeeId:r.employee_id||null,
     qty: r.qty==null ? 0 : Number(r.qty), note:r.note||'',
   };
+}
+function mapInventoryDrinkFromDb(r){
+  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), sortOrder:Number(r.sort_order)||0, active:r.active!==false };
+}
+function invActiveDrinks(){ return (state.inventoryDrinks||[]).filter(d=>d.active).slice().sort((a,b)=>a.sortOrder-b.sortOrder); }
+function invDrinkById(id){ return (state.inventoryDrinks||[]).find(d=>d.id===id) || null; }
+// Grams of coffee a usage row represents: a drink → qty × its dose; a raw
+// bean → qty × the bean's standard dose; a pcs item (sweet) → 0 grams.
+function invUsageGrams(u, it){
+  if (u.drinkId){ const d = invDrinkById(u.drinkId); return d ? u.qty * (d.gramsPer||0) : 0; }
+  if (it && it.doseG!=null) return u.qty * (it.doseG||0);
+  return 0;
 }
 // Staff & customer usage-log reasons. Calibration/dial-in/remakes/training/
 // spillage live in the shift waste log (grams) — these are the ATTRIBUTED,
@@ -20455,32 +20473,103 @@ function invEmpName(id){
          || (Array.isArray(state.deviceRoster) ? state.deviceRoster.find(x=>x.id===id) : null);
   return e ? `${e.firstName} ${e.lastName||''}`.trim() : 'Staff';
 }
-function invProductOptions(selectedId){
-  return DC_CAT_ORDER.map(cat=>{
+function invIsBeanItem(id){ const it=(state.dailyCountItems||[]).find(i=>i.id===id); return !!(it && it.doseG!=null); }
+function invIsSweetItem(id){ const it=(state.dailyCountItems||[]).find(i=>i.id===id); return !!(it && it.category==='pastry'); }
+// The "what" select: drinks (recipe → grams) + sweets (pcs items). Value is
+// prefixed drink:<id> or item:<id> so the bean (a separate select) only
+// matters for drinks.
+function invUsageWhatOptions(u){
+  const selDrink = u.drinkId ? 'drink:'+u.drinkId : '';
+  const selSweet = (!u.drinkId && invIsSweetItem(u.itemId)) ? 'item:'+u.itemId : '';
+  const drinks = invActiveDrinks();
+  const sweets = invActiveItems().filter(i=>i.category==='pastry');
+  const dGroup = drinks.length ? `<optgroup label="Drinks">${drinks.map(d=>`<option value="drink:${d.id}" ${('drink:'+d.id)===selDrink?'selected':''}>${escapeHTML(d.name)} · ${d.gramsPer}g</option>`).join('')}</optgroup>` : '';
+  const sGroup = sweets.length ? `<optgroup label="Sweets">${sweets.map(it=>`<option value="item:${it.id}" ${('item:'+it.id)===selSweet?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>` : '';
+  return dGroup + sGroup;
+}
+// The bean select: every bean (espresso + V60) — the "manual, all beans"
+// choice. Only used when a drink is selected.
+function invUsageBeanOptions(u){
+  const sel = u.drinkId ? u.itemId : (invIsBeanItem(u.itemId) ? u.itemId : '');
+  return ['espresso','v60'].map(cat=>{
     const its = invActiveItems().filter(i=>i.category===cat);
     if (!its.length) return '';
-    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===selectedId?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
+    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===sel?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
   }).join('');
 }
-// One editable line in the "Staff & customer log". Values are read back on
-// save by class (no per-row ids) from inside #inv-usage-rows.
+// One editable line in the "Staff & customer log". Read back on save by class
+// from inside #inv-usage-rows. Flex-wraps to a 2nd line on narrow screens.
 function invUsageRowHTML(u){
   u = u || {};
   const reasonOpts = INV_USAGE_REASONS.map(r=>`<option value="${r.key}" ${u.reason===r.key?'selected':''}>${r.label}</option>`).join('');
   const empOpts = `<option value="">— person —</option>` + invStaffList()
     .sort((a,b)=>(a.firstName||'').localeCompare(b.firstName||''))
     .map(e=>`<option value="${e.id}" ${u.employeeId===e.id?'selected':''}>${escapeHTML(`${e.firstName} ${e.lastName||''}`.trim())}</option>`).join('');
-  return `<div class="usage-row grid grid-cols-12 gap-1.5 items-center mb-1.5">
-    <select class="usage-reason input col-span-3 py-2 text-sm">${reasonOpts}</select>
-    <select class="usage-emp input col-span-3 py-2 text-sm">${empOpts}</select>
-    <select class="usage-item input col-span-3 py-2 text-sm">${invProductOptions(u.itemId)}</select>
-    <input class="usage-qty input col-span-2 py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="qty" value="${u.qty!=null&&u.qty!==0?u.qty:''}">
-    <button type="button" onclick="this.closest('.usage-row').remove()" aria-label="Remove line" class="col-span-1 text-slate-400 hover:text-rose-600 text-center text-lg leading-none">&times;</button>
+  return `<div class="usage-row flex flex-wrap gap-1.5 items-center mb-2 pb-2 border-b border-slate-100">
+    <div class="w-28"><select class="usage-reason input w-full py-2 text-sm" title="Reason">${reasonOpts}</select></div>
+    <div class="w-32"><select class="usage-emp input w-full py-2 text-sm" title="Person">${empOpts}</select></div>
+    <div class="w-40"><select class="usage-what input w-full py-2 text-sm" title="Drink or sweet">${invUsageWhatOptions(u)}</select></div>
+    <div class="w-28"><select class="usage-bean input w-full py-2 text-sm" title="Bean (for drinks)">${invUsageBeanOptions(u)}</select></div>
+    <div class="w-16"><input class="usage-qty input w-full py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="qty" value="${u.qty!=null&&u.qty!==0?u.qty:''}"></div>
+    <button type="button" onclick="this.closest('.usage-row').remove()" aria-label="Remove line" class="text-slate-400 hover:text-rose-600 text-lg leading-none px-1">&times;</button>
   </div>`;
 }
 function invUsageAddRow(){
   const c = document.getElementById('inv-usage-rows');
   if (c) c.insertAdjacentHTML('beforeend', invUsageRowHTML({}));
+}
+// Manage the drinks recipe menu (admin/head_barista). List → tap to edit.
+function openInventoryDrinksModal(){
+  const drinks = (state.inventoryDrinks||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const list = drinks.length ? drinks.map(d=>`
+    <button type="button" onclick="openInventoryDrinkEdit('${d.id}')" class="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left mb-2">
+      <span class="text-sm font-medium text-slate-800">${escapeHTML(d.name)}${d.active?'':' <span class="text-[10px] text-slate-400">(inactive)</span>'}</span>
+      <span class="text-sm text-slate-500">${d.gramsPer} g</span>
+    </button>`).join('') : `<div class="text-sm text-slate-400 text-center py-4">No drinks yet.</div>`;
+  const body = `<div>
+    <div class="text-xs text-slate-500 mb-3">Each drink carries its dose (grams). The bean is chosen per-log, so a drink works with any of your beans.</div>
+    ${list}
+    <button type="button" onclick="openInventoryDrinkEdit()" class="btn btn-ghost btn-sm mt-1">${icon('plus','w-4 h-4')} Add drink</button>
+  </div>`;
+  openModal('Drinks — recipes', body, async ()=>true, { saveLabel:'Done' });
+}
+function openInventoryDrinkEdit(id){
+  const d = id ? (state.inventoryDrinks||[]).find(x=>x.id===id) : null;
+  const e = d || {};
+  const form = `<div class="space-y-4">
+    <div><label class="label">Drink name</label><input id="idr-name" class="input" placeholder="e.g. Flat White" value="${escapeHTML(e.name||'')}"></div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="label">Grams per drink</label><input id="idr-grams" type="number" step="0.1" class="input" value="${e.gramsPer!=null?e.gramsPer:20}"></div>
+      <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+    </div>
+    <label class="flex items-center gap-2 text-sm text-slate-700"><input id="idr-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+    ${d?`<button type="button" onclick="deleteInventoryDrink('${d.id}')" class="text-xs text-rose-600 hover:underline">Delete this drink</button>`:''}
+  </div>`;
+  openModal(d?'Edit drink':'Add drink', form, async ()=>{
+    const name = $('#idr-name').value.trim();
+    if (!name){ toast('Drink name required', 'error'); return false; }
+    const row = { name, grams_per: Number($('#idr-grams').value)||0, sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
+    if (d){
+      const { data, error } = await sb.from('inventory_drinks').update(row).eq('id', d.id).select().single();
+      if (error){ toast(humanizeError(error), 'error'); return false; }
+      Object.assign(d, mapInventoryDrinkFromDb(data));
+    } else {
+      const { data, error } = await sb.from('inventory_drinks').insert(row).select().single();
+      if (error){ toast(humanizeError(error), 'error'); return false; }
+      state.inventoryDrinks.push(mapInventoryDrinkFromDb(data));
+    }
+    toast('Drink saved', 'success');
+    return true;
+  }, { saveLabel:'Save' });
+}
+function deleteInventoryDrink(id){
+  if (!confirm('Delete this drink? Past logs that referenced it are kept.')) return;
+  sb.from('inventory_drinks').delete().eq('id', id).then(({ error })=>{
+    if (error){ toast(humanizeError(error), 'error'); return; }
+    state.inventoryDrinks = (state.inventoryDrinks||[]).filter(x=>x.id!==id);
+    toast('Drink deleted', 'success');
+    openInventoryDrinksModal();
+  });
 }
 
 function invCacheKey(branch, ym){ return branch + '|' + ym; }
@@ -20650,14 +20739,15 @@ function invBuildDashboard(branch){
   const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId); if (!it) return;
-    const isBean = it.doseG!=null;
-    const grams  = isBean ? u.qty * (it.doseG||0) : 0;
-    if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += (isBean?0:u.qty); return; }
+    const grams   = invUsageGrams(u, it);              // drink dose, else bean dose, else 0
+    const isCoffee = !!u.drinkId || it.doseG!=null;    // a drink or a bean = coffee
+    const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
+    if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
     const k = u.employeeId || '_none';
     const a = staffAgg[k] || (staffAgg[k] = { id:u.employeeId||null, name: invEmpName(u.employeeId), coffeeDrinks:0, coffeeG:0, sweets:0 });
     if (u.reason==='staff_coffee'){ a.coffeeDrinks += u.qty; a.coffeeG += grams; }
-    else if (u.reason==='staff_food'){ a.sweets += (isBean?0:u.qty); }
-    else { a.coffeeG += grams; a.sweets += (isBean?0:u.qty); } // 'other' — counted, not against the allowance
+    else if (u.reason==='staff_food'){ a.sweets += pcs; }
+    else { a.coffeeG += grams; a.sweets += pcs; } // 'other' — counted, not against the allowance
   }));
   const staffUsage = Object.values(staffAgg)
     .map(a=>{
@@ -20934,14 +21024,14 @@ function invRenderEntry(branch){
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${wasteFields}</div>
     </div>
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
-      <div class="flex items-center justify-between mb-1">
+      <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold">Staff &amp; customer log</div>
-        <button type="button" onclick="invUsageAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+        <div class="flex items-center gap-1">
+          ${hasRole('admin','head_barista') ? `<button type="button" onclick="openInventoryDrinksModal()" class="btn btn-ghost btn-sm">Manage drinks</button>` : ''}
+          <button type="button" onclick="invUsageAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+        </div>
       </div>
-      <div class="text-[11px] text-slate-400 mb-2">Coffee/sweets taken by staff or comped to customers — pick reason · person · product · qty (drinks or pieces).</div>
-      <div class="hidden sm:grid grid-cols-12 gap-1.5 text-[10px] uppercase tracking-wide text-slate-400 mb-1 px-1">
-        <div class="col-span-3">Reason</div><div class="col-span-3">Person</div><div class="col-span-3">Product</div><div class="col-span-2 text-right">Qty</div><div class="col-span-1"></div>
-      </div>
+      <div class="text-[11px] text-slate-400 mb-2">Coffee/sweets taken by staff or comped to customers. Per line: <span class="font-medium text-slate-500">reason · person · drink/sweet · bean · qty</span>. For coffee pick the <span class="font-medium text-slate-500">drink</span> (sets the grams) and the <span class="font-medium text-slate-500">bean</span> (any of the 12).</div>
       <div id="inv-usage-rows">${(existing&&existing.usage?existing.usage:[]).map(u=>invUsageRowHTML(u)).join('')}</div>
     </div>` : `
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4 text-xs text-slate-500">
@@ -21076,11 +21166,19 @@ async function invSaveClose(shiftId, branch, shift){
   // since there's no natural unique key and rows are freely added/removed).
   const usageRows = [];
   document.querySelectorAll('#inv-usage-rows .usage-row').forEach(row=>{
-    const itemId = row.querySelector('.usage-item')?.value;
     const qty = Number(row.querySelector('.usage-qty')?.value);
-    if (!itemId || !isFinite(qty) || qty===0) return;
+    if (!isFinite(qty) || qty===0) return;
+    const whatVal = row.querySelector('.usage-what')?.value || '';
+    let item_id = null, drink_id = null;
+    if (whatVal.indexOf('drink:')===0){
+      drink_id = whatVal.slice(6);
+      item_id  = row.querySelector('.usage-bean')?.value || null; // a drink needs a bean
+    } else if (whatVal.indexOf('item:')===0){
+      item_id  = whatVal.slice(5);
+    }
+    if (!item_id) return;
     usageRows.push({
-      shift_id: shiftId, item_id: itemId,
+      shift_id: shiftId, item_id, drink_id,
       reason: row.querySelector('.usage-reason')?.value || 'other',
       employee_id: row.querySelector('.usage-emp')?.value || null,
       qty,

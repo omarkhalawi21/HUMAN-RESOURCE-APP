@@ -4169,6 +4169,54 @@ CREATE POLICY "iul_delete_floor_ops_device" ON public.inventory_usage_log FOR DE
   USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
 
 -- =============================================================
+-- 74. INVENTORY DRINKS — staff/comp drink recipes (grams per drink)
+--     A small bean-AGNOSTIC drink menu: each drink just carries grams_per
+--     (the dose for that drink — single 20 g, double 40 g, etc.). When a
+--     staff/comp coffee is logged you pick the DRINK (sets grams) AND the
+--     BEAN (any of the 12), so "Manual Espresso → Guji" etc. all work.
+--     inventory_usage_log.drink_id links the log row to the recipe; item_id
+--     still records the actual bean used. SELECT to floor/ops/device;
+--     manage (write) admin/head_barista.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_drinks (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  grams_per   numeric(8,2) not null default 20,
+  sort_order  int not null default 0,
+  active      boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+-- Starter espresso menu (idempotent — only seeds when the table is empty).
+INSERT INTO public.inventory_drinks (name, grams_per, sort_order)
+SELECT v.name, v.g, v.so FROM (VALUES
+  ('Manual Espresso',20,10),('Espresso',20,20),('Double Espresso',40,30),
+  ('Americano',20,40),('Latte',20,50),('Cappuccino',20,60),
+  ('Flat White',40,70),('Cortado',20,80),('Macchiato',20,90)
+) AS v(name,g,so)
+WHERE NOT EXISTS (SELECT 1 FROM public.inventory_drinks);
+
+CREATE INDEX IF NOT EXISTS inventory_drinks_sort_idx ON public.inventory_drinks(sort_order);
+
+ALTER TABLE public.inventory_drinks ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='inventory_drinks'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.inventory_drinks', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "idr_select_floor_ops_device" ON public.inventory_drinks FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "idr_insert_admin_head" ON public.inventory_drinks FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "idr_update_admin_head" ON public.inventory_drinks FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "idr_delete_admin_head" ON public.inventory_drinks FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS drink_id uuid references public.inventory_drinks(id) ON DELETE SET NULL;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
