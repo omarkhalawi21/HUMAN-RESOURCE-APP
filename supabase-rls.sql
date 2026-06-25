@@ -4233,6 +4233,42 @@ ALTER TABLE public.inventory_usage_log ADD CONSTRAINT inventory_usage_reason_chk
   CHECK (reason IN ('staff_coffee','staff_food','owner_coffee','owner_food','customer_comp','other'));
 
 -- =============================================================
+-- 76. INVENTORY OWNERS — a simple owners list for consumption logging
+--     Owners aren't employees and have no app role. This is just a short
+--     pick-list (seeded with the business owners; manage in-app). A usage row
+--     for an owner sets owner_id; the dashboard's per-owner card reads it.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_owners (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  sort_order  int not null default 0,
+  active      boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+INSERT INTO public.inventory_owners (name, sort_order)
+SELECT v.name, v.so FROM (VALUES ('Abdallah Alqatani',10),('Omar',20)) AS v(name,so)
+WHERE NOT EXISTS (SELECT 1 FROM public.inventory_owners);
+
+ALTER TABLE public.inventory_owners ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='inventory_owners'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.inventory_owners', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "iow_select_floor_ops_device" ON public.inventory_owners FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "iow_insert_admin_head" ON public.inventory_owners FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "iow_update_admin_head" ON public.inventory_owners FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista']));
+CREATE POLICY "iow_delete_admin_head" ON public.inventory_owners FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']));
+
+ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS owner_id uuid references public.inventory_owners(id) ON DELETE SET NULL;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
