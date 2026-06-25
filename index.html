@@ -20436,7 +20436,7 @@ function mapInventoryUsageFromDb(r){
   };
 }
 function mapInventoryDrinkFromDb(r){
-  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), sortOrder:Number(r.sort_order)||0, active:r.active!==false };
+  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), category:r.category||'espresso', sortOrder:Number(r.sort_order)||0, active:r.active!==false };
 }
 function invActiveDrinks(){ return (state.inventoryDrinks||[]).filter(d=>d.active).slice().sort((a,b)=>a.sortOrder-b.sortOrder); }
 function invDrinkById(id){ return (state.inventoryDrinks||[]).find(d=>d.id===id) || null; }
@@ -20487,15 +20487,38 @@ function invUsageWhatOptions(u){
   const sGroup = sweets.length ? `<optgroup label="Sweets">${sweets.map(it=>`<option value="item:${it.id}" ${('item:'+it.id)===selSweet?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>` : '';
   return dGroup + sGroup;
 }
-// The bean select: every bean (espresso + V60) — the "manual, all beans"
-// choice. Only used when a drink is selected.
-function invUsageBeanOptions(u){
-  const sel = u.drinkId ? u.itemId : (invIsBeanItem(u.itemId) ? u.itemId : '');
-  return ['espresso','v60'].map(cat=>{
+// The bean select, scoped to the selected drink's category: an espresso drink
+// → Colombia/Guji only; a V60 drink → V60 beans; "Manual Espresso" (any) →
+// all 12. Updated live by invUsageDrinkChanged when the drink changes.
+function invBeanOptionsHTML(drinkCat, selId){
+  const cats = drinkCat==='any' ? ['espresso','v60'] : [drinkCat];
+  return cats.map(cat=>{
     const its = invActiveItems().filter(i=>i.category===cat);
     if (!its.length) return '';
-    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===sel?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
+    return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===selId?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
   }).join('');
+}
+function invUsageBeanOptions(u){
+  const sel = u.drinkId ? u.itemId : (invIsBeanItem(u.itemId) ? u.itemId : '');
+  let cat = 'espresso';
+  if (u.drinkId){ const d = invDrinkById(u.drinkId); cat = d ? (d.category||'espresso') : 'espresso'; }
+  else if (!invIsSweetItem(u.itemId)){ cat = (invActiveDrinks()[0]||{}).category || 'espresso'; } // fresh row defaults to the first drink
+  return invBeanOptionsHTML(cat, sel);
+}
+// When the drink/sweet select changes: re-scope the bean options to the drink's
+// category, and hide the bean picker entirely for a sweet.
+function invUsageDrinkChanged(sel){
+  const row = sel.closest('.usage-row'); if (!row) return;
+  const beanSel = row.querySelector('.usage-bean');
+  const beanBox = beanSel ? beanSel.closest('.usage-bean-box') : null;
+  const val = sel.value || '';
+  if (val.indexOf('drink:')===0){
+    const d = invDrinkById(val.slice(6));
+    beanSel.innerHTML = invBeanOptionsHTML(d ? (d.category||'espresso') : 'espresso', beanSel.value);
+    if (beanBox) beanBox.style.display = '';
+  } else {
+    if (beanBox) beanBox.style.display = 'none'; // a sweet — no bean
+  }
 }
 // One editable line in the "Staff & customer log". Read back on save by class
 // from inside #inv-usage-rows. Flex-wraps to a 2nd line on narrow screens.
@@ -20508,8 +20531,8 @@ function invUsageRowHTML(u){
   return `<div class="usage-row flex flex-wrap gap-1.5 items-center mb-2 pb-2 border-b border-slate-100">
     <div class="w-28"><select class="usage-reason input w-full py-2 text-sm" title="Reason">${reasonOpts}</select></div>
     <div class="w-32"><select class="usage-emp input w-full py-2 text-sm" title="Person">${empOpts}</select></div>
-    <div class="w-40"><select class="usage-what input w-full py-2 text-sm" title="Drink or sweet">${invUsageWhatOptions(u)}</select></div>
-    <div class="w-28"><select class="usage-bean input w-full py-2 text-sm" title="Bean (for drinks)">${invUsageBeanOptions(u)}</select></div>
+    <div class="w-40"><select class="usage-what input w-full py-2 text-sm" title="Drink or sweet" onchange="invUsageDrinkChanged(this)">${invUsageWhatOptions(u)}</select></div>
+    <div class="w-28 usage-bean-box"${(!u.drinkId && invIsSweetItem(u.itemId)) ? ' style="display:none"' : ''}><select class="usage-bean input w-full py-2 text-sm" title="Bean (for drinks)">${invUsageBeanOptions(u)}</select></div>
     <div class="w-16"><input class="usage-qty input w-full py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="qty" value="${u.qty!=null&&u.qty!==0?u.qty:''}"></div>
     <button type="button" onclick="this.closest('.usage-row').remove()" aria-label="Remove line" class="text-slate-400 hover:text-rose-600 text-lg leading-none px-1">&times;</button>
   </div>`;
@@ -20540,15 +20563,22 @@ function openInventoryDrinkEdit(id){
     <div><label class="label">Drink name</label><input id="idr-name" class="input" placeholder="e.g. Flat White" value="${escapeHTML(e.name||'')}"></div>
     <div class="grid grid-cols-2 gap-3">
       <div><label class="label">Grams per drink</label><input id="idr-grams" type="number" step="0.1" class="input" value="${e.gramsPer!=null?e.gramsPer:20}"></div>
-      <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+      <div><label class="label">Bean choices</label><select id="idr-cat" class="input">
+        <option value="espresso" ${((e.category||'espresso')==='espresso')?'selected':''}>Espresso (Colombia / Guji)</option>
+        <option value="v60" ${e.category==='v60'?'selected':''}>V60 / Filter beans</option>
+        <option value="any" ${e.category==='any'?'selected':''}>Any bean</option>
+      </select></div>
     </div>
-    <label class="flex items-center gap-2 text-sm text-slate-700"><input id="idr-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
+      <div class="flex items-end"><label class="flex items-center gap-2 text-sm text-slate-700 pb-2"><input id="idr-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label></div>
+    </div>
     ${d?`<button type="button" onclick="deleteInventoryDrink('${d.id}')" class="text-xs text-rose-600 hover:underline">Delete this drink</button>`:''}
   </div>`;
   openModal(d?'Edit drink':'Add drink', form, async ()=>{
     const name = $('#idr-name').value.trim();
     if (!name){ toast('Drink name required', 'error'); return false; }
-    const row = { name, grams_per: Number($('#idr-grams').value)||0, sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
+    const row = { name, grams_per: Number($('#idr-grams').value)||0, category: $('#idr-cat').value||'espresso', sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
     if (d){
       const { data, error } = await sb.from('inventory_drinks').update(row).eq('id', d.id).select().single();
       if (error){ toast(humanizeError(error), 'error'); return false; }
