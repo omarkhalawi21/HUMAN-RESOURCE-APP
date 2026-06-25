@@ -4126,6 +4126,49 @@ ALTER TABLE public.inventory_shifts ADD COLUMN IF NOT EXISTS waste_training_g nu
 ALTER TABLE public.inventory_shifts ADD COLUMN IF NOT EXISTS waste_spillage_g numeric(10,2);
 
 -- =============================================================
+-- 73. INVENTORY STAFF & CUSTOMER USAGE LOG — attributed non-sale consumption
+--     Itemized log of coffee/sweets that left as STAFF consumption or a
+--     CUSTOMER comp (calibration/remakes/training/spillage stay in the shift
+--     waste log). One row per (shift, item, reason, optional employee, qty).
+--     qty is in SERVINGS: for a bean, grams = qty × dose_g; for a pcs item
+--     (sweets), qty = pieces. Loaded with the shift series per branch+month.
+--     Write roles match inventory_shift_counts; DELETE is also floor/device
+--     because saving a close REPLACES the shift's rows (delete-then-insert).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_usage_log (
+  id           uuid primary key default gen_random_uuid(),
+  shift_id     uuid not null references public.inventory_shifts(id) ON DELETE CASCADE,
+  item_id      uuid not null references public.daily_count_items(id) ON DELETE CASCADE,
+  reason       text not null default 'staff_coffee',
+  employee_id  uuid references public.employees(id),
+  qty          numeric(10,2) not null default 0,
+  note         text,
+  recorded_by  uuid default auth.uid(),
+  created_at   timestamptz not null default now(),
+  CONSTRAINT inventory_usage_reason_chk CHECK (reason IN ('staff_coffee','staff_food','customer_comp','other'))
+);
+CREATE INDEX IF NOT EXISTS inventory_usage_log_shift_idx ON public.inventory_usage_log(shift_id);
+
+ALTER TABLE public.inventory_usage_log ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='inventory_usage_log'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.inventory_usage_log', r.policyname); END LOOP;
+END $$;
+
+CREATE POLICY "iul_select_floor_ops_device" ON public.inventory_usage_log FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "iul_insert_floor_ops_device" ON public.inventory_usage_log FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "iul_update_floor_ops_device" ON public.inventory_usage_log FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "iul_delete_floor_ops_device" ON public.inventory_usage_log FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
