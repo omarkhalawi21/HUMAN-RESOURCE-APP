@@ -4107,6 +4107,25 @@ REVOKE ALL ON FUNCTION public.branch_roster(text) FROM public;
 GRANT EXECUTE ON FUNCTION public.branch_roster(text) TO authenticated;
 
 -- =============================================================
+-- 72. INVENTORY VARIANCE STANDARD — recipe dose, theoretical usage, waste log
+--     Implements the standard coffee-cost-control method: compare ACTUAL
+--     consumption (opening + received − closing, already captured) against
+--     THEORETICAL usage (cups sold × standard dose), and log daily waste so
+--     the gap is explained. Actual − Theoretical − Waste = true loss.
+--   (a) Per-item standard dose in grams/serving (espresso shot, V60 cup).
+--       Seeds the owner's recipe doses (20 g each); editable in Manage items.
+--   (b) Daily waste log on the shift — the four standard reasons, in grams.
+-- =============================================================
+ALTER TABLE public.daily_count_items ADD COLUMN IF NOT EXISTS dose_g numeric(8,2);
+UPDATE public.daily_count_items SET dose_g = 20 WHERE category = 'espresso' AND dose_g IS NULL;
+UPDATE public.daily_count_items SET dose_g = 20 WHERE category = 'v60'      AND dose_g IS NULL;
+
+ALTER TABLE public.inventory_shifts ADD COLUMN IF NOT EXISTS waste_dialin_g   numeric(10,2);
+ALTER TABLE public.inventory_shifts ADD COLUMN IF NOT EXISTS waste_remakes_g  numeric(10,2);
+ALTER TABLE public.inventory_shifts ADD COLUMN IF NOT EXISTS waste_training_g numeric(10,2);
+ALTER TABLE public.inventory_shifts ADD COLUMN IF NOT EXISTS waste_spillage_g numeric(10,2);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
