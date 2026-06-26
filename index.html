@@ -20484,9 +20484,13 @@ function mapInventoryShiftFromDb(r){
     wasteTraining: r.waste_training_g==null ? null : Number(r.waste_training_g),
     wasteSpillage: r.waste_spillage_g==null ? null : Number(r.waste_spillage_g),
     note:r.note||'',
-    counts:[], // attached after the inventory_shift_counts query
-    usage:[],  // attached after the inventory_usage_log query
+    counts:[],     // attached after the inventory_shift_counts query
+    usage:[],      // attached after the inventory_usage_log query
+    drinkSales:[], // attached after the inventory_drink_sales query (product mix)
   };
+}
+function mapDrinkSaleFromDb(r){
+  return { id:r.id, shiftId:r.shift_id, drinkId:r.drink_id, qtySold: r.qty_sold==null ? 0 : Number(r.qty_sold) };
 }
 function mapInventoryShiftCountFromDb(r){
   return {
@@ -20751,14 +20755,16 @@ async function loadInventoryShifts(branch, ym){
   const rows = (shifts || []).map(mapInventoryShiftFromDb);
   if (rows.length){
     const ids = rows.map(s=>s.id);
-    const [{ data:counts }, { data:usage }] = await Promise.all([
+    const [{ data:counts }, { data:usage }, { data:sales }] = await Promise.all([
       sb.from('inventory_shift_counts').select('*').in('shift_id', ids),
       sb.from('inventory_usage_log').select('*').in('shift_id', ids),
+      sb.from('inventory_drink_sales').select('*').in('shift_id', ids),
     ]);
-    const byShift = {}, byUsage = {};
+    const byShift = {}, byUsage = {}, bySales = {};
     (counts || []).map(mapInventoryShiftCountFromDb).forEach(c=>{ (byShift[c.shiftId] = byShift[c.shiftId] || []).push(c); });
     (usage  || []).map(mapInventoryUsageFromDb).forEach(u=>{ (byUsage[u.shiftId] = byUsage[u.shiftId] || []).push(u); });
-    rows.forEach(s=>{ s.counts = byShift[s.id] || []; s.usage = byUsage[s.id] || []; });
+    (sales  || []).map(mapDrinkSaleFromDb).forEach(d=>{ (bySales[d.shiftId] = bySales[d.shiftId] || []).push(d); });
+    rows.forEach(s=>{ s.counts = byShift[s.id] || []; s.usage = byUsage[s.id] || []; s.drinkSales = bySales[s.id] || []; });
   }
   state.inventoryShiftsCache[key] = rows;
   _invLoading.delete(key);
@@ -20787,6 +20793,10 @@ function invActiveItems(){
 // Mirror dcFlag's default low threshold (2 for pieces, 1 for weighed goods).
 function invThreshold(it){ return it.lowAt != null ? it.lowAt : (it.unit==='pcs' ? 2 : 1); }
 function invConsumed(c){ return c && c.closingQty!=null ? Math.max(0, (c.openingQty||0)+(c.receivedQty||0)-(c.closingQty||0)) : 0; }
+// Total products sold for a shift (product mix): espresso drinks + per-item cups.
+function invShiftProductsSold(s){
+  return (s.drinkSales||[]).reduce((a,d)=>a+(d.qtySold||0),0) + (s.counts||[]).reduce((a,c)=>a+(c.foodicsQty||0),0);
+}
 function invNum(id){ const el=document.getElementById(id); if(!el) return null; const v=String(el.value).trim(); if(v==='') return null; const n=Number(v); return isFinite(n) ? n : null; }
 function invDayLabel(iso){ const d=new Date(iso); return INV_MONTHS_SHORT[d.getUTCMonth()] + ' ' + d.getUTCDate(); }
 
@@ -20834,7 +20844,7 @@ function invBuildDashboard(branch){
   [ymNow, prevYm(ymNow)].forEach(ym=>{
     (state.inventoryShiftsCache[invCacheKey(branch, ym)] || []).forEach(s=>{
       const dy = dayMap[s.businessDate]; if (!dy) return;
-      if (s.foodicsTotal!=null) dy.foodics += s.foodicsTotal;
+      dy.foodics += invShiftProductsSold(s);
       s.counts.forEach(c=>{ dy.consumed += invConsumed(c); });
     });
   });
@@ -20859,7 +20869,7 @@ function invBuildDashboard(branch){
   const morning = invFindShift(branch, today, 'morning');
   const evening = invFindShift(branch, today, 'evening');
   const todayShifts = invShiftsFor(branch, today);
-  const foodicsToday = todayShifts.reduce((s,x)=> s + (x.foodicsTotal||0), 0);
+  const foodicsToday = todayShifts.reduce((s,x)=> s + invShiftProductsSold(x), 0);
   const consumedToday = todayShifts.reduce((s,x)=> s + x.counts.reduce((a,c)=>a+invConsumed(c),0), 0);
   // Per-item variance TODAY: ACTUAL consumption (opening+received−closing, kg)
   // vs THEORETICAL usage (cups sold × recipe dose). The gap = waste / shrinkage
@@ -20872,17 +20882,41 @@ function invBuildDashboard(branch){
       if (c.foodicsQty!=null){ v.cups += c.foodicsQty; v.hasCups = true; }
     });
   });
-  const varianceList = items.map(it=>{
-    const v = varAgg[it.id]; if (!v || (!v.hasCups && !v.consumed)) return null;
-    const theo = (it.doseG!=null && v.hasCups) ? (v.cups * it.doseG / 1000) : null; // kg
-    return {
-      item: it,
-      consumed: Math.round(v.consumed*1000)/1000,                         // kg
-      cups: v.hasCups ? v.cups : null,
-      theoretical: theo!=null ? Math.round(theo*1000)/1000 : null,        // kg
-      variance: theo!=null ? Math.round((v.consumed - theo)*1000) : null, // grams, signed
-    };
-  }).filter(Boolean).sort((a,b)=> Math.abs(b.variance||0) - Math.abs(a.variance||0));
+  // Espresso is one category row (a latte could be Colombia or Guji): ACTUAL =
+  // total espresso consumed; THEORETICAL = Σ drink sales × the drink's dose.
+  let espActual = 0, espCups = 0, espTheoG = 0, espHasSold = false, espHasActual = false;
+  items.filter(i=>i.category==='espresso').forEach(it=>{ const v = varAgg[it.id]; if (v){ espActual += v.consumed; if (v.consumed) espHasActual = true; } });
+  todayShifts.forEach(s=> (s.drinkSales||[]).forEach(d=>{
+    const dr = invDrinkById(d.drinkId); if (!dr) return;
+    espCups += d.qtySold; espTheoG += d.qtySold * (dr.gramsPer||0); espHasSold = true;
+  }));
+  const varianceList = items
+    .filter(it=>it.category!=='espresso')   // espresso shown as a single category row
+    .map(it=>{
+      const v = varAgg[it.id]; if (!v || (!v.hasCups && !v.consumed)) return null;
+      if (it.doseG != null){
+        // bean: sold cups × dose = theoretical kg; variance in grams.
+        const theo = v.hasCups ? (v.cups * it.doseG / 1000) : null;
+        return { item: it, consumed: Math.round(v.consumed*1000)/1000, unit: it.unit, cups: v.hasCups ? v.cups : null,
+                 theoretical: theo!=null ? Math.round(theo*1000)/1000 : null, theoUnit: it.unit,
+                 variance: theo!=null ? Math.round((v.consumed - theo)*1000) : null, varUnit: 'g' };
+      }
+      // pcs item (sweets / retail): 1 sold = 1 unit; variance in the item's unit.
+      const theo = v.hasCups ? v.cups : null;
+      return { item: it, consumed: Math.round(v.consumed*100)/100, unit: it.unit, cups: v.hasCups ? v.cups : null,
+               theoretical: theo, theoUnit: it.unit,
+               variance: theo!=null ? Math.round((v.consumed - theo)*100)/100 : null, varUnit: it.unit };
+    }).filter(Boolean);
+  if (espHasActual || espHasSold){
+    varianceList.push({
+      item: { name:'Espresso (all)', unit:'kg', category:'espresso' }, unit:'kg',
+      consumed: Math.round(espActual*1000)/1000,
+      cups: espHasSold ? espCups : null,
+      theoretical: espHasSold ? Math.round((espTheoG/1000)*1000)/1000 : null, theoUnit:'kg',
+      variance: espHasSold ? Math.round(espActual*1000 - espTheoG) : null, varUnit: 'g',
+    });
+  }
+  varianceList.sort((a,b)=> Math.abs(b.variance||0) - Math.abs(a.variance||0));
   // Daily waste log totals (grams) across today's shifts.
   const wasteToday = todayShifts.reduce((a,s)=>{
     a.dialin   += s.wasteDialin  ||0; a.remakes  += s.wasteRemakes ||0;
@@ -20989,16 +21023,17 @@ function invBuildDashboardHTML(branch){
     </tr>`).join('')
     : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">Nothing below threshold — stock looks healthy.</td></tr>`;
   const varRows = d.varianceList.length ? d.varianceList.slice(0,30).map(r=>{
-    const vCls = r.variance==null ? 'text-slate-400' : (Math.abs(r.variance) < 1 ? 'text-emerald-600' : (r.variance>0 ? 'text-rose-600' : 'text-amber-600'));
-    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance} g`;
+    const tol = r.varUnit==='g' ? 1 : 0.5;
+    const vCls = r.variance==null ? 'text-slate-400' : (Math.abs(r.variance) < tol ? 'text-emerald-600' : (r.variance>0 ? 'text-rose-600' : 'text-amber-600'));
+    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance} ${escapeHTML(r.varUnit||'')}`;
     return `<tr class="border-t border-slate-100">
       <td class="py-2 pr-3 text-slate-800">${escapeHTML(r.item.name)}</td>
-      <td class="py-2 pr-3 text-right text-slate-600">${r.consumed} ${escapeHTML(r.item.unit)}</td>
-      <td class="py-2 pr-3 text-right text-slate-600">${r.theoretical==null?`<span class="text-slate-300">no dose</span>`:`${r.theoretical} ${escapeHTML(r.item.unit)} <span class="text-[10px] text-slate-400">(${r.cups} cups)</span>`}</td>
+      <td class="py-2 pr-3 text-right text-slate-600">${r.consumed} ${escapeHTML(r.unit||r.item.unit)}</td>
+      <td class="py-2 pr-3 text-right text-slate-600">${r.theoretical==null?`<span class="text-slate-300">—</span>`:`${r.theoretical} ${escapeHTML(r.theoUnit||r.unit||'')}${r.cups!=null?` <span class="text-[10px] text-slate-400">(${r.cups} sold)</span>`:''}`}</td>
       <td class="py-2 text-right font-semibold ${vCls}">${vTxt}</td>
     </tr>`;
   }).join('')
-    : `<tr><td colspan="4" class="py-6 text-center text-slate-400 text-sm">No closed shifts with cups + dose today yet.</td></tr>`;
+    : `<tr><td colspan="4" class="py-6 text-center text-slate-400 text-sm">No product mix entered today yet.</td></tr>`;
   const wTile = (lbl,g,strong)=>`<div class="rounded-xl ${strong?'bg-brand-50 border border-brand-200':'bg-slate-50'} p-3">
       <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">${lbl}</div>
       <div class="font-display text-xl font-semibold ${strong?'text-brand-700':'text-slate-900'} mt-0.5">${Math.round(g)}<span class="text-xs font-normal text-slate-400"> g</span></div>
@@ -21007,7 +21042,7 @@ function invBuildDashboardHTML(branch){
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
       ${invStatCard("Today's shifts", `${d.openCount}`, `${d.openCount} open · ${[d.morning,d.evening].filter(s=>s&&s.status==='closed').length} closed`)}
       ${invStatCard('Needs ordering', `${d.lowList.length}`, `low or out of stock`)}
-      ${invStatCard('Foodics today', `${d.foodicsToday}`, `across today's shifts`)}
+      ${invStatCard('Products sold', `${d.foodicsToday}`, `today (product mix)`)}
       ${invStatCard('Consumed today', `${Math.round(d.consumedToday*100)/100}`, `units used today`)}
     </div>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
@@ -21016,7 +21051,7 @@ function invBuildDashboardHTML(branch){
         <div class="relative h-56"><canvas id="invConsumptionChart"></canvas></div>
       </div>
       <div class="bg-white rounded-2xl shadow-card p-4">
-        <div class="text-sm font-semibold text-slate-800 mb-2">Foodics · last 14 days</div>
+        <div class="text-sm font-semibold text-slate-800 mb-2">Products sold · last 14 days</div>
         <div class="relative h-56"><canvas id="invFoodicsChart"></canvas></div>
       </div>
     </div>
@@ -21122,13 +21157,16 @@ function invShiftCardHTML(branch, shift){
     const consumed = s.counts.reduce((a,c)=>a+invConsumed(c),0);
     body = `<div class="text-sm text-slate-600">Opened by <span class="font-medium text-slate-800">${escapeHTML(s.openedByName||'—')}</span></div>
             <div class="text-xs text-slate-400 mt-0.5">${s.counts.filter(c=>c.openingQty!=null).length} items have an opening count</div>`;
-    actions = `<button onclick="invGoEntry('${shift}','close')" class="btn btn-primary btn-sm">Close shift · closing + Foodics</button>
+    actions = `<button onclick="invGoEntry('${shift}','close')" class="btn btn-primary btn-sm">Close shift</button>
+               <button onclick="invGoMix('${shift}')" class="btn btn-ghost btn-sm">Product mix</button>
                <button onclick="invGoEntry('${shift}','open')" class="btn btn-ghost btn-sm">Edit opening</button>`;
   } else {
     const consumed = Math.round(s.counts.reduce((a,c)=>a+invConsumed(c),0)*100)/100;
+    const mixN = (s.drinkSales||[]).filter(x=>x.qtySold>0).length + (s.counts||[]).filter(c=>c.foodicsQty!=null).length;
     body = `<div class="text-sm text-slate-600">Closed by <span class="font-medium text-slate-800">${escapeHTML(s.closedByName||'—')}</span></div>
-            <div class="flex gap-4 mt-1 text-xs"><span class="text-slate-500">Foodics <span class="font-semibold text-slate-800">${s.foodicsTotal==null?'—':s.foodicsTotal}</span></span><span class="text-slate-500">Consumed <span class="font-semibold text-slate-800">${consumed}</span></span></div>`;
-    actions = `<button onclick="invGoEntry('${shift}','close')" class="btn btn-ghost btn-sm">View / edit closing</button>`;
+            <div class="flex gap-4 mt-1 text-xs"><span class="text-slate-500">Product mix <span class="font-semibold text-slate-800">${mixN||'—'}</span></span><span class="text-slate-500">Consumed <span class="font-semibold text-slate-800">${consumed}</span></span></div>`;
+    actions = `<button onclick="invGoMix('${shift}')" class="btn btn-primary btn-sm">Product mix</button>
+               <button onclick="invGoEntry('${shift}','close')" class="btn btn-ghost btn-sm">View / edit closing</button>`;
   }
   return `<div class="bg-white rounded-2xl shadow-card p-5">
     <div class="flex items-center justify-between mb-2">
@@ -21158,6 +21196,7 @@ function invRenderBoard(branch){
 
 /* ---- shift entry form (open = opening stock; close = closing + received + Foodics) ---- */
 function invGoEntry(shift, mode){ const s=invUIState(); s.shift=shift; s.entryMode=mode; s.view='entry'; render(); }
+function invGoMix(shift){ const s=invUIState(); s.shift=shift; s.view='mix'; render(); }
 function invGoBack(){ const s=invUIState(); s.view='board'; render(); }
 function invRenderEntry(branch){
   const s = invUIState();
@@ -21189,9 +21228,8 @@ function invRenderEntry(branch){
           <span class="text-sm font-medium text-slate-800">${escapeHTML(it.name)}</span>
           <span class="text-[11px] text-slate-400 shrink-0">opened: ${openVal} ${escapeHTML(it.unit)}</span>
         </div>
-        <div class="grid grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 gap-2">
           <div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">Received</div><input id="inv-${it.id}-recv" type="number" inputmode="decimal" step="any" value="${c&&c.receivedQty!=null?c.receivedQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
-          <div><div class="text-[10px] uppercase tracking-wide text-brand-600 mb-0.5">Cups${it.doseG!=null?` <span class="text-slate-300 normal-case">·${it.doseG}g</span>`:''}</div><input id="inv-${it.id}-food" type="number" inputmode="decimal" step="any" value="${c&&c.foodicsQty!=null?c.foodicsQty:''}" class="input w-full text-right text-base py-2" placeholder="0"></div>
           <div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">Closing</div><input id="inv-${it.id}-close" type="number" inputmode="decimal" step="any" value="${c&&c.closingQty!=null?c.closingQty:''}" class="input w-full text-right text-lg py-2.5" placeholder="0"></div>
         </div>
       </div>`;
@@ -21206,7 +21244,7 @@ function invRenderEntry(branch){
   ].map(([k,lbl,val])=>`<div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">${lbl}</div><input id="inv-waste-${k}" type="number" inputmode="decimal" step="any" value="${val}" class="input w-full text-right text-base py-2" placeholder="0"></div>`).join('');
   const foodicsBox = isClose ? `
     <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 mb-4 text-xs text-slate-600">
-      Per item enter <span class="font-semibold text-brand-700">Cups</span> (drinks sold per the POS), <span class="font-semibold text-slate-700">Received</span> (deliveries), and <span class="font-semibold text-slate-700">Closing</span> (what's left). Cups × recipe dose = theoretical usage; actual vs theoretical drives the variance dashboard.
+      Per item enter <span class="font-semibold text-slate-700">Received</span> (deliveries this shift) and <span class="font-semibold text-slate-700">Closing</span> (what's left). Sales go on the <span class="font-semibold text-brand-700">Product mix</span> screen.
     </div>
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
       <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold mb-2">Daily waste log <span class="text-slate-400 font-normal normal-case">· grams</span></div>
@@ -21328,20 +21366,18 @@ async function invSaveClose(shiftId, branch, shift){
     if (error){ toast('Could not open shift: ' + error.message, 'error'); return; }
     shiftId = shiftRow.id;
   }
-  // Gather per-item closing / received / Foodics-sold first, so the shift's
-  // foodics_total can be cached as the sum of per-item Foodics.
-  let foodicsSum = null;
+  // Stock side only — closing + received per item. Sales (foodics_qty) are
+  // owned by the Product Mix screen, so we don't touch them here (the upsert
+  // omits foodics_qty, which preserves any product-mix value already set).
   const rows = invActiveItems().map(it=>{
     const closing = invNum('inv-'+it.id+'-close');
     const recv    = invNum('inv-'+it.id+'-recv');
-    const food    = invNum('inv-'+it.id+'-food');
-    if (food!=null) foodicsSum = (foodicsSum||0) + food;
-    if (closing==null && recv==null && food==null) return null;
-    return { shift_id:shiftId, item_id:it.id, closing_qty:closing, received_qty:recv, foodics_qty:food };
+    if (closing==null && recv==null) return null;
+    return { shift_id:shiftId, item_id:it.id, closing_qty:closing, received_qty:recv };
   }).filter(Boolean);
   const { error } = await sb.from('inventory_shifts').update({
     status:'closed', closed_by:actor.id, closed_by_name:actor.name, closed_at:nowISO,
-    foodics_total: foodicsSum, updated_at:nowISO,
+    updated_at:nowISO,
     waste_dialin_g:   invNum('inv-waste-dialin'),
     waste_remakes_g:  invNum('inv-waste-remakes'),
     waste_training_g: invNum('inv-waste-training'),
@@ -21403,10 +21439,115 @@ async function invSaveClose(shiftId, branch, shift){
   await loadInventoryShifts(branch, today.slice(0,7));
 }
 
+/* ---- Product Mix (Foodics sales per product, per shift) ----
+   Espresso drinks → inventory_drink_sales (roll up to espresso usage).
+   V60 / sweets / 250g / premium items → inventory_shift_counts.foodics_qty. */
+const INV_MIX_ITEM_CATS = [
+  { key:'v60',         label:'V60 / Filter' },
+  { key:'pastry',      label:'Sweets' },
+  { key:'retail_250g', label:'250g Retail' },
+  { key:'premium',     label:'125g / Premium' },
+];
+function invMixItems(){ return INV_MIX_ITEM_CATS.flatMap(c => invActiveItems().filter(i=>i.category===c.key)); }
+function invRenderProductMix(branch){
+  const s = invUIState();
+  const today = todayISO();
+  const shift = s.shift;
+  const existing = invFindShift(branch, today, shift);
+  const drinkSold = {}; (existing && existing.drinkSales ? existing.drinkSales : []).forEach(d=>{ drinkSold[d.drinkId] = d.qtySold; });
+  const itemSold  = {}; (existing && existing.counts ? existing.counts : []).forEach(c=>{ if (c.foodicsQty!=null) itemSold[c.itemId] = c.foodicsQty; });
+  const numRow = (id, name, hint, val) => `
+    <div class="flex items-center justify-between gap-2 py-2 border-b border-slate-50">
+      <div class="text-sm text-slate-800 min-w-0">${escapeHTML(name)}${hint?` <span class="text-[11px] text-slate-400">${escapeHTML(hint)}</span>`:''}</div>
+      <div class="w-24 shrink-0"><input id="${id}" type="number" inputmode="numeric" step="any" min="0" value="${val!=null?val:''}" class="input w-full text-right py-2" placeholder="0"></div>
+    </div>`;
+  const drinkSection = invActiveDrinks().length ? `
+    <div class="mb-4">
+      <div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">Espresso drinks</div>
+      ${invActiveDrinks().map(d=>numRow('pm-drink-'+d.id, d.name, d.gramsPer+'g', drinkSold[d.id])).join('')}
+    </div>` : '';
+  const itemSections = INV_MIX_ITEM_CATS.map(cat=>{
+    const its = invActiveItems().filter(i=>i.category===cat.key);
+    if (!its.length) return '';
+    return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(cat.label)}</div>${its.map(it=>numRow('pm-item-'+it.id, it.name, it.unit, itemSold[it.id])).join('')}</div>`;
+  }).join('');
+  const actor = invActor();
+  return `
+    <div class="max-w-2xl mx-auto">
+      <button onclick="invGoBack()" class="text-sm text-slate-500 hover:text-slate-800 mb-3 inline-flex items-center gap-1">← Back to shifts</button>
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <div class="font-display text-xl font-semibold text-slate-900">Product mix · ${invShiftLabel(shift)} shift</div>
+            <div class="text-xs text-slate-500">${escapeHTML(branch)} · ${escapeHTML(invDayLabel(today))} · ${escapeHTML(actor.name)}</div>
+          </div>
+          <button onclick="invPrintProductMix('${escapeHTML(branch)}','${shift}')" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+        </div>
+        <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 mb-4 text-xs text-slate-600">Enter quantities sold per product from the Foodics report. Espresso drinks roll into espresso usage; V60 / sweets / retail are counted per item. Feeds the variance dashboard.</div>
+        ${drinkSection}
+        ${itemSections}
+        <div class="flex gap-2 mt-5 sticky bottom-0 bg-white pt-3">
+          <button onclick="invSaveProductMix('${escapeHTML(branch)}','${shift}')" class="btn btn-primary flex-1 py-3 text-base">Save product mix</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function invSaveProductMix(branch, shift){
+  const today = todayISO();
+  const actor = invActor();
+  const nowISO = new Date().toISOString();
+  let existing = invFindShift(branch, today, shift);
+  let shiftId = existing ? existing.id : null;
+  if (!shiftId){
+    const { data:shiftRow, error } = await sb.from('inventory_shifts').upsert({
+      branch, business_date:today, shift, status:'open',
+      opened_by: actor.id, opened_by_name: actor.name, opened_at: nowISO, updated_at: nowISO,
+    }, { onConflict:'branch,business_date,shift' }).select().single();
+    if (error){ toast('Could not start shift: ' + error.message, 'error'); return; }
+    shiftId = shiftRow.id;
+  }
+  // Espresso drink sales → replace this shift's rows.
+  const drinkRows = invActiveDrinks().map(d=>({ shift_id:shiftId, drink_id:d.id, qty_sold: invNum('pm-drink-'+d.id) })).filter(r=>r.qty_sold!=null);
+  await sb.from('inventory_drink_sales').delete().eq('shift_id', shiftId);
+  if (drinkRows.length){
+    const { error } = await sb.from('inventory_drink_sales').insert(drinkRows);
+    if (error){ toast('Saved, but drink sales failed: ' + error.message, 'error'); }
+  }
+  // Item sales → foodics_qty on the shift count (preserves opening/closing).
+  const itemRows = invMixItems().map(it=>{ const v = invNum('pm-item-'+it.id); return v==null ? null : { shift_id:shiftId, item_id:it.id, foodics_qty:v }; }).filter(Boolean);
+  if (itemRows.length){
+    const { error } = await sb.from('inventory_shift_counts').upsert(itemRows, { onConflict:'shift_id,item_id' });
+    if (error){ toast('Saved, but item sales failed: ' + error.message, 'error'); }
+  }
+  toast('Product mix saved', 'success');
+  const s = invUIState(); s.view = 'board';
+  invInvalidate(branch, today.slice(0,7));
+  await loadInventoryShifts(branch, today.slice(0,7));
+}
+function invPrintProductMix(branch, shift){
+  const today = todayISO();
+  const existing = invFindShift(branch, today, shift);
+  const drinkSold = {}; (existing && existing.drinkSales ? existing.drinkSales : []).forEach(d=>{ drinkSold[d.drinkId] = d.qtySold; });
+  const itemSold  = {}; (existing && existing.counts ? existing.counts : []).forEach(c=>{ if (c.foodicsQty!=null) itemSold[c.itemId] = c.foodicsQty; });
+  const sect = (title, rows) => rows ? `<h3>${escapeHTML(title)}</h3><table><thead><tr><th>Product</th><th class="r">Sold</th></tr></thead><tbody>${rows}</tbody></table>` : '';
+  const drinkRows = invActiveDrinks().map(d=>`<tr><td>${escapeHTML(d.name)}</td><td class="r">${drinkSold[d.id]!=null?drinkSold[d.id]:''}</td></tr>`).join('');
+  const itemSecs = INV_MIX_ITEM_CATS.map(cat=>{
+    const its = invActiveItems().filter(i=>i.category===cat.key);
+    if (!its.length) return '';
+    return sect(cat.label, its.map(it=>`<tr><td>${escapeHTML(it.name)}</td><td class="r">${itemSold[it.id]!=null?itemSold[it.id]:''}</td></tr>`).join(''));
+  }).join('');
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Product Mix</title>
+    <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:24px;}h1{font-size:20px;margin:0 0 2px;}.sub{color:#64748b;font-size:12px;margin-bottom:8px;}h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#a87035;margin:16px 0 4px;}table{width:100%;border-collapse:collapse;}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:13px;}.r{text-align:right;width:90px;}th{font-size:10px;text-transform:uppercase;color:#94a3b8;}</style></head>
+    <body><h1>Product Mix — ${escapeHTML(branch)}</h1><div class="sub">${invShiftLabel(shift)} shift · ${escapeHTML(invDayLabel(today))} · quantities sold per Foodics</div>
+    ${sect('Espresso drinks', drinkRows)}${itemSecs}</body></html>`;
+  openPrintWindow(html);
+}
+
 /* ---- the shared body (board / dashboard / entry) ---- */
 function invRenderBody(branch){
   const s = invUIState();
   if (s.view === 'entry')     return invRenderEntry(branch);
+  if (s.view === 'mix')       return invRenderProductMix(branch);
   if (s.view === 'dashboard') return invBuildDashboardHTML(branch);
   return invRenderBoard(branch);
 }
@@ -21431,7 +21572,7 @@ function renderInventoryHub(){
         <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(branch)}</h2>
         <div class="text-xs text-slate-500 mt-1">Open &amp; close shifts · track stock vs Foodics · spot what needs ordering.</div>
       </div>
-      <div class="flex items-center gap-2 flex-wrap">${branchSel}${inventoryHubState.view==='entry'?'':invTabs(inventoryHubState.view)}</div>
+      <div class="flex items-center gap-2 flex-wrap">${branchSel}${(inventoryHubState.view==='entry'||inventoryHubState.view==='mix')?'':invTabs(inventoryHubState.view)}</div>
     </div>`;
   if (invEnsureLoaded(branch)){
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)}…</div>`;
@@ -21452,9 +21593,9 @@ function renderDeviceApp(){
   return renderDeviceShell(branch, body);
 }
 function renderDeviceShell(branch, bodyHTML){
-  const view = deviceState.view==='entry' ? 'entry' : deviceState.view;
+  const view = (deviceState.view==='entry'||deviceState.view==='mix') ? deviceState.view : deviceState.view;
   const tab = (key,label) => `<button onclick="deviceState.view='${key}'; render();" class="px-4 py-2 text-sm font-medium rounded-lg ${view===key?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-100'}">${label}</button>`;
-  const tabs = deviceState.view==='entry' ? '' : `<div class="inline-flex bg-white border border-slate-200 rounded-xl p-1">${tab('board','Shifts')}${tab('dashboard','Dashboard')}</div>`;
+  const tabs = (deviceState.view==='entry'||deviceState.view==='mix') ? '' : `<div class="inline-flex bg-white border border-slate-200 rounded-xl p-1">${tab('board','Shifts')}${tab('dashboard','Dashboard')}</div>`;
   return `
     <div class="min-h-screen bg-slate-50">
       <header class="sticky top-0 z-20 bg-white border-b border-slate-200">
