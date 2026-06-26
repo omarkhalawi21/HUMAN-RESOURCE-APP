@@ -4278,6 +4278,42 @@ ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS owner_id uuid re
 ALTER TABLE public.employee_extras ADD COLUMN IF NOT EXISTS daily_hours numeric(4,1);
 
 -- =============================================================
+-- 78. INVENTORY DRINK SALES — the espresso side of the product mix
+--     The product-mix screen records Foodics sales per product. Item sales
+--     (V60 / sweets / 250g / premium) reuse inventory_shift_counts.foodics_qty
+--     (one row per item). Espresso DRINKS (Latte, Cappuccino, …) aren't items,
+--     so their sold quantities live here, one row per (shift, drink); the
+--     dashboard rolls them up (qty × drink dose) into espresso theoretical.
+--     Same write roles as the other shift tables; DELETE included (save
+--     replaces the shift's rows).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.inventory_drink_sales (
+  id        uuid primary key default gen_random_uuid(),
+  shift_id  uuid not null references public.inventory_shifts(id) ON DELETE CASCADE,
+  drink_id  uuid not null references public.inventory_drinks(id) ON DELETE CASCADE,
+  qty_sold  numeric(10,2) not null default 0,
+  UNIQUE (shift_id, drink_id)
+);
+CREATE INDEX IF NOT EXISTS inventory_drink_sales_shift_idx ON public.inventory_drink_sales(shift_id);
+
+ALTER TABLE public.inventory_drink_sales ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='inventory_drink_sales'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.inventory_drink_sales', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "ids_select_floor_ops_device" ON public.inventory_drink_sales FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "ids_insert_floor_ops_device" ON public.inventory_drink_sales FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "ids_update_floor_ops_device" ON public.inventory_drink_sales FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+CREATE POLICY "ids_delete_floor_ops_device" ON public.inventory_drink_sales FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
