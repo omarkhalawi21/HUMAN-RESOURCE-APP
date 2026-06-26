@@ -4916,7 +4916,7 @@ function printAttendanceEvidence() {
             <td><strong>${escapeHTML(e?(e.firstName+' '+e.lastName):'—')}</strong></td>
             <td>${escapeHTML(ex.branch||'—')}</td>
             <td>${a.clockIn||'—'}</td>
-            <td>${a.clockOut||'—'}</td>
+            <td>${attOutText(a)}</td>
             <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
             <td><span class="pill ${cls}">${escapeHTML(a.status)}</span></td>
             <td style="color:#6b7280; font-size:10px">${escapeHTML(a.location?.label||'—')}${a.location?.lat ? `<br>${a.location.lat.toFixed(4)}, ${a.location.lng.toFixed(4)}`:''}</td>
@@ -5021,7 +5021,7 @@ function renderAttendance() {
                 <tr class="hover-row">
                   <td class="font-medium">${fmtDate(a.date)}</td>
                   <td>${a.clockIn||'—'}</td>
-                  <td>${a.clockOut||'—'}</td>
+                  <td>${attOutCell(a, false)}</td>
                   <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
                   <td>${statusBadge(a.status)}</td>
                   <td class="text-slate-500 text-xs">${a.location?.label||'—'}</td>
@@ -5186,7 +5186,7 @@ function renderAttendance() {
                   <td><div class="flex items-center gap-2">${avatarHTML(e,28)}<a href="#/employee/${e.id}" class="font-medium hover:text-brand-700 hover:underline">${escapeHTML(e.firstName+' '+e.lastName)}</a></div></td>
                   <td>${ex.branch ? `<span class="badge badge-blue">${escapeHTML(ex.branch)}</span>` : '<span class="text-xs text-slate-400">—</span>'}</td>
                   <td class="tabular-nums">${a.clockIn||'—'}</td>
-                  <td class="tabular-nums">${a.clockOut||'—'}</td>
+                  <td class="tabular-nums">${attOutCell(a, canFix)}</td>
                   <td class="tabular-nums">${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
                   <td>${statusBadge(a.status)}</td>
                 </tr>`;
@@ -5387,6 +5387,45 @@ async function undoClockOut(id) {
   Object.assign(rec, mapAttendanceFromDb(data));
   render();
   toast('Clock-out undone — shift re-opened', 'success');
+}
+// A forgotten clock-out = clocked in, no clock-out, on a PAST day (today's
+// open shift is normal — they're still working). These are left open and
+// flagged so a manager sets the real time; they never auto-fill hours.
+function attMissingOut(a){ return !!(a && a.clockIn && !a.clockOut && a.date < todayISO()); }
+// Plain-text Out value for print reports / CSV.
+function attOutText(a){ return a.clockOut ? a.clockOut : (attMissingOut(a) ? 'Missing' : '—'); }
+// HTML Out cell for interactive tables. canFix (admin/HR) adds a "set time"
+// button on a missing clock-out.
+function attOutCell(a, canFix){
+  if (a.clockOut) return escapeHTML(a.clockOut);
+  if (attMissingOut(a)) return `<span class="badge badge-amber">Missing</span>${canFix ? ` <button onclick="fixClockOut('${a.id}')" title="Set clock-out time" aria-label="Set clock-out time" class="text-slate-300 hover:text-brand-700 align-middle ml-1">${icon('edit','w-3.5 h-3.5 inline')}</button>` : ''}`;
+  return '—'; // today, still clocked in
+}
+// Admin/HR sets the clock-out time on a forgotten (open, past-day) shift.
+async function fixClockOut(id){
+  if (!canManagePeople()) { toast('Admins / HR only', 'error'); return; }
+  const rec = (state.attendance||[]).find(a => a.id===id);
+  if (!rec || rec.clockOut || !rec.clockIn) return;
+  const emp = getEmployee(rec.employeeId);
+  const who = emp ? (emp.firstName+' '+(emp.lastName||'')).trim() : 'this employee';
+  const def = state.settings.workEnd || rec.clockIn; // sensible default; manager adjusts
+  const form = `
+    <div class="space-y-3">
+      <p class="text-sm text-slate-600">${escapeHTML(who)} clocked in at <span class="font-semibold tabular-nums">${escapeHTML(rec.clockIn)}</span> on ${escapeHTML(fmtDate(rec.date))} but never clocked out. Enter the correct clock-out time:</p>
+      <div><label class="label">Clock-out time</label><input id="fco-time" type="time" class="input" value="${escapeHTML(def)}"></div>
+      <p class="text-xs text-slate-400">Leaving the shift open is fine too — it just won't count hours until set.</p>
+    </div>`;
+  openModal('Set clock-out', form, async () => {
+    const tval = $('#fco-time').value;
+    if (!tval) { toast('Enter a time', 'error'); return false; }
+    if (diffMinutes(rec.clockIn, tval) < 0) { toast('Clock-out must be the same day and after clock-in.', 'error'); return false; }
+    const { data, error } = await sb.from('attendance').update({ clock_out: tval }).eq('id', rec.id).select().single();
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    Object.assign(rec, mapAttendanceFromDb(data));
+    render();
+    toast(`Clock-out set to ${tval}`, 'success');
+    return true;
+  }, { saveLabel:'Save clock-out' });
 }
 
 /* -------------------- LEAVE -------------------- */
@@ -9349,7 +9388,7 @@ function exportAttendanceSnapshot() {
     const hrs = att?.clockIn && att?.clockOut ? minutesToHrs(diffMinutes(att.clockIn, att.clockOut)) : '';
     rows.push([
       e.firstName+' '+e.lastName, ex.branch||'', e.role, e.department,
-      att?.clockIn||'', att?.clockOut||'', hrs, status
+      att?.clockIn||'', att ? (att.clockOut || (attMissingOut(att)?'Missing':'')) : '', hrs, status
     ]);
   });
   const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
@@ -9375,7 +9414,7 @@ function exportCSV(kind) {
   } else if (kind==='my-attendance') {
     const me = currentEmployee();
     rows = [['Date','Clock In','Clock Out','Hours','Status']];
-    state.attendance.filter(a=>a.employeeId===me.id).forEach(a => rows.push([a.date,a.clockIn,a.clockOut||'',a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'',a.status]));
+    state.attendance.filter(a=>a.employeeId===me.id).forEach(a => rows.push([a.date,a.clockIn,a.clockOut||(attMissingOut(a)?'Missing':''),a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'',a.status]));
   } else if (kind==='today-attendance') {
     rows = [['Employee','Department','Clock In','Clock Out','Status']];
     const today = todayISO();
@@ -9390,7 +9429,7 @@ function exportCSV(kind) {
     rows = [['Date','Employee','Clock In','Clock Out','Hours','Status']];
     state.attendance.forEach(a => {
       const e = getEmployee(a.employeeId); if(!e) return;
-      rows.push([a.date, e.firstName+' '+e.lastName, a.clockIn, a.clockOut||'', a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'', a.status]);
+      rows.push([a.date, e.firstName+' '+e.lastName, a.clockIn, a.clockOut||(attMissingOut(a)?'Missing':''), a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'', a.status]);
     });
   } else if (kind==='att-history-filtered') {
     rows = [['Date','Day','Employee','Branch','Role','Clock In','Clock Out','Hours','Status','Location']];
@@ -9401,7 +9440,7 @@ function exportCSV(kind) {
       const dow = new Date(a.date+'T00:00:00').toLocaleDateString(undefined,{weekday:'short'});
       rows.push([
         a.date, dow, e.firstName+' '+e.lastName, ex.branch||'', e.role,
-        a.clockIn||'', a.clockOut||'',
+        a.clockIn||'', a.clockOut||(attMissingOut(a)?'Missing':''),
         a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut)) : '',
         a.status, a.location?.label||'',
       ]);
