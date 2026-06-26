@@ -1726,6 +1726,7 @@ function mapExtrasFromDb(r) {
     baladiya: { number: r.baladiya_number||'', expiry: r.baladiya_expiry||'' },
     branch:      r.branch || '',
     nationality: r.nationality || '',
+    dailyHours:  r.daily_hours == null ? null : Number(r.daily_hours),
   };
   // Ensure all 7 days present and well-formed
   for (let i=0;i<7;i++) {
@@ -1749,6 +1750,7 @@ function extrasToDb(empId, x) {
     baladiya_expiry: x.baladiya?.expiry || null,
     branch:          x.branch          || null,
     nationality:     x.nationality     || null,
+    daily_hours:     (x.dailyHours != null && Number(x.dailyHours) > 0) ? Number(x.dailyHours) : null,
   };
 }
 
@@ -4521,6 +4523,10 @@ function openEmployeeModal(id) {
             ${[...new Set([...COMMON_NATIONALITIES, ...Object.values(state.empExtras||{}).map(x=>x.nationality).filter(Boolean)])].map(n=>`<option value="${escapeHTML(n)}">`).join('')}
           </datalist>
         </div>
+        <div><label class="label">Daily working hours</label>
+          <input id="m-dh" class="input" type="number" step="0.5" min="1" max="24" value="${ex.dailyHours!=null?ex.dailyHours:''}" placeholder="default ${ex.nationality==='Saudi'?HOLIDAY_DAY_HOURS_SAUDI:HOLIDAY_DAY_HOURS_OTHER}">
+          <div class="text-[11px] text-slate-400 mt-0.5">Overtime / hourly basis (salary ÷ 30 ÷ hours). Blank = default (${HOLIDAY_DAY_HOURS_SAUDI}h Saudi / ${HOLIDAY_DAY_HOURS_OTHER}h other).</div>
+        </div>
         <div><label class="label">Job title</label><input id="m-ro" class="input" placeholder="e.g. Senior Barista" value="${escapeHTML(editing?.role||'')}"></div>
         <div><label class="label">System role</label>
           ${(() => {
@@ -4661,6 +4667,7 @@ function openEmployeeModal(id) {
         baladiya: { number: $('#m-bal-no')?.value.trim()  || '', expiry: $('#m-bal-exp')?.value   || '' },
         branch:      $('#m-br')?.value.trim()  || '',
         nationality: $('#m-nat')?.value.trim() || '',
+        dailyHours:  $('#m-dh')?.value ? Number($('#m-dh').value) : null,
       };
       const ok = await saveEmpExtras(savedId, extras);
       if (!ok) return false;
@@ -6207,7 +6214,11 @@ const HOLIDAY_OT_MULTIPLIER = 1.5;
 const HOLIDAY_DAY_HOURS_SAUDI = 8;
 const HOLIDAY_DAY_HOURS_OTHER = 10;
 function holidayDayHours(empId) {
-  return getEmpExtras(empId).nationality === 'Saudi' ? HOLIDAY_DAY_HOURS_SAUDI : HOLIDAY_DAY_HOURS_OTHER;
+  const ex = getEmpExtras(empId);
+  // Per-employee override (e.g. a 9-hour worker) wins; otherwise the
+  // nationality-based default (Saudi 8 / other 10).
+  if (ex.dailyHours != null && Number(ex.dailyHours) > 0) return Number(ex.dailyHours);
+  return ex.nationality === 'Saudi' ? HOLIDAY_DAY_HOURS_SAUDI : HOLIDAY_DAY_HOURS_OTHER;
 }
 // `attRows` is this employee's pre-bucketed attendance (rows that
 // already have clockIn+clockOut), built once in calcPayroll so the
