@@ -4269,6 +4269,15 @@ CREATE POLICY "iow_delete_admin_head" ON public.inventory_owners FOR DELETE TO a
 ALTER TABLE public.inventory_usage_log ADD COLUMN IF NOT EXISTS owner_id uuid references public.inventory_owners(id) ON DELETE SET NULL;
 
 -- =============================================================
+-- 77. EMPLOYEE EXTRAS — per-employee daily working hours override
+--     The overtime / hourly basis is salary ÷ 30 ÷ day-hours. Day-hours
+--     defaulted by nationality (Saudi 8 / other 10); some staff work a
+--     different day (e.g. 9h), which skewed their rate. This optional
+--     per-employee override wins when set; blank falls back to the default.
+-- =============================================================
+ALTER TABLE public.employee_extras ADD COLUMN IF NOT EXISTS daily_hours numeric(4,1);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
