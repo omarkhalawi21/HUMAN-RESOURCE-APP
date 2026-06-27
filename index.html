@@ -2226,7 +2226,11 @@ function fmtDate(d) {
 }
 function diffMinutes(a, b) {
   const [ah,am]=a.split(':').map(Number), [bh,bm]=b.split(':').map(Number);
-  return (bh*60+bm)-(ah*60+am);
+  let d = (bh*60+bm)-(ah*60+am);
+  // Clock-out after midnight (e.g. in 10:42, out 00:48) reads as "earlier"
+  // than clock-in and would go negative — add a day to span the midnight crossing.
+  if (d < 0) d += 24*60;
+  return d;
 }
 function minutesToHrs(m) { return (m/60).toFixed(2); }
 
