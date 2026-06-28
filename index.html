@@ -2252,6 +2252,25 @@ function attMinutes(a) {
   return shiftCrossesMidnight(shiftForDate(a.employeeId, a.date)) ? raw + 24*60 : 0;
 }
 
+// Late vs Present is derived LIVE, not frozen at clock-in. The flag stored at
+// punch time reflects whatever schedule existed then; if HR later corrects an
+// employee's shift start (e.g. to 14:00), that record would otherwise stay
+// wrongly "Late" forever. This re-derives every clocked-in row from the
+// employee's CURRENT schedule for that weekday (15-min grace, mirroring
+// clockIn()). Rows without a clock-in and absent/on-leave/off rows keep their
+// stored value. Idempotent: the original DB value is cached on `_statusStored`
+// and re-derived from it each call, so repeated runs (every render) are stable.
+function recomputeAttendanceStatuses() {
+  (state.attendance || []).forEach(a => {
+    if (a._statusStored === undefined) a._statusStored = a.status;
+    const stored = a._statusStored;
+    if (!a.clockIn || (stored !== 'present' && stored !== 'late')) { a.status = stored; return; }
+    const sh = shiftForDate(a.employeeId, a.date);
+    const shiftStart = (sh && sh.start) || state.settings.workStart || '09:00';
+    a.status = diffMinutes(shiftStart, a.clockIn) > 15 ? 'late' : 'present';
+  });
+}
+
 // Deleted: legacy seedData() shim — never called, returned an empty
 // state. emptyState() is the real reset path.
 
@@ -21718,6 +21737,9 @@ function render() {
     return;
   }
   if (!state.session) { stopClockTicker(); app.innerHTML = renderLogin(); return; }
+  // Keep Late/Present in sync with the current schedule before anything paints,
+  // so a corrected shift start (e.g. 14:00) retroactively fixes today's rows.
+  recomputeAttendanceStatuses();
   // Block: signed-in but not in the employees table (someone signed up
   // who wasn't pre-added by HR). The DB trigger leaves them unlinked.
   const me = currentEmployee();
