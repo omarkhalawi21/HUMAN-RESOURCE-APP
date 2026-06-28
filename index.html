@@ -2226,13 +2226,31 @@ function fmtDate(d) {
 }
 function diffMinutes(a, b) {
   const [ah,am]=a.split(':').map(Number), [bh,bm]=b.split(':').map(Number);
-  let d = (bh*60+bm)-(ah*60+am);
-  // Clock-out after midnight (e.g. in 10:42, out 00:48) reads as "earlier"
-  // than clock-in and would go negative — add a day to span the midnight crossing.
-  if (d < 0) d += 24*60;
-  return d;
+  return (bh*60+bm)-(ah*60+am);
 }
 function minutesToHrs(m) { return (m/60).toFixed(2); }
+// Schedule entry for the weekday of a given date string (the employee's
+// per-day shift), or null. Parsed at noon to avoid any timezone slippage.
+function shiftForDate(empId, dateStr) {
+  if (!empId || !dateStr) return null;
+  const dow = new Date(dateStr + 'T12:00:00').getDay();
+  return getEmpExtras(empId).schedule?.[dow] || null;
+}
+// True when the schedule entry is a working day that ends after midnight
+// (end <= start, e.g. Fri 11:00 – 00:00).
+function shiftCrossesMidnight(sh) {
+  return !!(sh && !sh.off && sh.start && sh.end && diffMinutes(sh.start, sh.end) <= 0);
+}
+// Worked minutes for an attendance row. A clock-out that reads earlier than
+// clock-in is credited as crossing midnight ONLY when the employee's schedule
+// for that day genuinely ends after midnight. Otherwise the backwards time is
+// bad data and counts zero — never an inflated ~24h.
+function attMinutes(a) {
+  if (!a || !a.clockIn || !a.clockOut) return 0;
+  const raw = attMinutes(a);
+  if (raw >= 0) return raw;
+  return shiftCrossesMidnight(shiftForDate(a.employeeId, a.date)) ? raw + 24*60 : 0;
+}
 
 // Deleted: legacy seedData() shim — never called, returned an empty
 // state. emptyState() is the real reset path.
@@ -4148,7 +4166,7 @@ function renderEmployeeProfile(empId) {
   const present  = myAttendance.filter(a => a.status==='present').length;
   const late     = myAttendance.filter(a => a.status==='late').length;
   const absent   = myAttendance.filter(a => a.status==='absent').length;
-  const totalMin = myAttendance.filter(r=>r.clockIn && r.clockOut).reduce((s,r)=>s+diffMinutes(r.clockIn,r.clockOut),0);
+  const totalMin = myAttendance.filter(r=>r.clockIn && r.clockOut).reduce((s,r)=>s+attMinutes(r),0);
   const totalHrs = (totalMin/60).toFixed(1);
 
   const myPayroll = state.payroll.filter(p => p.employeeId===e.id);
@@ -4331,7 +4349,7 @@ function renderEmployeeProfile(empId) {
                     <td class="font-medium">${fmtDate(a.date)}</td>
                     <td>${a.clockIn||'—'}</td>
                     <td>${a.clockOut||'—'}</td>
-                    <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                    <td>${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
                     <td>${statusBadge(a.status)}</td>
                   </tr>`).join('')}
               </tbody>
@@ -4869,7 +4887,7 @@ function printAttendanceEvidence() {
   const empFilterLabel = attHistFilter.employee === 'all' ? 'All employees' : (() => { const e = getEmployee(attHistFilter.employee); return e ? e.firstName+' '+e.lastName : 'Unknown'; })();
   const branchFilterLabel = attHistFilter.branch === 'all' ? 'All branches' : attHistFilter.branch === 'none' ? 'Unassigned' : attHistFilter.branch;
   const statusFilterLabel = attHistFilter.status === 'all' ? 'All statuses' : attHistFilter.status.charAt(0).toUpperCase()+attHistFilter.status.slice(1);
-  const totalHrs = records.reduce((s,a) => s + (a.clockIn && a.clockOut ? diffMinutes(a.clockIn,a.clockOut) : 0), 0);
+  const totalHrs = records.reduce((s,a) => s + (a.clockIn && a.clockOut ? attMinutes(a) : 0), 0);
   const presentN = records.filter(a => a.status==='present').length;
   const lateN    = records.filter(a => a.status==='late').length;
   const absentN  = records.filter(a => a.status==='absent').length;
@@ -4928,7 +4946,7 @@ function printAttendanceEvidence() {
             <td>${escapeHTML(ex.branch||'—')}</td>
             <td>${a.clockIn||'—'}</td>
             <td>${attOutText(a)}</td>
-            <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+            <td>${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
             <td><span class="pill ${cls}">${escapeHTML(a.status)}</span></td>
             <td style="color:#6b7280; font-size:10px">${escapeHTML(a.location?.label||'—')}${a.location?.lat ? `<br>${a.location.lat.toFixed(4)}, ${a.location.lng.toFixed(4)}`:''}</td>
           </tr>`;
@@ -4996,7 +5014,7 @@ function renderAttendance() {
           </div>
           <div class="text-center">
             <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('att_hours'))}</div>
-            <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn && myToday?.clockOut ? minutesToHrs(diffMinutes(myToday.clockIn, myToday.clockOut))+'h' : '—'}</div>
+            <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn && myToday?.clockOut ? minutesToHrs(attMinutes(myToday))+'h' : '—'}</div>
           </div>
           ${!myToday ? `<button onclick="clockIn(event)" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
             : !myToday.clockOut ? `<button onclick="clockOut(event)" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
@@ -5033,7 +5051,7 @@ function renderAttendance() {
                   <td class="font-medium">${fmtDate(a.date)}</td>
                   <td>${a.clockIn||'—'}</td>
                   <td>${attOutCell(a, false)}</td>
-                  <td>${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td>${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
                   <td>${statusBadge(a.status)}</td>
                   <td class="text-slate-500 text-xs">${a.location?.label||'—'}</td>
                 </tr>`).join('')}
@@ -5069,7 +5087,7 @@ function renderAttendance() {
                   <td>${escapeHTML(e.department)}</td>
                   <td>${a?.clockIn||'—'}</td>
                   <td>${a?.clockOut ? `${a.clockOut}${canFix ? ` <button onclick="undoClockOut('${a.id}')" title="Undo clock-out (re-open shift)" aria-label="Undo clock-out" class="text-slate-300 hover:text-rose-600 align-middle ml-1">${icon('close','w-3.5 h-3.5 inline')}</button>` : ''}` : '—'}</td>
-                  <td>${a?.clockIn && a?.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td>${a?.clockIn && a?.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
                   <td>${a ? statusBadge(a.status)
                           : onLeave ? `<span class="badge badge-green">${escapeHTML(t('att_leave'))}</span>`
                           : isOff ? `<span class="badge badge-green">${escapeHTML(t('att_offday'))}</span>`
@@ -5111,7 +5129,7 @@ function renderAttendance() {
     const totalRecords = sorted.length;
     const presentN = sorted.filter(a => a.status==='present').length;
     const lateN    = sorted.filter(a => a.status==='late').length;
-    const totalHrs = sorted.reduce((s,a)=> s + (a.clockIn && a.clockOut ? diffMinutes(a.clockIn,a.clockOut) : 0), 0);
+    const totalHrs = sorted.reduce((s,a)=> s + (a.clockIn && a.clockOut ? attMinutes(a) : 0), 0);
 
     main = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden">
@@ -5198,7 +5216,7 @@ function renderAttendance() {
                   <td>${ex.branch ? `<span class="badge badge-blue">${escapeHTML(ex.branch)}</span>` : '<span class="text-xs text-slate-400">—</span>'}</td>
                   <td class="tabular-nums">${a.clockIn||'—'}</td>
                   <td class="tabular-nums">${attOutCell(a, canFix)}</td>
-                  <td class="tabular-nums">${a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut))+'h' : '—'}</td>
+                  <td class="tabular-nums">${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
                   <td>${statusBadge(a.status)}</td>
                 </tr>`;
               }).join('')}
@@ -5215,7 +5233,7 @@ function computeAttStats(records) {
   const present = records.filter(r => r.status==='present').length;
   const late = records.filter(r => r.status==='late').length;
   const absent = records.filter(r => r.status==='absent').length;
-  const totalMin = records.filter(r=>r.clockIn && r.clockOut).reduce((s,r)=>s+diffMinutes(r.clockIn,r.clockOut),0);
+  const totalMin = records.filter(r=>r.clockIn && r.clockOut).reduce((s,r)=>s+attMinutes(r),0);
   const avgHrs = records.length ? minutesToHrs(totalMin / Math.max(1,records.length)) : '0.00';
   return { present, late, absent, avgHrs };
 }
@@ -5429,7 +5447,11 @@ async function fixClockOut(id){
   openModal('Set clock-out', form, async () => {
     const tval = $('#fco-time').value;
     if (!tval) { toast('Enter a time', 'error'); return false; }
-    if (diffMinutes(rec.clockIn, tval) < 0) { toast('Clock-out must be the same day and after clock-in.', 'error'); return false; }
+    // A backwards time is only valid as an overnight clock-out when this
+    // employee's schedule for that day actually crosses midnight.
+    if (diffMinutes(rec.clockIn, tval) < 0 && !shiftCrossesMidnight(shiftForDate(rec.employeeId, rec.date))) {
+      toast('Clock-out must be after clock-in (this day is not an overnight shift).', 'error'); return false;
+    }
     const { data, error } = await sb.from('attendance').update({ clock_out: tval }).eq('id', rec.id).select().single();
     if (error) { toast(humanizeError(error), 'error'); return false; }
     Object.assign(rec, mapAttendanceFromDb(data));
@@ -6273,7 +6295,7 @@ function holidayOtForEmployee(empId, ym, salary, holidaySet, attRows) {
   for (const a of (attRows || [])) {
     if (a.date.slice(0,7) !== ym) continue;
     if (!holidaySet.has(a.date)) continue;
-    const d = diffMinutes(a.clockIn, a.clockOut);
+    const d = attMinutes(a);
     if (d > 0) mins += d;
   }
   const hours = Math.round((mins / 60) * 100) / 100;
@@ -7065,7 +7087,7 @@ function renderAnalytics() {
           const totalRec = present + late + absent;
           if (totalRec === 0) return null;
           const workedDays = recs.filter(r => r.clockIn && r.clockOut).length;
-          const totalMin   = recs.reduce((s, r) => s + (r.clockIn && r.clockOut ? diffMinutes(r.clockIn, r.clockOut) : 0), 0);
+          const totalMin   = recs.reduce((s, r) => s + (r.clockIn && r.clockOut ? attMinutes(r) : 0), 0);
           return {
             emp: e, present, late, absent, totalRec,
             avgHrs: workedDays > 0 ? (totalMin / workedDays / 60) : 0,
@@ -7537,7 +7559,7 @@ function renderReports() {
     if (!byEmp[k]) byEmp[k] = { present:0, late:0, absent:0, mins:0, days:0 };
     byEmp[k][a.status] = (byEmp[k][a.status]||0) + 1;
     if (a.clockIn && a.clockOut) {
-      byEmp[k].mins += diffMinutes(a.clockIn, a.clockOut);
+      byEmp[k].mins += attMinutes(a);
       byEmp[k].days += 1;
     }
   });
@@ -9400,7 +9422,7 @@ function exportAttendanceSnapshot() {
     else if (att?.status === 'late') status='late';
     else if (onLeave) status='on_leave';
     else if (isOff) status='off';
-    const hrs = att?.clockIn && att?.clockOut ? minutesToHrs(diffMinutes(att.clockIn, att.clockOut)) : '';
+    const hrs = att?.clockIn && att?.clockOut ? minutesToHrs(attMinutes(att)) : '';
     rows.push([
       e.firstName+' '+e.lastName, ex.branch||'', e.role, e.department,
       att?.clockIn||'', att ? (att.clockOut || (attMissingOut(att)?'Missing':'')) : '', hrs, status
@@ -9429,7 +9451,7 @@ function exportCSV(kind) {
   } else if (kind==='my-attendance') {
     const me = currentEmployee();
     rows = [['Date','Clock In','Clock Out','Hours','Status']];
-    state.attendance.filter(a=>a.employeeId===me.id).forEach(a => rows.push([a.date,a.clockIn,a.clockOut||(attMissingOut(a)?'Missing':''),a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'',a.status]));
+    state.attendance.filter(a=>a.employeeId===me.id).forEach(a => rows.push([a.date,a.clockIn,a.clockOut||(attMissingOut(a)?'Missing':''),a.clockIn&&a.clockOut?minutesToHrs(attMinutes(a)):'',a.status]));
   } else if (kind==='today-attendance') {
     rows = [['Employee','Department','Clock In','Clock Out','Status']];
     const today = todayISO();
@@ -9444,7 +9466,7 @@ function exportCSV(kind) {
     rows = [['Date','Employee','Clock In','Clock Out','Hours','Status']];
     state.attendance.forEach(a => {
       const e = getEmployee(a.employeeId); if(!e) return;
-      rows.push([a.date, e.firstName+' '+e.lastName, a.clockIn, a.clockOut||(attMissingOut(a)?'Missing':''), a.clockIn&&a.clockOut?minutesToHrs(diffMinutes(a.clockIn,a.clockOut)):'', a.status]);
+      rows.push([a.date, e.firstName+' '+e.lastName, a.clockIn, a.clockOut||(attMissingOut(a)?'Missing':''), a.clockIn&&a.clockOut?minutesToHrs(attMinutes(a)):'', a.status]);
     });
   } else if (kind==='att-history-filtered') {
     rows = [['Date','Day','Employee','Branch','Role','Clock In','Clock Out','Hours','Status','Location']];
@@ -9456,7 +9478,7 @@ function exportCSV(kind) {
       rows.push([
         a.date, dow, e.firstName+' '+e.lastName, ex.branch||'', e.role,
         a.clockIn||'', a.clockOut||(attMissingOut(a)?'Missing':''),
-        a.clockIn && a.clockOut ? minutesToHrs(diffMinutes(a.clockIn,a.clockOut)) : '',
+        a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a)) : '',
         a.status, a.location?.label||'',
       ]);
     });
@@ -18777,7 +18799,7 @@ function renderRoasterDashboard() {
   if (sched.off) { statusText = 'Day off'; statusSub = 'Enjoy your rest day.'; ctaLabel = null; }
   else if (!myToday) { statusText = 'Not clocked in'; statusSub = `Shift ${sched.start} – ${sched.end}`; ctaLabel = t('clock_in'); }
   else if (!myToday.clockOut) { statusText = 'On the floor'; statusSub = `Clocked in at ${myToday.clockIn || '—'}`; ctaLabel = t('clock_out'); }
-  else { const mins = diffMinutes(myToday.clockIn, myToday.clockOut); statusText = 'Done for today'; statusSub = `${myToday.clockIn} – ${myToday.clockOut} · ${(mins/60).toFixed(1)} hrs`; ctaLabel = null; }
+  else { const mins = attMinutes(myToday); statusText = 'Done for today'; statusSub = `${myToday.clockIn} – ${myToday.clockOut} · ${(mins/60).toFixed(1)} hrs`; ctaLabel = null; }
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
@@ -18881,7 +18903,7 @@ function renderHeadBaristaDashboard() {
   } else if (!myToday.clockOut) {
     statusText = 'On the floor'; statusSub = `Clocked in at ${myToday.clockIn || '—'}`; ctaLabel = t('clock_out');
   } else {
-    const mins = diffMinutes(myToday.clockIn, myToday.clockOut);
+    const mins = attMinutes(myToday);
     statusText = 'Done for today'; statusSub = `${myToday.clockIn} – ${myToday.clockOut} · ${(mins/60).toFixed(1)} hrs`; ctaLabel = null;
   }
 
@@ -19068,7 +19090,7 @@ function renderBaristaDashboard() {
   weekStart.setHours(0,0,0,0);
   const weekStartISO = weekStart.toISOString().slice(0,10);
   const weekRecords = myAttendance.filter(a => a.date >= weekStartISO && a.date <= today);
-  const weekMinutes = weekRecords.reduce((s,a) => s + (a.clockIn && a.clockOut ? diffMinutes(a.clockIn, a.clockOut) : 0), 0);
+  const weekMinutes = weekRecords.reduce((s,a) => s + (a.clockIn && a.clockOut ? attMinutes(a) : 0), 0);
   const weekHours = (weekMinutes / 60).toFixed(1);
   const weekDays = new Set(weekRecords.map(a => a.date)).size;
 
@@ -19101,7 +19123,7 @@ function renderBaristaDashboard() {
     statusSub = `Clocked in at ${myToday.clockIn || '—'}`;
     ctaLabel = t('clock_out');
   } else {
-    const mins = diffMinutes(myToday.clockIn, myToday.clockOut);
+    const mins = attMinutes(myToday);
     statusText = 'Done for today';
     statusSub = `${myToday.clockIn} – ${myToday.clockOut} · ${(mins/60).toFixed(1)} hrs`;
     ctaLabel = null;
