@@ -2247,7 +2247,7 @@ function shiftCrossesMidnight(sh) {
 // bad data and counts zero — never an inflated ~24h.
 function attMinutes(a) {
   if (!a || !a.clockIn || !a.clockOut) return 0;
-  const raw = attMinutes(a);
+  const raw = diffMinutes(a.clockIn, a.clockOut);
   if (raw >= 0) return raw;
   return shiftCrossesMidnight(shiftForDate(a.employeeId, a.date)) ? raw + 24*60 : 0;
 }
