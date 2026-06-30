@@ -4314,6 +4314,39 @@ CREATE POLICY "ids_delete_floor_ops_device" ON public.inventory_drink_sales FOR 
   USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']));
 
 -- =============================================================
+-- 79. INVENTORY DRINKS — serve tag (hot/iced/manual) + missing menu drinks
+--     The product-mix entry screen mirrors the Foodics report sections:
+--     HOT -> ICED -> MANUAL ESPRESSO. The drinks catalog had only hot drinks
+--     and no way to split them. Add a `serve` column and seed the iced drinks,
+--     Matcha (non-coffee, dose 0 so it never feeds espresso usage), Italian
+--     Espresso, and the manual single-origin espressos. All espresso drinks
+--     (any serve) already roll into espresso theoretical via drink sales x dose,
+--     so no dashboard change is needed. Idempotent: column add guarded, seeds
+--     skip any drink whose name already exists.
+-- =============================================================
+ALTER TABLE public.inventory_drinks ADD COLUMN IF NOT EXISTS serve text NOT NULL DEFAULT 'hot';
+
+-- The single seeded "Latte" is the hot one; the report calls it "Hot Latte".
+UPDATE public.inventory_drinks SET name='Hot Latte' WHERE lower(name)='latte';
+
+INSERT INTO public.inventory_drinks (name, grams_per, category, serve, sort_order)
+SELECT v.name, v.g, v.cat, v.serve, v.so
+FROM (VALUES
+  ('Italian Espresso',     20::numeric, 'espresso', 'hot',     35),
+  ('Espresso Freddo',      20::numeric, 'espresso', 'iced',   110),
+  ('Iced Americano',       20::numeric, 'espresso', 'iced',   120),
+  ('Iced Latte',           20::numeric, 'espresso', 'iced',   130),
+  ('Matcha Latte',          0::numeric, 'any',      'iced',   140),
+  ('Brazil Fazinda ESP',   20::numeric, 'espresso', 'manual', 210),
+  ('Columbia Manos ESP',   20::numeric, 'espresso', 'manual', 220),
+  ('Columbia Narino ESP',  20::numeric, 'espresso', 'manual', 230),
+  ('Ethiopia Guji ESP',    20::numeric, 'espresso', 'manual', 240)
+) AS v(name, g, cat, serve, so)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.inventory_drinks d WHERE lower(d.name) = lower(v.name)
+);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
