@@ -769,7 +769,7 @@ function emptyState() {
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
     expiryChecksCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, expiryDate, note }] }
-    inventoryDrinks: [],    // catalog: [{ id, name, gramsPer, sortOrder, active }] — staff/comp drink recipes (grams per drink); bean is chosen per log
+    inventoryDrinks: [],    // catalog: [{ id, name, gramsPer, category, serve, sortOrder, active }] — drink recipes (grams per drink); bean chosen per log; serve = hot|iced|manual (product-mix section)
     inventoryOwners: [],    // catalog: [{ id, name, sortOrder, active }] — owners pick-list for owner consumption (not employees)
     deviceRoster: null,     // branch-device only: [{id,firstName,lastName,avatarColor}] for the device's branch (via branch_roster RPC). null = not scoped (RPC unavailable) → picker falls back to all active staff.
     inventoryShiftsCache: {}, // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, businessDate, shift, status, openedByName, closedByName, foodicsTotal, counts:[{itemId, openingQty, closingQty, receivedQty}] }] } — reuses the daily_count_items catalog
@@ -20554,9 +20554,13 @@ function mapInventoryUsageFromDb(r){
   };
 }
 function mapInventoryDrinkFromDb(r){
-  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), category:r.category||'espresso', sortOrder:Number(r.sort_order)||0, active:r.active!==false };
+  return { id:r.id, name:r.name||'', gramsPer: r.grams_per==null?0:Number(r.grams_per), category:r.category||'espresso', serve:r.serve||'hot', sortOrder:Number(r.sort_order)||0, active:r.active!==false };
 }
 function invActiveDrinks(){ return (state.inventoryDrinks||[]).filter(d=>d.active).slice().sort((a,b)=>a.sortOrder-b.sortOrder); }
+// Drinks of one serve type (hot / iced / manual), in sort order. Powers the
+// product-mix sections that mirror the Foodics report (HOT / ICED / MANUAL ESPRESSO).
+function invDrinksByServe(serve){ return invActiveDrinks().filter(d=>(d.serve||'hot')===serve); }
+const INV_DRINK_SERVES = [ {key:'hot', label:'Hot'}, {key:'iced', label:'Iced'}, {key:'manual', label:'Manual espresso'} ];
 function invDrinkById(id){ return (state.inventoryDrinks||[]).find(d=>d.id===id) || null; }
 // Grams of coffee a usage row represents: a drink → qty × its dose; a raw
 // bean → qty × the bean's standard dose; a pcs item (sweet) → 0 grams.
@@ -20698,6 +20702,11 @@ function openInventoryDrinkEdit(id){
         <option value="any" ${e.category==='any'?'selected':''}>Any bean</option>
       </select></div>
     </div>
+    <div><label class="label">Serve (product-mix section)</label><select id="idr-serve" class="input">
+      <option value="hot" ${((e.serve||'hot')==='hot')?'selected':''}>Hot</option>
+      <option value="iced" ${e.serve==='iced'?'selected':''}>Iced</option>
+      <option value="manual" ${e.serve==='manual'?'selected':''}>Manual espresso</option>
+    </select></div>
     <div class="grid grid-cols-2 gap-3">
       <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
       <div class="flex items-end"><label class="flex items-center gap-2 text-sm text-slate-700 pb-2"><input id="idr-active" type="checkbox" ${e.active!==false?'checked':''}> Active</label></div>
@@ -20707,7 +20716,7 @@ function openInventoryDrinkEdit(id){
   openModal(d?'Edit drink':'Add drink', form, async ()=>{
     const name = $('#idr-name').value.trim();
     if (!name){ toast('Drink name required', 'error'); return false; }
-    const row = { name, grams_per: Number($('#idr-grams').value)||0, category: $('#idr-cat').value||'espresso', sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
+    const row = { name, grams_per: Number($('#idr-grams').value)||0, category: $('#idr-cat').value||'espresso', serve: $('#idr-serve').value||'hot', sort_order: Number($('#idr-sort').value)||0, active: $('#idr-active').checked };
     if (d){
       const { data, error } = await sb.from('inventory_drinks').update(row).eq('id', d.id).select().single();
       if (error){ toast(humanizeError(error), 'error'); return false; }
@@ -21487,11 +21496,13 @@ async function invSaveClose(shiftId, branch, shift){
 /* ---- Product Mix (Foodics sales per product, per shift) ----
    Espresso drinks → inventory_drink_sales (roll up to espresso usage).
    V60 / sweets / 250g / premium items → inventory_shift_counts.foodics_qty. */
+// Order mirrors the Foodics product-mix report: after the drink sections
+// (Hot / Iced / Manual espresso) come Sweet, Top shelf (retail), then V60.
 const INV_MIX_ITEM_CATS = [
-  { key:'v60',         label:'V60 / Filter' },
-  { key:'pastry',      label:'Sweets' },
-  { key:'retail_250g', label:'250g Retail' },
-  { key:'premium',     label:'125g / Premium' },
+  { key:'pastry',      label:'Sweet' },
+  { key:'retail_250g', label:'Top shelf · 250g' },
+  { key:'premium',     label:'Top shelf · 125g' },
+  { key:'v60',         label:'V60' },
 ];
 function invMixItems(){ return INV_MIX_ITEM_CATS.flatMap(c => invActiveItems().filter(i=>i.category===c.key)); }
 function invRenderProductMix(branch){
@@ -21506,11 +21517,11 @@ function invRenderProductMix(branch){
       <div class="text-sm text-slate-800 min-w-0">${escapeHTML(name)}${hint?` <span class="text-[11px] text-slate-400">${escapeHTML(hint)}</span>`:''}</div>
       <div class="w-24 shrink-0"><input id="${id}" type="number" inputmode="numeric" step="any" min="0" value="${val!=null?val:''}" class="input w-full text-right py-2" placeholder="0"></div>
     </div>`;
-  const drinkSection = invActiveDrinks().length ? `
-    <div class="mb-4">
-      <div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">Espresso drinks</div>
-      ${invActiveDrinks().map(d=>numRow('pm-drink-'+d.id, d.name, d.gramsPer+'g', drinkSold[d.id])).join('')}
-    </div>` : '';
+  const drinkSection = INV_DRINK_SERVES.map(sv=>{
+    const ds = invDrinksByServe(sv.key);
+    if (!ds.length) return '';
+    return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(sv.label)}</div>${ds.map(d=>numRow('pm-drink-'+d.id, d.name, d.gramsPer+'g', drinkSold[d.id])).join('')}</div>`;
+  }).join('');
   const itemSections = INV_MIX_ITEM_CATS.map(cat=>{
     const its = invActiveItems().filter(i=>i.category===cat.key);
     if (!its.length) return '';
@@ -21575,7 +21586,11 @@ function invPrintProductMix(branch, shift){
   const drinkSold = {}; (existing && existing.drinkSales ? existing.drinkSales : []).forEach(d=>{ drinkSold[d.drinkId] = d.qtySold; });
   const itemSold  = {}; (existing && existing.counts ? existing.counts : []).forEach(c=>{ if (c.foodicsQty!=null) itemSold[c.itemId] = c.foodicsQty; });
   const sect = (title, rows) => rows ? `<h3>${escapeHTML(title)}</h3><table><thead><tr><th>Product</th><th class="r">Sold</th></tr></thead><tbody>${rows}</tbody></table>` : '';
-  const drinkRows = invActiveDrinks().map(d=>`<tr><td>${escapeHTML(d.name)}</td><td class="r">${drinkSold[d.id]!=null?drinkSold[d.id]:''}</td></tr>`).join('');
+  const drinkSecs = INV_DRINK_SERVES.map(sv=>{
+    const ds = invDrinksByServe(sv.key);
+    if (!ds.length) return '';
+    return sect(sv.label, ds.map(d=>`<tr><td>${escapeHTML(d.name)}</td><td class="r">${drinkSold[d.id]!=null?drinkSold[d.id]:''}</td></tr>`).join(''));
+  }).join('');
   const itemSecs = INV_MIX_ITEM_CATS.map(cat=>{
     const its = invActiveItems().filter(i=>i.category===cat.key);
     if (!its.length) return '';
@@ -21584,7 +21599,7 @@ function invPrintProductMix(branch, shift){
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Product Mix</title>
     <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:24px;}h1{font-size:20px;margin:0 0 2px;}.sub{color:#64748b;font-size:12px;margin-bottom:8px;}h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#a87035;margin:16px 0 4px;}table{width:100%;border-collapse:collapse;}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:13px;}.r{text-align:right;width:90px;}th{font-size:10px;text-transform:uppercase;color:#94a3b8;}</style></head>
     <body><h1>Product Mix — ${escapeHTML(branch)}</h1><div class="sub">${invShiftLabel(shift)} shift · ${escapeHTML(invDayLabel(today))} · quantities sold per Foodics</div>
-    ${sect('Espresso drinks', drinkRows)}${itemSecs}</body></html>`;
+    ${drinkSecs}${itemSecs}</body></html>`;
   openPrintWindow(html);
 }
 
