@@ -752,6 +752,7 @@ function emptyState() {
     applications: [],   // job applications (public form submissions) — RLS gates SELECT to admin+hr. Non-HR users get []. See SQL block 64.
 
     certificates: [],   // [{ id, employeeId, type, title, period, message, issuedBy, issuedAt }]
+    signedDocuments: [],// [{ id, employeeId, title, body, createdBy, createdAt, employee/managerSignature+SignedAt, managerSignedBy }] — "Agreements" e-sign docs
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
     inventory: [],          // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, supplierId, branch, notes, createdBy, createdAt, updatedAt }]
@@ -1209,6 +1210,26 @@ function warningToDb(w) {
     date: w.date||null, reason: w.reason||null, notes: w.notes||null,
     issued_by: w.issuedBy||null,
     national_id: (w.nationalId||'').trim() || null,
+  };
+}
+// "Agreements" — free-text documents an employee signs (block 80). Two-party
+// e-signature (employee + manager), same shape as warnings.
+function mapSignedDocFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id,
+    title: r.title||'', body: r.body||'',
+    createdBy: r.created_by, createdAt: r.created_at,
+    employeeSignature: r.employee_signature||null,
+    employeeSignedAt:  r.employee_signed_at||null,
+    managerSignature:  r.manager_signature||null,
+    managerSignedAt:   r.manager_signed_at||null,
+    managerSignedBy:   r.manager_signed_by||null,
+  };
+}
+function signedDocToDb(d) {
+  return {
+    employee_id: d.employeeId, title: (d.title||'').trim(),
+    body: (d.body||'').trim(), created_by: d.createdBy||null,
   };
 }
 function mapAdvanceFromDb(r) {
@@ -1839,7 +1860,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1952,6 +1973,9 @@ async function loadAll() {
       sb.from('inventory_drinks').select('*').order('sort_order'),
       // Inventory owners pick-list (small) — owner consumption attribution.
       sb.from('inventory_owners').select('*').order('sort_order'),
+      // Employee documents to sign ("Agreements"). Bounded per-employee; RLS
+      // scopes to admin/hr or the owning employee. Signatures are small PNGs.
+      sb.from('signed_documents').select('*').order('created_at', { ascending: false }),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2007,6 +2031,7 @@ async function loadAll() {
     state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
     state.applications = (applicationsR.data || []).map(mapApplicationFromDb);
     state.certificates = (certificatesR.data || []).map(mapCertificateFromDb);
+    state.signedDocuments = (signedDocumentsR?.data || []).map(mapSignedDocFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
     state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
@@ -2068,7 +2093,7 @@ async function _resetStateImpl() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests','tasks','checklist_runs','checklists'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','signed_documents','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests','tasks','checklist_runs','checklists'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
   await sb.from('employees').delete().is('user_id', null);
@@ -2585,7 +2610,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -2895,6 +2920,7 @@ function renderShell(routeContent) {
     { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
     { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
+    { key:'agreements',   icon:'file',      label:'Agreements',      show:true,  group:'people' },
     /* Company resources */
     { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company' },
     { key:'resources',    icon:'shield',    label:'Resources',       show:hasRole('admin','barista','head_barista','roaster'),  group:'company' },
@@ -3189,6 +3215,18 @@ function buildNotifications() {
     out.push({ key:'warnsign-'+w.id, icon:'warning', tone:'amber', title:t('notif_warning_sign'),
       detail:`${escapeHTML(w.type||'Warning')} · ${fmtDate(w.date)}`, href:'#/warnings' });
   });
+  // Agreements: the employee is asked to sign; HR is reminded to counter-sign.
+  (state.signedDocuments||[]).filter(d => d.employeeId===me?.id && !d.employeeSignature).forEach(d=>{
+    out.push({ key:'agreesign-'+d.id, icon:'file', tone:'amber', title:'Document to sign',
+      detail:`${escapeHTML(d.title||'Document')}`, href:'#/agreements' });
+  });
+  if (canManagePeople()) {
+    (state.signedDocuments||[]).filter(d => d.employeeSignature && !d.managerSignature).forEach(d=>{
+      const e=getEmployee(d.employeeId); const who=e?(e.firstName+' '+(e.lastName||'')).trim():'—';
+      out.push({ key:'agreemgr-'+d.id, icon:'file', tone:'amber', title:'Document awaiting counter-signature',
+        detail:`${escapeHTML(d.title||'Document')} · ${who}`, href:'#/agreements' });
+    });
+  }
   // Every employee: decisions on their OWN leave / advance requests, so they
   // learn the outcome without opening the page. Bounded to recent decisions
   // (by decidedAt) so old approvals don't linger. These are FYIs, not action
@@ -10316,6 +10354,175 @@ function printWarningLetter(id) {
     </div>
     ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
     <div class="doc-footer">Document reference WL-${escapeHTML(w.id.slice(-6).toUpperCase())} &middot; Confidential personnel record</div>
+  </div>
+  </body></html>`;
+  if (!openPrintWindow(html)) return;
+}
+
+/* -------------------- AGREEMENTS (documents to sign) -------------------- */
+// A free-text document HR drafts and addresses to one employee, who signs it
+// on their phone; HR/manager counter-signs. Reuses the signature pad + the
+// sign_document RPC (block 80). Renders on the Hassad letterhead, printable.
+let agreementFilter = { emp:'all' };
+function agreementStatus(d) {
+  if (d.employeeSignature && d.managerSignature) return { label:'Complete', cls:'badge-green' };
+  if (d.employeeSignature) return { label:'Awaiting manager', cls:'badge-amber' };
+  return { label:'Awaiting employee', cls:'badge-slate' };
+}
+function renderAgreements() {
+  const admin = canManagePeople();
+  const me = currentEmployee();
+  const list = (state.signedDocuments||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const visible = admin
+    ? list.filter(d => agreementFilter.emp==='all' || d.employeeId===agreementFilter.emp)
+    : list.filter(d => d.employeeId===me.id);
+  const myPending = list.filter(d => d.employeeId===me.id && !d.employeeSignature).length;
+
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('file','w-3.5 h-3.5')} Documents to sign</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Agreements</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">${admin ? 'Draft a document, send it to an employee to sign, and counter-sign it. Everything is stored here.' : 'Documents sent to you to read and sign.'}</p>
+        </div>
+        ${admin ? `<button onclick="openAgreementModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New document</button>` : ''}
+      </div>
+      ${!admin && myPending ? `<div class="relative mt-4 text-sm bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-2">You have ${myPending} document${myPending>1?'s':''} awaiting your signature.</div>` : ''}
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="flex items-center justify-between p-5 border-b border-slate-100 flex-wrap gap-3">
+        <h3 class="font-display text-lg font-semibold text-slate-900">${admin ? 'All documents' : 'My documents'}</h3>
+        ${admin ? `
+        <select class="input !py-2" onchange="agreementFilter.emp=this.value; render();">
+          <option value="all">All employees</option>
+          ${state.employees.map(e=>`<option value="${e.id}" ${agreementFilter.emp===e.id?'selected':''}>${escapeHTML(e.firstName+' '+e.lastName)}</option>`).join('')}
+        </select>` : ''}
+      </div>
+      <div class="overflow-x-auto">
+        <table class="data">
+          <thead><tr>${admin?'<th>Employee</th>':''}<th>Document</th><th>Created</th><th>Status</th><th class="!text-end">Actions</th></tr></thead>
+          <tbody>
+            ${visible.length===0 ? `<tr><td colspan="${admin?5:4}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+              visible.map(d => {
+                const e = getEmployee(d.employeeId);
+                const isMine = d.employeeId === me?.id;
+                const st = agreementStatus(d);
+                return `
+                <tr class="hover-row">
+                  ${admin?`<td><div class="flex items-center gap-2">${avatarHTML(e,28)}<span class="font-medium">${escapeHTML((e?.firstName+' '+e?.lastName)||'Unknown')}</span></div></td>`:''}
+                  <td class="text-slate-700 max-w-xs truncate" title="${escapeHTML(d.title)}">${escapeHTML(d.title||'Untitled')}</td>
+                  <td class="text-slate-500 text-xs">${fmtDate((d.createdAt||'').slice(0,10))}</td>
+                  <td><span class="badge ${st.cls}">${st.label}</span></td>
+                  <td class="!text-end whitespace-nowrap">
+                    <div class="flex items-center justify-end gap-1.5 flex-wrap">
+                      ${isMine && !admin ? (d.employeeSignature
+                          ? `<span class="badge badge-green" title="Signed ${fmtDate((d.employeeSignedAt||'').slice(0,10))}">Signed ✓</span>`
+                          : `<button onclick="signAgreement('${d.id}','employee')" class="btn btn-accent btn-sm">${icon('check','w-4 h-4')} Read &amp; sign</button>`) : ''}
+                      ${admin ? `<span class="badge ${d.employeeSignature?'badge-green':'badge-slate'}" title="Employee signature">Emp ${d.employeeSignature?'✓':'—'}</span>` : ''}
+                      ${admin ? (d.managerSignature
+                          ? `<span class="badge badge-green" title="Manager signed">Mgr ✓</span>`
+                          : `<button onclick="signAgreement('${d.id}','manager')" class="btn btn-ghost btn-sm" title="Sign as manager">${icon('check','w-3.5 h-3.5')} Sign</button>`) : ''}
+                      <button onclick="printAgreementLetter('${d.id}')" aria-label="View or print document" title="View / print" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
+                      ${admin ? `<button onclick="deleteAgreement('${d.id}')" aria-label="Delete document" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`:''}
+                    </div>
+                  </td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function openAgreementModal() {
+  if (!canManagePeople()) { toast('Admins / HR only', 'error'); return; }
+  const emps = (state.employees||[]).filter(e=>e.status!=='terminated').slice().sort((a,b)=>(a.firstName+a.lastName).localeCompare(b.firstName+b.lastName));
+  const form = `<div class="space-y-4">
+    <div><label class="label label-required">Employee</label>
+      <select id="ag-emp" class="input">
+        <option value="">Select an employee…</option>
+        ${emps.map(e=>`<option value="${e.id}">${escapeHTML(e.firstName+' '+e.lastName)}</option>`).join('')}
+      </select></div>
+    <div><label class="label label-required">Document title</label>
+      <input id="ag-title" class="input" placeholder="e.g. Company Property Acknowledgement" maxlength="120"></div>
+    <div><label class="label label-required">Body</label>
+      <textarea id="ag-body" class="input" rows="9" placeholder="Write the full text of the document the employee will read and sign…"></textarea>
+      <div class="text-xs text-slate-400 mt-1">Renders on the Hassad letterhead. Line breaks are preserved.</div></div>
+  </div>`;
+  openModal('New document to sign', form, async ()=>{
+    const employeeId = $('#ag-emp').value;
+    const title = $('#ag-title').value.trim();
+    const body  = $('#ag-body').value.trim();
+    if (!employeeId){ toast('Pick an employee', 'error'); return false; }
+    if (!title){ toast('Title is required', 'error'); return false; }
+    if (!body){ toast('Body is required', 'error'); return false; }
+    const row = signedDocToDb({ employeeId, title, body, createdBy: currentEmployee()?.id });
+    const { data, error } = await sb.from('signed_documents').insert(row).select().single();
+    if (error){ toast(humanizeError(error), 'error'); return false; }
+    state.signedDocuments.unshift(mapSignedDocFromDb(data));
+    toast('Document created — the employee can now sign it', 'success');
+    return true;
+  }, { saveLabel:'Create' });
+}
+async function signAgreement(id, as) {
+  const d = (state.signedDocuments||[]).find(x => x.id===id);
+  if (!d) return;
+  const me = currentEmployee();
+  if (as === 'employee' && d.employeeId !== me?.id) { toast('This is not your document', 'error'); return; }
+  if (as === 'manager'  && !canManagePeople())      { toast('Admins / HR only', 'error'); return; }
+  const title    = as === 'manager' ? 'Counter-sign document' : 'Read & sign';
+  const subtitle = as === 'manager' ? 'Sign to confirm this document.' : `By signing, you confirm you have read and agree to “${d.title}”.`;
+  openSignaturePad(title, subtitle, async (dataUrl) => {
+    const { data, error } = await sb.rpc('sign_document', { p_id: id, p_signature: dataUrl, p_as: as });
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    Object.assign(d, mapSignedDocFromDb(data));
+    render();
+    toast(as === 'manager' ? 'Document counter-signed' : 'Document signed', 'success');
+    return true;
+  });
+}
+function deleteAgreement(id) {
+  if (!isAdmin()) { toast('Admins only', 'error'); return; }
+  if (!confirm('Delete this document? This cannot be undone.')) return;
+  sb.from('signed_documents').delete().eq('id', id).then(({ error })=>{
+    if (error){ toast(humanizeError(error), 'error'); return; }
+    state.signedDocuments = (state.signedDocuments||[]).filter(x=>x.id!==id);
+    toast('Document deleted', 'success');
+    render();
+  });
+}
+function printAgreementLetter(id) {
+  const d = (state.signedDocuments||[]).find(x => x.id===id);
+  if (!d) return;
+  const e = getEmployee(d.employeeId);
+  const ex = e ? getEmpExtras(e.id) : {};
+  const nationalId = (ex.iqama?.number) || '—';
+  const fullName   = e ? (e.firstName + ' ' + (e.lastName||'')).trim() : 'Employee';
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(d.title)} — ${escapeHTML(fullName)}</title>
+  <style>${LETTERHEAD_CSS}</style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML(escapeHTML((d.title||'DOCUMENT').toUpperCase())+'.')}
+    <div class="doc-date">Date: ${fmtDate((d.createdAt||'').slice(0,10))}</div>
+    <table class="doc-table">
+      <tbody>
+        <tr><td class="lbl">Full Name</td><td class="val">${escapeHTML(fullName)}</td></tr>
+        <tr><td class="lbl">National ID / Residency Number</td><td class="val">${escapeHTML(nationalId)}</td></tr>
+      </tbody>
+    </table>
+    <div class="doc-body" style="margin-top:18px; line-height:1.9; font-size:14px; color:#1f2937; white-space:normal;">${escapeHTML(d.body||'').replace(/\n/g,'<br>')}</div>
+    <p class="doc-closing" style="font-size:12px;color:#6b7280;margin-top:22px;">By signing below, the employee acknowledges that they have read and agree to the contents of this document.</p>
+    <div class="doc-sign">
+      <div class="sign-row">Employee Signature:${d.employeeSignature ? `<img src="${d.employeeSignature}" alt="employee signature" style="display:block;height:46px;margin-top:6px;">` : ''}</div>
+      ${d.employeeSignature ? `<div style="font-size:11px;color:#6b7280;margin-top:-6px;margin-bottom:8px;">Signed on ${fmtDate((d.employeeSignedAt||'').slice(0,10))}</div>` : ''}
+      <div class="sign-row">For Hassad Coffee Roasters:${d.managerSignature ? `<img src="${d.managerSignature}" alt="manager signature" style="display:block;height:46px;margin-top:6px;">` : ''}</div>
+      ${d.managerSignature ? `<div style="font-size:11px;color:#6b7280;margin-top:-6px;">Signed on ${fmtDate((d.managerSignedAt||'').slice(0,10))}</div>` : ''}
+    </div>
+    ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
+    <div class="doc-footer">Document reference AG-${escapeHTML(d.id.slice(-6).toUpperCase())} &middot; Confidential personnel record</div>
   </div>
   </body></html>`;
   if (!openPrintWindow(html)) return;
@@ -21794,6 +22001,7 @@ function render() {
     case 'deductions':   content = canManagePeople() ? renderDeductions() : renderRoleDashboard(); break;
     case 'certificates': content = renderCertificates(); break;
     case 'documents':    content = renderDocuments(); break;
+    case 'agreements':   content = renderAgreements(); break;
     case 'archive':      content = hasRole('admin','operations') ? renderArchive() : renderRoleDashboard(); break;
     case 'resources':    content = hasRole('admin','barista','head_barista','roaster') ? renderResources() : renderRoleDashboard(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;

@@ -4347,6 +4347,100 @@ WHERE NOT EXISTS (
 );
 
 -- =============================================================
+-- 80. EMPLOYEE DOCUMENTS TO SIGN ("Agreements")
+--     HR drafts a free-text document (title + body) addressed to one
+--     employee; the employee signs on their phone and HR/manager counter-
+--     signs — the same two-party e-signature flow as warning letters
+--     (block 65), stored as base64 PNG data-URLs on the row. The document
+--     renders on the Hassad letterhead, printable/PDF. As with warnings,
+--     signing goes through a SECURITY DEFINER RPC so an employee can set
+--     ONLY their own signature (column-scoped, which plain RLS can't do).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.signed_documents (
+  id                 uuid primary key default gen_random_uuid(),
+  employee_id        uuid not null references public.employees(id) ON DELETE CASCADE,
+  title              text not null,
+  body               text not null,
+  created_by         uuid references public.employees(id),
+  created_at         timestamptz not null default now(),
+  employee_signature text,
+  employee_signed_at timestamptz,
+  manager_signature  text,
+  manager_signed_at  timestamptz,
+  manager_signed_by  uuid references public.employees(id)
+);
+CREATE INDEX IF NOT EXISTS signed_documents_emp_idx ON public.signed_documents(employee_id);
+
+ALTER TABLE public.signed_documents ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='signed_documents'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.signed_documents', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "sd_select_admin_hr_or_self" ON public.signed_documents FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = signed_documents.employee_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "sd_insert_admin_hr" ON public.signed_documents FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "sd_update_admin_hr" ON public.signed_documents FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','hr'])) WITH CHECK (public.has_role(ARRAY['admin','hr']));
+CREATE POLICY "sd_delete_admin" ON public.signed_documents FOR DELETE TO authenticated
+  USING (public.is_admin());
+
+CREATE OR REPLACE FUNCTION public.sign_document(p_id uuid, p_signature text, p_as text)
+RETURNS public.signed_documents
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  d      public.signed_documents;
+  my_emp uuid;
+BEGIN
+  IF p_signature IS NULL OR length(p_signature) < 50 THEN
+    RAISE EXCEPTION 'Signature is empty';
+  END IF;
+  IF length(p_signature) > 400000 THEN
+    RAISE EXCEPTION 'Signature image is too large';
+  END IF;
+
+  SELECT * INTO d FROM public.signed_documents WHERE id = p_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Document not found'; END IF;
+
+  IF p_as = 'manager' THEN
+    IF NOT public.has_role(ARRAY['admin','hr']) THEN
+      RAISE EXCEPTION 'Only admin or HR can sign as the manager';
+    END IF;
+    SELECT id INTO my_emp FROM public.employees WHERE user_id = auth.uid();
+    UPDATE public.signed_documents
+       SET manager_signature = p_signature, manager_signed_at = now(), manager_signed_by = my_emp
+     WHERE id = p_id
+     RETURNING * INTO d;
+
+  ELSIF p_as = 'employee' THEN
+    SELECT id INTO my_emp FROM public.employees WHERE user_id = auth.uid();
+    IF my_emp IS NULL OR my_emp <> d.employee_id THEN
+      RAISE EXCEPTION 'You can only sign your own document';
+    END IF;
+    UPDATE public.signed_documents
+       SET employee_signature = p_signature, employee_signed_at = now()
+     WHERE id = p_id
+     RETURNING * INTO d;
+
+  ELSE
+    RAISE EXCEPTION 'Invalid signer role: %', p_as;
+  END IF;
+
+  RETURN d;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.sign_document(uuid, text, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.sign_document(uuid, text, text) TO authenticated;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
