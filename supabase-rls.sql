@@ -4441,6 +4441,67 @@ REVOKE ALL ON FUNCTION public.sign_document(uuid, text, text) FROM public;
 GRANT EXECUTE ON FUNCTION public.sign_document(uuid, text, text) TO authenticated;
 
 -- =============================================================
+-- 81. INVENTORY DRINKS — full "Manual Espresso" single-origin set
+--     Block 79 seeded only 4 manual single-origin espressos. The Foodics
+--     "MANUAL ESPRESSO" menu category actually carries the full house
+--     single-origin lineup, so the product-mix entry screen was missing
+--     most of them. Seed the complete set (grams_per 20, category 'espresso',
+--     serve 'manual') in Foodics list order. Three origins that are Inactive
+--     in Foodics (Beni Suliman, Chel-Chele, Shakiso) are seeded active=false
+--     so they stay off the entry screen but the catalog matches the console.
+--     Idempotent: the INSERT skips any drink whose name already exists; the
+--     reconcile UPDATE re-applies serve/category/sort_order/active by name so
+--     the 4 pre-existing rows fall into the correct order too.
+--     NOTE: each manual single-origin pulls from its OWN bean, but only
+--     Colombia + Guji are tracked as espresso stock beans (daily_count_items),
+--     so their cups still roll into the Colombia/Guji theoretical pool on the
+--     variance dashboard — same behaviour block 79 already established for
+--     Brazil Fazinda etc. Entry/reporting is unaffected; deep per-origin bean
+--     variance would be a separate change.
+-- =============================================================
+INSERT INTO public.inventory_drinks (name, grams_per, category, serve, sort_order, active)
+SELECT v.name, v.g, 'espresso', 'manual', v.so, v.active
+FROM (VALUES
+  ('Ethiopia Sidamo ESP',     20::numeric, 210, true),
+  ('Yemen Haraz ESP',         20::numeric, 211, true),
+  ('Ethiopia Gadeb ESP',      20::numeric, 212, true),
+  ('Ethiopia Guji ESP',       20::numeric, 213, true),
+  ('Columbia Manos ESP',      20::numeric, 214, true),
+  ('Peach ESP',               20::numeric, 215, true),
+  ('Candy ESP',               20::numeric, 216, true),
+  ('Grape ESP',               20::numeric, 217, true),
+  ('Panama ESP',              20::numeric, 218, true),
+  ('Beni Suliman ESP',        20::numeric, 219, false),
+  ('Ethiopia Chel-Chele ESP', 20::numeric, 220, false),
+  ('Ethiopia Shakiso ESP',    20::numeric, 221, false),
+  ('Ethiopia Oromio ESP',     20::numeric, 222, true),
+  ('Columbia Narino ESP',     20::numeric, 223, true),
+  ('Brazil Fazinda ESP',      20::numeric, 224, true)
+) AS v(name, g, so, active)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.inventory_drinks d WHERE lower(d.name) = lower(v.name)
+);
+
+-- Reconcile ordering + serve + active for the whole manual set (also fixes the
+-- 4 rows seeded by block 79 so they slot into Foodics order).
+UPDATE public.inventory_drinks d SET
+  serve      = 'manual',
+  category   = 'espresso',
+  sort_order = v.so,
+  active     = v.active
+FROM (VALUES
+  ('Ethiopia Sidamo ESP',210,true),('Yemen Haraz ESP',211,true),
+  ('Ethiopia Gadeb ESP',212,true),('Ethiopia Guji ESP',213,true),
+  ('Columbia Manos ESP',214,true),('Peach ESP',215,true),
+  ('Candy ESP',216,true),('Grape ESP',217,true),
+  ('Panama ESP',218,true),('Beni Suliman ESP',219,false),
+  ('Ethiopia Chel-Chele ESP',220,false),('Ethiopia Shakiso ESP',221,false),
+  ('Ethiopia Oromio ESP',222,true),('Columbia Narino ESP',223,true),
+  ('Brazil Fazinda ESP',224,true)
+) AS v(name, so, active)
+WHERE lower(d.name) = lower(v.name);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
