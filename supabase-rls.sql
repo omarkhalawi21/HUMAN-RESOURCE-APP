@@ -4502,6 +4502,20 @@ FROM (VALUES
 WHERE lower(d.name) = lower(v.name);
 
 -- =============================================================
+-- 82. INVENTORY DRINKS — drop generic espressos from the Product Mix
+--     "Manual Espresso", "Espresso" and "Double Espresso" were seeded (block
+--     78) with serve='hot', so they showed in the Product Mix → Hot section.
+--     They aren't Foodics product-mix lines — they're generic espresso recipes
+--     used only by the staff/customer usage log. Set serve='none' so they drop
+--     out of every product-mix section (invDrinksByServe only renders
+--     hot/iced/manual) while staying ACTIVE, so the staff usage-log drink
+--     picker (invActiveDrinks, serve-agnostic) still lists them. Idempotent.
+-- =============================================================
+UPDATE public.inventory_drinks
+   SET serve = 'none'
+ WHERE lower(name) IN ('manual espresso','espresso','double espresso');
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

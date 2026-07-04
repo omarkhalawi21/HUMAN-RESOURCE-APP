@@ -20913,6 +20913,7 @@ function openInventoryDrinkEdit(id){
       <option value="hot" ${((e.serve||'hot')==='hot')?'selected':''}>Hot</option>
       <option value="iced" ${e.serve==='iced'?'selected':''}>Iced</option>
       <option value="manual" ${e.serve==='manual'?'selected':''}>Manual espresso</option>
+      <option value="none" ${e.serve==='none'?'selected':''}>Usage log only (not in product mix)</option>
     </select></div>
     <div class="grid grid-cols-2 gap-3">
       <div><label class="label">Sort order</label><input id="idr-sort" type="number" class="input" value="${e.sortOrder!=null?e.sortOrder:0}"></div>
