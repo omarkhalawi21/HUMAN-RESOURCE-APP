@@ -21713,6 +21713,42 @@ const INV_MIX_ITEM_CATS = [
   { key:'v60',         label:'V60' },
 ];
 function invMixItems(){ return INV_MIX_ITEM_CATS.flatMap(c => invActiveItems().filter(i=>i.category===c.key)); }
+// Edit a product-mix ITEM (V60 / sweet / retail) by id — wraps the daily-count
+// item editor, which already carries an Active toggle + Delete.
+function invEditMixItem(id){ const it=(state.dailyCountItems||[]).find(i=>i.id===id); if (it) openDailyCountItemModal(it); }
+// One place, on the Product Mix screen, to add/remove any product it lists —
+// both drinks (inventory_drinks) and items (daily_count_items). Tap a product
+// to edit it: untick Active to stop selling it (leaves the mix, keeps history)
+// or Delete to remove it entirely. Reuses the existing per-product editors.
+function invManageMixModal(){
+  if (!hasRole('admin','head_barista')){ toast('Managers only', 'error'); return; }
+  const rowBtn = (onclick, name, meta, active) => `
+    <button type="button" onclick="${onclick}" class="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left mb-2">
+      <span class="text-sm font-medium text-slate-800">${escapeHTML(name)}${active===false?' <span class="text-[10px] text-slate-400">(not sold)</span>':''}</span>
+      <span class="text-xs text-slate-500 shrink-0 ml-2">${escapeHTML(meta)}</span>
+    </button>`;
+  const sec = label => `<div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mt-4 mb-1">${escapeHTML(label)}</div>`;
+  const drinks = (state.inventoryDrinks||[]).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+  const drinkServes = INV_DRINK_SERVES.concat([{ key:'none', label:'Usage log only' }]);
+  const drinkHTML = drinkServes.map(sv=>{
+    const ds = drinks.filter(d=>(d.serve||'hot')===sv.key);
+    if (!ds.length) return '';
+    return sec('Drinks · '+sv.label) + ds.map(d=>rowBtn(`openInventoryDrinkEdit('${d.id}')`, d.name, d.gramsPer+' g', d.active)).join('');
+  }).join('');
+  const itemHTML = INV_MIX_ITEM_CATS.map(cat=>{
+    const its = (state.dailyCountItems||[]).filter(i=>i.category===cat.key).slice().sort((a,b)=>a.sortOrder-b.sortOrder);
+    if (!its.length) return '';
+    return sec(cat.label) + its.map(it=>rowBtn(`invEditMixItem('${it.id}')`, it.name, it.unit||'', it.active)).join('');
+  }).join('');
+  const body = `<div>
+    <div class="text-xs text-slate-500 mb-1">Tap a product to edit it — untick <b>Active</b> to stop selling it (it leaves the product mix but keeps its history), or use <b>Delete</b> to remove it entirely.</div>
+    ${drinkHTML}
+    <div class="mt-2"><button type="button" onclick="openInventoryDrinkEdit()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add drink</button></div>
+    ${itemHTML}
+    <div class="mt-2"><button type="button" onclick="openDailyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add product</button></div>
+  </div>`;
+  openModal('Manage products', body, async ()=>true, { saveLabel:'Done' });
+}
 function invRenderProductMix(branch){
   const s = invUIState();
   const today = todayISO();
@@ -21745,7 +21781,10 @@ function invRenderProductMix(branch){
             <div class="font-display text-xl font-semibold text-slate-900">Product mix · ${invShiftLabel(shift)} shift</div>
             <div class="text-xs text-slate-500">${escapeHTML(branch)} · ${escapeHTML(invDayLabel(today))} · ${escapeHTML(actor.name)}</div>
           </div>
-          <button onclick="invPrintProductMix('${escapeHTML(branch)}','${shift}')" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+          <div class="flex items-center gap-1">
+            ${hasRole('admin','head_barista') ? `<button onclick="invManageMixModal()" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Manage products</button>` : ''}
+            <button onclick="invPrintProductMix('${escapeHTML(branch)}','${shift}')" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+          </div>
         </div>
         <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 mb-4 text-xs text-slate-600">Enter quantities sold per product from the Foodics report. Espresso drinks roll into espresso usage; V60 / sweets / retail are counted per item. Feeds the variance dashboard.</div>
         ${drinkSection}
