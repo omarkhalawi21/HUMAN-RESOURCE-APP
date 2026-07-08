@@ -21185,6 +21185,13 @@ function invBuildDashboard(branch){
     a.training += s.wasteTraining||0; a.spillage += s.wasteSpillage||0; return a;
   }, { dialin:0, remakes:0, training:0, spillage:0 });
   wasteToday.total = wasteToday.dialin + wasteToday.remakes + wasteToday.training + wasteToday.spillage;
+  // Waste as a % of coffee actually used today (espresso + filter beans, in
+  // grams) — the single "how leaky are we today" number. Non-coffee items
+  // (milk / sweets / retail) are excluded so the ratio stays gram-vs-gram.
+  let coffeeConsumedG = 0;
+  items.forEach(it=>{ if (it.doseG!=null || it.category==='espresso'){ const v = varAgg[it.id]; if (v) coffeeConsumedG += v.consumed*1000; } });
+  wasteToday.coffeeG = Math.round(coffeeConsumedG);
+  wasteToday.pct = coffeeConsumedG > 0 ? Math.round(wasteToday.total / coffeeConsumedG * 1000)/10 : null;
   // Staff & customer usage TODAY. qty is in servings; a bean → grams via dose,
   // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
   // pooled. This is the "where did it go" breakdown that explains variance.
@@ -21287,7 +21294,9 @@ function invBuildDashboardHTML(branch){
   const varRows = d.varianceList.length ? d.varianceList.slice(0,30).map(r=>{
     const tol = r.varUnit==='g' ? 1 : 0.5;
     const vCls = r.variance==null ? 'text-slate-400' : (Math.abs(r.variance) < tol ? 'text-emerald-600' : (r.variance>0 ? 'text-rose-600' : 'text-amber-600'));
-    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance} ${escapeHTML(r.varUnit||'')}`;
+    const pct = (r.variance!=null && r.theoretical!=null && r.theoretical!==0) ? ((r.consumed - r.theoretical)/Math.abs(r.theoretical))*100 : null;
+    const pctTxt = pct==null ? '' : ` <span class="text-[10px] font-normal text-slate-400">${pct>0?'+':''}${pct.toFixed(1)}%</span>`;
+    const vTxt = r.variance==null ? '—' : `${r.variance>0?'+':''}${r.variance} ${escapeHTML(r.varUnit||'')}${pctTxt}`;
     return `<tr class="border-t border-slate-100">
       <td class="py-2 pr-3 text-slate-800">${escapeHTML(r.item.name)}</td>
       <td class="py-2 pr-3 text-right text-slate-600">${r.consumed} ${escapeHTML(r.unit||r.item.unit)}</td>
@@ -21354,7 +21363,10 @@ function invBuildDashboardHTML(branch){
       </table>
     </div>
     <div class="bg-white rounded-2xl shadow-card p-4 mt-4">
-      <div class="text-sm font-semibold text-slate-800 mb-2">Waste log · today</div>
+      <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <div class="text-sm font-semibold text-slate-800">Waste log · today</div>
+        ${d.wasteToday.pct!=null ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${d.wasteToday.pct>=5?'bg-rose-100 text-rose-700':(d.wasteToday.pct>=2?'bg-amber-100 text-amber-700':'bg-emerald-100 text-emerald-700')}" title="Total waste ÷ coffee used today">${d.wasteToday.pct}% of coffee used</span>` : ''}
+      </div>
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
         ${wTile('Dial-in', d.wasteToday.dialin)}
         ${wTile('Remakes', d.wasteToday.remakes)}
@@ -21535,11 +21547,12 @@ function invRenderEntry(branch){
     <div class="max-w-2xl mx-auto">
       <button onclick="invGoBack()" class="text-sm text-slate-500 hover:text-slate-800 mb-3 inline-flex items-center gap-1">← Back to shifts</button>
       <div class="bg-white rounded-2xl shadow-card p-5">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
           <div>
             <div class="font-display text-xl font-semibold text-slate-900">${isClose?'Close':'Open'} · ${invShiftLabel(shift)} shift</div>
             <div class="text-xs text-slate-500">${escapeHTML(branch)} · ${escapeHTML(invDayLabel(today))} · ${escapeHTML(actor.name)}</div>
           </div>
+          ${hasRole('admin','head_barista') ? `<button type="button" onclick="invManageCountItemsModal()" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Manage items</button>` : ''}
         </div>
         ${foodicsBox}
         ${groups}
@@ -21748,6 +21761,30 @@ function invManageMixModal(){
     <div class="mt-2"><button type="button" onclick="openDailyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add product</button></div>
   </div>`;
   openModal('Manage products', body, async ()=>true, { saveLabel:'Done' });
+}
+// Manage the full opening/closing count catalog from the shift entry screen —
+// every stock item across all categories, tap to edit (the item editor carries
+// the Active toggle + Delete), plus Add. Mirrors invManageMixModal but spans the
+// whole count list, not just the product-mix subset.
+function invManageCountItemsModal(){
+  if (!hasRole('admin','head_barista')){ toast('Managers only', 'error'); return; }
+  const sec = label => `<div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mt-4 mb-1">${escapeHTML(label)}</div>`;
+  const rowBtn = it => `
+    <button type="button" onclick="invEditMixItem('${it.id}')" class="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-left mb-2">
+      <span class="text-sm font-medium text-slate-800">${escapeHTML(it.name)}${it.active===false?' <span class="text-[10px] text-slate-400">(inactive)</span>':''}</span>
+      <span class="text-xs text-slate-500 shrink-0 ml-2">${escapeHTML(it.unit||'')}</span>
+    </button>`;
+  const cats = DC_CAT_ORDER.map(cat=>{
+    const its = (state.dailyCountItems||[]).filter(i=>i.category===cat).slice().sort((a,b)=>(a.sortOrder-b.sortOrder)||a.name.localeCompare(b.name));
+    if (!its.length) return '';
+    return sec(DC_CATEGORIES[cat]||cat) + its.map(rowBtn).join('');
+  }).join('');
+  const body = `<div>
+    <div class="text-xs text-slate-500 mb-1">Tap an item to edit it — untick <b>Active</b> to stop counting it (it leaves the list but keeps its history), or use <b>Delete</b> to remove it entirely.</div>
+    ${cats}
+    <div class="mt-3"><button type="button" onclick="openDailyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add item</button></div>
+  </div>`;
+  openModal('Manage items', body, async ()=>true, { saveLabel:'Done' });
 }
 function invRenderProductMix(branch){
   const s = invUIState();
