@@ -992,6 +992,13 @@ const COMMON_NATIONALITIES = [
 // office-staff location, paired with the is_head_office geofence
 // flag and HEAD_OFFICE_ROLES (admin/operations/accounting/marketing).
 const SUGGESTED_BRANCHES = ['KHOBAR', 'RAYYAN', 'FAISALIYAH', 'HEADOFFICE'];
+// Coffee-serving branches only. HEADOFFICE is the office function physically
+// located inside the KHOBAR branch, not a stock/count location — no coffee
+// inventory is held or counted there. The inventory hub + daily/weekly/expiry
+// count pickers use this list so HEADOFFICE never appears as a countable
+// branch. Everything else (attendance geofence, employee assignment, payroll,
+// checklists) still uses the full SUGGESTED_BRANCHES.
+const COFFEE_BRANCHES = SUGGESTED_BRANCHES.filter(b => b !== 'HEADOFFICE');
 // Department names track the system roles where they overlap, so HR
 // can assign both fields consistently (department is the free-text
 // label shown on the profile; system_role is the strict permission).
@@ -14946,7 +14953,9 @@ function dcCacheKey(branch, ym) { return branch + '|' + ym; }
 function dcDefaultBranch() {
   const me = currentEmployee();
   const b = me ? (getEmpExtras(me.id).branch || '').trim().toUpperCase() : '';
-  return SUGGESTED_BRANCHES.includes(b) ? b : SUGGESTED_BRANCHES[0];
+  // Counts/inventory only happen at coffee branches — an office-staff profile
+  // (branch HEADOFFICE) or an unset branch falls back to the first coffee branch.
+  return COFFEE_BRANCHES.includes(b) ? b : COFFEE_BRANCHES[0];
 }
 
 // On-demand month load — the counts series grows unbounded, so it's never
@@ -14983,7 +14992,7 @@ function renderDailyCount() {
   const canManage = hasRole('admin','head_barista');
 
   const branchSel = `<select class="pill" onchange="dailyCountState.branch=this.value; dailyCountState.step=0; dailyCountState.draft=null; render();">
-    ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+    ${COFFEE_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
   </select>`;
   const header = `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -15790,7 +15799,7 @@ function renderWeeklyCount() {
   const canManage = hasRole('admin','head_barista');
 
   const branchSel = `<select class="pill" onchange="wcCaptureInputs(); weeklyCountState.branch=this.value; weeklyCountState.draft=null; render();">
-    ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+    ${COFFEE_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
   </select>`;
   const header = `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -16234,7 +16243,7 @@ function renderExpiryCheck() {
   const canManage = hasRole('admin','head_barista');
 
   const branchSel = `<select class="pill" onchange="ecCaptureInputs(); expiryCheckState.branch=this.value; expiryCheckState.draft=null; render();">
-    ${SUGGESTED_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+    ${COFFEE_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
   </select>`;
   const header = `
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -21906,7 +21915,7 @@ function renderInventoryHub(){
   if (inventoryHubState.view==='entry' && !inventoryHubState.shift) inventoryHubState.shift='morning';
   const branchSel = invCanPickBranch()
     ? `<select class="pill" onchange="inventoryHubState.branch=this.value; inventoryHubState.view='dashboard'; render();">
-        ${SUGGESTED_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
+        ${COFFEE_BRANCHES.map(b=>`<option value="${escapeHTML(b)}" ${b===branch?'selected':''}>${escapeHTML(b)}</option>`).join('')}
       </select>`
     : `<span class="pill">${escapeHTML(branch)}</span>`;
   const header = `
