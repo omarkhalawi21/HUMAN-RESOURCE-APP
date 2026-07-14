@@ -2566,12 +2566,39 @@ const AVATAR_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
 function safeAvatarColor(c) {
   return AVATAR_COLOR_RE.test(String(c||'')) ? c : '#64748b';
 }
+// Employee photos are stored as multi-MB base64 data URLs, and avatarHTML
+// runs once PER ROW in big tables (attendance history renders up to 500).
+// Inlining the data URL into every <img> multiplied one photo into gigabytes
+// of HTML — Safari's renderer OOM-crashed ("A problem repeatedly occurred")
+// the moment a filter concentrated photo-bearing rows. Instead, each photo
+// is converted to a session-lived Blob URL ONCE and every <img> reuses that
+// ~50-char reference; the browser also decodes the bitmap once per photo.
+// Keyed by id + photo length so re-uploading a photo mints a fresh URL.
+const _empPhotoBlobUrls = {};
+function empPhotoUrl(emp) {
+  if (!emp?.photo) return '';
+  if (!emp.photo.startsWith('data:')) return emp.photo;
+  const key = emp.id + ':' + emp.photo.length;
+  if (_empPhotoBlobUrls[key]) return _empPhotoBlobUrls[key];
+  try {
+    const comma = emp.photo.indexOf(',');
+    const mime = (emp.photo.slice(0, comma).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg';
+    const bin = atob(emp.photo.slice(comma + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    _empPhotoBlobUrls[key] = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  } catch (_) {
+    return emp.photo; // malformed data URL — fall back to inlining (old behavior)
+  }
+  return _empPhotoBlobUrls[key];
+}
 function avatarHTML(emp, size=36) {
   if (!emp) return '';
   const initials = (emp.firstName?.[0]||'') + (emp.lastName?.[0]||'');
   const bg = safeAvatarColor(emp.avatarColor);
-  if (emp.photo) {
-    return `<span class="avatar" style="width:${size}px;height:${size}px;background:${bg}"><img src="${escapeHTML(emp.photo)}" alt=""></span>`;
+  const photoUrl = empPhotoUrl(emp);
+  if (photoUrl) {
+    return `<span class="avatar" style="width:${size}px;height:${size}px;background:${bg}"><img src="${escapeHTML(photoUrl)}" alt=""></span>`;
   }
   return `<span class="avatar" style="width:${size}px;height:${size}px;background:${bg};font-size:${size*0.4}px">${escapeHTML(initials)}</span>`;
 }
