@@ -765,6 +765,7 @@ function emptyState() {
     alertWeeklyCounts: [],  // bounded: recent weekly counts, all branches (cross-branch alerts card)
     alertExpiryChecks: [],  // bounded: recent expiry checks, all branches (cross-branch alerts card)
     incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
+    roastBatches: [],       // capped recent: [{ id, serialNo, greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg, branch, roastDate, notes, recordedBy, createdAt }] — three-weight roast log (green → roasted → sorted) with RB-serial traceability
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
@@ -1672,6 +1673,39 @@ function movementToDb(m) {
     recorded_by: m.recordedBy || null,
   };
 }
+function mapRoastBatchFromDb(r) {
+  return {
+    id: r.id,
+    serialNo: Number(r.serial_no) || 0,
+    greenItemId: r.green_item_id,
+    roastedItemId: r.roasted_item_id,
+    greenInKg: Number(r.green_in_kg) || 0,
+    roastedKg: Number(r.roasted_kg) || 0,
+    sortedKg: Number(r.sorted_kg) || 0,
+    branch: r.branch || '',
+    roastDate: r.roast_date,
+    notes: r.notes || '',
+    recordedBy: r.recorded_by,
+    createdAt: r.created_at,
+  };
+}
+function roastBatchToDb(b) {
+  // serial_no is intentionally omitted — the DB identity assigns it.
+  return {
+    green_item_id: b.greenItemId,
+    roasted_item_id: b.roastedItemId,
+    green_in_kg: Number(b.greenInKg) || 0,
+    roasted_kg: Number(b.roastedKg) || 0,
+    sorted_kg: Number(b.sortedKg) || 0,
+    branch: b.branch || null,
+    roast_date: b.roastDate || null,
+    notes: b.notes || null,
+    recorded_by: b.recordedBy || null,
+  };
+}
+// Display form of a batch serial: RB-00042. Fixed width keeps it legible
+// on a bag label and unambiguous in complaint reports.
+function rbSerial(b) { return 'RB-' + String(b?.serialNo || 0).padStart(5, '0'); }
 function mapMaintenanceFromDb(r) {
   return {
     id: r.id,
@@ -1867,7 +1901,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -1983,6 +2017,11 @@ async function loadAll() {
       // Employee documents to sign ("Agreements"). Bounded per-employee; RLS
       // scopes to admin/hr or the owning employee. Signatures are small PNGs.
       sb.from('signed_documents').select('*').order('created_at', { ascending: false }),
+      // Roast batches: low-volume (a handful per day) but grows forever, so
+      // same capped-bulk pattern as inventory_movements. 500 ≈ many months
+      // of roasting; older batches stay queryable in the DB for complaint
+      // lookups beyond the cap if ever needed.
+      sb.from('roast_batches').select('*').order('roast_date', { ascending: false }).order('serial_no', { ascending: false }).limit(500),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2043,6 +2082,7 @@ async function loadAll() {
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
     state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
     state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
+    state.roastBatches       = (roastBatchesR?.data || []).map(mapRoastBatchFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -18204,34 +18244,70 @@ function openInventoryHistoryModal(itemId) {
 // out (negative qty_delta) and roasted-bean in (positive qty_delta).
 // If either insert fails after the first lands, attempt a
 // compensating insert on the green item to restore stock.
-async function logRoastBatch(greenItemId, roastedItemId, greenOutKg, roastedInKg, opts = {}) {
-  const greenOut = await logInventoryMovement(greenItemId, -Math.abs(Number(greenOutKg)||0), {
-    type: 'roast',
-    occurredAt: opts.occurredAt,
-    branch: opts.branch,
-    notes: opts.notes ? `Roast: ${opts.notes}` : 'Roasted out',
-  });
-  if (!greenOut) return null;
+async function logRoastBatch(greenItemId, roastedItemId, weights, opts = {}) {
+  // weights: { greenInKg, roastedKg, sortedKg }. Three stages because beans
+  // are hand-sorted after roasting and defects are excluded — only the
+  // SORTED weight reaches the shelf, so that's what the roasted-in movement
+  // carries. roastedKg is kept on the batch row for loss analytics.
+  const greenInKg = Math.abs(Number(weights.greenInKg) || 0);
+  const roastedKg = Math.abs(Number(weights.roastedKg) || 0);
+  const sortedKg  = Math.abs(Number(weights.sortedKg)  || 0);
 
-  const roastedIn = await logInventoryMovement(roastedItemId, Math.abs(Number(roastedInKg)||0), {
+  // 1. Batch row first — the DB assigns the traceability serial, and the
+  //    movements below reference it in their notes.
+  const me = currentEmployee();
+  const { data: batchRow, error: batchErr } = await sb
+    .from('roast_batches')
+    .insert(roastBatchToDb({
+      greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg,
+      branch: opts.branch, roastDate: opts.occurredAt, notes: opts.notes,
+      recordedBy: me?.id || null,
+    }))
+    .select()
+    .single();
+  if (batchErr || !batchRow) {
+    console.error('roast_batches insert failed:', batchErr);
+    toast('Could not save the roast batch' + (batchErr?.message?.includes('does not exist') ? ' — run SQL block 83 first' : ''), 'error');
+    return null;
+  }
+  const batch = mapRoastBatchFromDb(batchRow);
+  const serial = rbSerial(batch);
+  const noteSuffix = opts.notes ? ` — ${opts.notes}` : '';
+
+  const cleanupBatch = async () => {
+    await sb.from('roast_batches').delete().eq('id', batch.id);
+  };
+
+  // 2. Paired stock movements, serial-stamped for the audit trail.
+  const greenOut = await logInventoryMovement(greenItemId, -greenInKg, {
     type: 'roast',
     occurredAt: opts.occurredAt,
     branch: opts.branch,
-    notes: opts.notes ? `Roast: ${opts.notes}` : 'Roasted in',
+    notes: `Roast ${serial}: green out${noteSuffix}`,
+  });
+  if (!greenOut) { await cleanupBatch(); return null; }
+
+  const roastedIn = await logInventoryMovement(roastedItemId, sortedKg, {
+    type: 'roast',
+    occurredAt: opts.occurredAt,
+    branch: opts.branch,
+    notes: `Roast ${serial}: sorted in (${roastedKg}kg roasted → ${sortedKg}kg after sorting)${noteSuffix}`,
   });
   if (!roastedIn) {
     // Best-effort compensating entry so green stock returns to its
     // pre-call level. Records as type='adjust' with a note pointing
     // at the failed batch so the audit trail is honest about it.
-    await logInventoryMovement(greenItemId, Math.abs(Number(greenOutKg)||0), {
+    await logInventoryMovement(greenItemId, greenInKg, {
       type: 'adjust',
       occurredAt: opts.occurredAt,
       branch: opts.branch,
-      notes: 'Reverted: paired roast destination insert failed',
+      notes: `Reverted ${serial}: paired roast destination insert failed`,
     });
+    await cleanupBatch();
     return null;
   }
-  return { greenOut, roastedIn };
+  state.roastBatches.unshift(batch);
+  return { batch, greenOut, roastedIn };
 }
 
 function openRoastBatchModal() {
@@ -18246,7 +18322,7 @@ function openRoastBatchModal() {
   const form = `
     <div class="space-y-4">
       <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800">
-        ${icon('cash','w-4 h-4 inline')} A roast logs two movements at once: green beans out and roasted beans in. Yield % auto-calculates as you type — you can override the roasted output if it differs.
+        ${icon('cash','w-4 h-4 inline')} A batch records three weights — green in, after roasting, and after sorting (defect beans excluded). Only the <strong>sorted</strong> weight lands on the shelf. A serial number (RB-…) is generated for the batch — write it on the bags for complaint traceability.
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
@@ -18266,9 +18342,14 @@ function openRoastBatchModal() {
           <input id="rb-in" type="number" min="0" step="0.01" class="input" placeholder="0.00" oninput="recalcRoastYield()">
         </div>
         <div>
-          <label class="label">Roasted out (kg)</label>
-          <input id="rb-out" type="number" min="0" step="0.01" class="input" placeholder="0.00" oninput="recalcRoastYield()">
-          <div class="text-[10px] text-slate-500 mt-1">Defaults to <span id="rb-suggest-pct">85%</span> of green; edit if different.</div>
+          <label class="label">After roasting (kg)</label>
+          <input id="rb-roasted-kg" type="number" min="0" step="0.01" class="input" placeholder="0.00" oninput="recalcRoastYield()">
+          <div class="text-[10px] text-slate-500 mt-1">Weight off the roaster, before sorting. Defaults to <span id="rb-suggest-pct">85%</span> of green; edit if different.</div>
+        </div>
+        <div>
+          <label class="label">After sorting (kg)</label>
+          <input id="rb-sorted-kg" type="number" min="0" step="0.01" class="input" placeholder="0.00" oninput="recalcRoastYield()">
+          <div class="text-[10px] text-slate-500 mt-1">What's left after excluding defects — this is what goes on the shelf.</div>
         </div>
         <div>
           <label class="label">Date</label>
@@ -18286,28 +18367,32 @@ function openRoastBatchModal() {
           <textarea id="rb-notes" class="input" rows="2" placeholder="batch ID, roast profile, observations..."></textarea>
         </div>
       </div>
-      <div id="rb-yield" class="bg-slate-50 rounded-xl p-3 text-sm text-slate-700">Yield: <span class="font-semibold">—</span></div>
+      <div id="rb-yield" class="bg-slate-50 rounded-xl p-3 text-sm text-slate-700">Roast loss / sorting loss / final yield: <span class="font-semibold">—</span></div>
     </div>
   `;
   openModal('Log roast batch', form, async () => {
     const greenId   = $('#rb-green').value;
     const roastedId = $('#rb-roasted').value;
     const greenIn   = parseFloat($('#rb-in').value);
-    const roastedOut= parseFloat($('#rb-out').value);
+    const roastedKg = parseFloat($('#rb-roasted-kg').value);
+    const sortedKg  = parseFloat($('#rb-sorted-kg').value);
     const date      = $('#rb-date').value;
     const branch    = $('#rb-branch').value;
     const notes     = $('#rb-notes').value.trim();
     if (!greenId || !roastedId)              { toast('Pick both items', 'error');      return false; }
     if (greenId === roastedId)               { toast('Green and roasted must be different items', 'error'); return false; }
     if (isNaN(greenIn) || greenIn <= 0)      { toast('Enter green-in kg', 'error');    return false; }
-    if (isNaN(roastedOut) || roastedOut < 0) { toast('Enter roasted-out kg', 'error'); return false; }
-    const result = await logRoastBatch(greenId, roastedId, greenIn, roastedOut, {
-      occurredAt: date, branch: branch || null, notes,
-    });
+    if (isNaN(roastedKg) || roastedKg <= 0)  { toast('Enter the after-roasting kg', 'error'); return false; }
+    if (isNaN(sortedKg) || sortedKg < 0)     { toast('Enter the after-sorting kg', 'error');  return false; }
+    if (roastedKg > greenIn)                 { toast('After-roasting weight cannot exceed green in — beans lose weight in the roaster', 'error'); return false; }
+    if (sortedKg > roastedKg)                { toast('After-sorting weight cannot exceed the after-roasting weight', 'error'); return false; }
+    const result = await logRoastBatch(greenId, roastedId,
+      { greenInKg: greenIn, roastedKg, sortedKg },
+      { occurredAt: date, branch: branch || null, notes });
     if (!result) return false;
     render();
-    const yieldPct = greenIn > 0 ? Math.round(roastedOut / greenIn * 100) : 0;
-    toast(`Roast logged — ${yieldPct}% yield`, 'success');
+    const finalPct = Math.round(sortedKg / greenIn * 100);
+    toast(`Batch ${rbSerial(result.batch)} logged — ${finalPct}% final yield, ${sortedKg.toFixed(2)} kg to the shelf. Write ${rbSerial(result.batch)} on the bags.`, 'success');
     return true;
   }, { saveLabel: 'Log roast' });
 
@@ -18316,24 +18401,39 @@ function openRoastBatchModal() {
 }
 
 function recalcRoastYield() {
-  const inEl  = document.getElementById('rb-in');
-  const outEl = document.getElementById('rb-out');
-  const yEl   = document.getElementById('rb-yield');
-  if (!inEl || !outEl || !yEl) return;
+  const inEl     = document.getElementById('rb-in');
+  const roastEl  = document.getElementById('rb-roasted-kg');
+  const sortEl   = document.getElementById('rb-sorted-kg');
+  const yEl      = document.getElementById('rb-yield');
+  if (!inEl || !roastEl || !sortEl || !yEl) return;
   const green = parseFloat(inEl.value) || 0;
   // Suggest 85% of green if user hasn't filled roasted yet.
-  if (green > 0 && (!outEl.value || outEl.dataset.userTouched !== '1')) {
-    if (document.activeElement !== outEl) {
-      outEl.value = (green * 0.85).toFixed(2);
+  if (green > 0 && (!roastEl.value || roastEl.dataset.userTouched !== '1')) {
+    if (document.activeElement !== roastEl) {
+      roastEl.value = (green * 0.85).toFixed(2);
     }
   }
-  outEl.addEventListener('input', () => { outEl.dataset.userTouched = '1'; }, { once: true });
-  const roasted = parseFloat(outEl.value) || 0;
+  roastEl.addEventListener('input', () => { roastEl.dataset.userTouched = '1'; }, { once: true });
+  const roasted = parseFloat(roastEl.value) || 0;
+  // Sorted defaults to the roasted weight until touched — "no beans excluded"
+  // is the neutral assumption; the roaster overwrites with the real number.
+  if (roasted > 0 && (!sortEl.value || sortEl.dataset.userTouched !== '1')) {
+    if (document.activeElement !== sortEl) {
+      sortEl.value = roasted.toFixed(2);
+    }
+  }
+  sortEl.addEventListener('input', () => { sortEl.dataset.userTouched = '1'; }, { once: true });
+  const sorted = parseFloat(sortEl.value) || 0;
   if (green > 0 && roasted > 0) {
-    const pct = (roasted / green) * 100;
-    yEl.innerHTML = `Yield: <span class="font-semibold ${roastYieldTone(pct, true)}">${pct.toFixed(1)}%</span> &middot; loss ${(green - roasted).toFixed(2)} kg`;
+    const roastLoss = ((green - roasted) / green) * 100;
+    const sortLoss  = roasted > 0 ? ((roasted - sorted) / roasted) * 100 : 0;
+    const finalPct  = (sorted / green) * 100;
+    yEl.innerHTML = `
+      Roast loss <span class="font-semibold">${roastLoss.toFixed(1)}%</span> (${(green - roasted).toFixed(2)} kg)
+      &middot; Sorting loss <span class="font-semibold ${sortLoss > 8 ? 'text-rose-600' : ''}">${sortLoss.toFixed(1)}%</span> (${(roasted - sorted).toFixed(2)} kg)
+      &middot; Final yield <span class="font-semibold ${roastYieldTone(finalPct, true)}">${finalPct.toFixed(1)}%</span> — ${sorted.toFixed(2)} kg to the shelf`;
   } else {
-    yEl.innerHTML = 'Yield: <span class="font-semibold">—</span>';
+    yEl.innerHTML = 'Roast loss / sorting loss / final yield: <span class="font-semibold">—</span>';
   }
 }
 
@@ -18841,8 +18941,96 @@ async function deleteInventoryItem(id) {
 }
 
 /* -------------------- ROASTER (admin / head_barista / roaster) -------------------- */
-let roasterTab = 'green'; // 'green' | 'shelf' | 'weekly'
+let roasterTab = 'green'; // 'green' | 'shelf' | 'weekly' | 'batches'
 function setRoasterTab(t) { roasterTab = t; render(); }
+
+// Batches-tab search (serial / bean name / notes). Same debounce +
+// focus-restore pattern as setInventoryFilter — render() replaces the
+// input, so focus is put back after the re-render.
+let roasterBatchQ = '';
+let _roasterBatchQTimer = null;
+function setRoasterBatchQ(v) {
+  roasterBatchQ = v;
+  clearTimeout(_roasterBatchQTimer);
+  _roasterBatchQTimer = setTimeout(() => {
+    render();
+    const inp = document.getElementById('rbq');
+    if (inp) { inp.focus(); const val = inp.value; inp.setSelectionRange(val.length, val.length); }
+  }, 200);
+}
+
+// The Batches tab body: searchable trace log of every roast with its three
+// weights and both loss stages. This is where a complaint gets traced —
+// search the RB serial from the bag.
+function renderRoasterBatchesSection() {
+  const itemName = id => (state.inventory || []).find(i => i.id === id)?.name || '—';
+  const q = (roasterBatchQ || '').trim().toLowerCase();
+  const batches = (state.roastBatches || []).filter(b => {
+    if (!q) return true;
+    return rbSerial(b).toLowerCase().includes(q)
+      || String(b.serialNo).includes(q)
+      || itemName(b.greenItemId).toLowerCase().includes(q)
+      || itemName(b.roastedItemId).toLowerCase().includes(q)
+      || (b.notes || '').toLowerCase().includes(q);
+  });
+  const pct = (num, den) => den > 0 ? (num / den * 100) : 0;
+  const fmt = n => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+  const searchBox = `
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-4">
+      <input id="rbq" type="text" class="input" placeholder="Search by serial (RB-00042), bean, or notes..." value="${escapeHTML(roasterBatchQ)}" oninput="setRoasterBatchQ(this.value)">
+    </div>`;
+
+  if (batches.length === 0) {
+    return `${searchBox}
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('cash','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">${q ? 'No batches match that search' : 'No roast batches logged yet'}</h3>
+        <p class="text-sm text-slate-500 mt-1">${q ? 'Check the serial from the bag — the format is RB-00042.' : 'Log a roast to start the trace log. Each batch gets a serial number for complaint traceability.'}</p>
+        ${q ? '' : `<button onclick="openRoastBatchModal()" class="btn btn-primary mt-4">${icon('cash','w-4 h-4')} Log roast</button>`}
+      </div>`;
+  }
+
+  return `${searchBox}
+    <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-slate-50/60 border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+              <th class="text-start px-4 py-2.5 font-semibold">Serial</th>
+              <th class="text-start px-4 py-2.5 font-semibold">Date</th>
+              <th class="text-start px-4 py-2.5 font-semibold">Green bean → Roasted</th>
+              <th class="text-end px-4 py-2.5 font-semibold">Green in</th>
+              <th class="text-end px-4 py-2.5 font-semibold">Roasted</th>
+              <th class="text-end px-4 py-2.5 font-semibold">Sorted</th>
+              <th class="text-end px-4 py-2.5 font-semibold">Roast loss</th>
+              <th class="text-end px-4 py-2.5 font-semibold">Sorting loss</th>
+              <th class="text-end px-4 py-2.5 font-semibold">Final yield</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${batches.map(b => {
+              const roastLoss = pct(b.greenInKg - b.roastedKg, b.greenInKg);
+              const sortLoss  = pct(b.roastedKg - b.sortedKg, b.roastedKg);
+              const finalPct  = pct(b.sortedKg, b.greenInKg);
+              return `
+                <tr class="hover:bg-slate-50">
+                  <td class="px-4 py-2.5 font-semibold text-brand-700 whitespace-nowrap">${escapeHTML(rbSerial(b))}</td>
+                  <td class="px-4 py-2.5 text-slate-600 whitespace-nowrap">${escapeHTML(fmtDate(b.roastDate))}</td>
+                  <td class="px-4 py-2.5 text-slate-700">${escapeHTML(itemName(b.greenItemId))} <span class="text-slate-400">→</span> ${escapeHTML(itemName(b.roastedItemId))}${b.notes ? `<div class="text-[11px] text-slate-400 mt-0.5">${escapeHTML(b.notes)}</div>` : ''}</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums">${fmt(b.greenInKg)} kg</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums">${fmt(b.roastedKg)} kg</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums font-semibold">${fmt(b.sortedKg)} kg</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums text-slate-600">${roastLoss.toFixed(1)}%</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums ${sortLoss > 8 ? 'text-rose-600 font-semibold' : 'text-slate-600'}">${sortLoss.toFixed(1)}%</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums ${roastYieldTone(finalPct, true)}">${finalPct.toFixed(1)}%</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
 
 function renderRoaster() {
   const all = (state.inventory || []);
@@ -18908,9 +19096,10 @@ function renderRoaster() {
       ${tabBtn('green',  'Green beans',  green.length)}
       ${tabBtn('shelf',  'Daily shelf',  shelf.length)}
       ${tabBtn('weekly', 'This week',    weekly.length)}
+      ${tabBtn('batches','Batches',      (state.roastBatches||[]).length)}
     </div>
 
-    ${items.length === 0 ? `
+    ${roasterTab === 'batches' ? renderRoasterBatchesSection() : items.length === 0 ? `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('cash','w-8 h-8')}</div>
         <h3 class="font-display text-lg font-semibold text-slate-900">${
