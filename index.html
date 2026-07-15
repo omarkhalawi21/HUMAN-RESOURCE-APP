@@ -22306,7 +22306,38 @@ function invFilterStaff(q){
   });
 }
 
+// Error boundary. A throw anywhere in a render path used to leave whatever
+// was last painted on screen forever — during bootstrap that's the
+// "Loading…" splash, which is exactly how PR #206's attMinutes recursion
+// bricked the live app. Catch here and paint a recovery screen instead.
+// The screen is dependency-free (inline styles, no icon()/t()/state) so it
+// can't itself throw for the same reason the page did.
 function render() {
+  try { renderMain(); }
+  catch (err) {
+    console.error('Render failed:', err);
+    try { stopClockTicker(); } catch(_) { /* ticker may not exist yet */ }
+    const msg = String((err && (err.message || err)) || 'Unknown error').slice(0, 300)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const app = document.getElementById('app');
+    if (!app) return;
+    app.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fbf7f1;padding:24px">
+        <div style="max-width:28rem;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.06)">
+          <div style="font-size:40px;line-height:1">⚠️</div>
+          <h1 style="margin-top:12px;font-size:18px;font-weight:700;color:#1e293b">Something went wrong</h1>
+          <p style="margin-top:8px;font-size:13px;color:#64748b">The page hit an error while drawing. Your data is safe — this is a display problem, not a data problem. Reloading usually fixes it.</p>
+          <p style="margin-top:8px;font-size:11px;color:#94a3b8;font-family:monospace;word-break:break-word">${msg}</p>
+          <div style="margin-top:20px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <button onclick="location.reload()" style="background:#7a3b14;color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Reload the app</button>
+            <button onclick="location.hash='#/dashboard';location.reload()" style="background:#f1f5f9;color:#334155;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Go to dashboard</button>
+          </div>
+          <p style="margin-top:16px;font-size:11px;color:#94a3b8">If it keeps happening, send a screenshot of this page to the admin.</p>
+        </div>
+      </div>`;
+  }
+}
+function renderMain() {
   document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
