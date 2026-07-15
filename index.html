@@ -20773,6 +20773,7 @@ function closeModal() {
   if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
   if (typeof _sigPad !== 'undefined') _sigPad = null;
+  if (typeof _invCsvRows !== 'undefined') _invCsvRows = null;
   if (_modalTrapHandler) {
     document.removeEventListener('keydown', _modalTrapHandler);
     _modalTrapHandler = null;
@@ -22162,6 +22163,7 @@ function invRenderProductMix(branch){
           </div>
           <div class="flex items-center gap-1">
             ${hasRole('admin','head_barista') ? `<button onclick="invManageMixModal()" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Manage products</button>` : ''}
+            <button onclick="invOpenCsvImport()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Import CSV</button>
             <button onclick="invPrintProductMix('${escapeHTML(branch)}','${shift}')" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
           </div>
         </div>
@@ -22227,6 +22229,202 @@ function invPrintProductMix(branch, shift){
     <body><h1>Product Mix — ${escapeHTML(branch)}</h1><div class="sub">${invShiftLabel(shift)} shift · ${escapeHTML(invDayLabel(today))} · quantities sold per Foodics</div>
     ${drinkSecs}${itemSecs}</body></html>`;
   openPrintWindow(html);
+}
+
+/* ---- Foodics CSV import for the product mix ---- */
+// Instead of reading the Foodics printout and typing every line, staff can
+// export the report as CSV (or copy the table) and import it. The importer
+// only FILLS the form fields after a per-row match preview — "Save product
+// mix" stays the single write path, so nothing persists without review.
+let _invCsvRows = null; // transient parse result behind the preview modal; cleared in closeModal()
+
+// Char-level CSV split (handles quoted cells with embedded delimiters,
+// escaped quotes and newlines — Foodics product names contain commas).
+function invCsvCells(text, delim){
+  const rows = []; let row = [], cell = '', inQ = false;
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    if (inQ){
+      if (ch === '"'){ if (text[i+1] === '"'){ cell += '"'; i++; } else inQ = false; }
+      else cell += ch;
+    }
+    else if (ch === '"') inQ = true;
+    else if (ch === delim){ row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r'){
+      if (ch === '\r' && text[i+1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some(c => c.trim() !== '')) rows.push(row);
+      row = [];
+    }
+    else cell += ch;
+  }
+  row.push(cell);
+  if (row.some(c => c.trim() !== '')) rows.push(row);
+  return rows;
+}
+// Loose name normalisation for matching: lowercase, Arabic-Indic digits →
+// western, anything that isn't a latin/arabic letter or digit → space.
+function invCsvNorm(s){
+  return String(s || '').toLowerCase()
+    .replace(/[٠-٩]/g, ch => String(ch.charCodeAt(0) - 0x0660))
+    .replace(/[^a-z0-9؀-ۿ]+/g, ' ')
+    .trim();
+}
+function invCsvNum(v){
+  const n = parseFloat(String(v ?? '').replace(/[٠-٩]/g, ch => String(ch.charCodeAt(0) - 0x0660)).replace(/[^0-9.\-]/g, ''));
+  return isFinite(n) ? n : null;
+}
+// Parse the pasted/uploaded report into [{name, qty}]. Understands the real
+// Foodics export shape (BOM, "Product,...,Quantity,..." header, bilingual
+// names) but falls back to first-text-column / first-numeric-column for
+// headerless copy-pastes.
+function invCsvExtract(text){
+  const clean = String(text || '').replace(/^\uFEFF/, '');
+  const firstLine = clean.split(/\r?\n/, 1)[0] || '';
+  const counts = ['\t', ';', ','].map(d => [d, firstLine.split(d).length - 1]).sort((a, b) => b[1] - a[1]);
+  const delim = counts[0][1] > 0 ? counts[0][0] : ',';
+  const rows = invCsvCells(clean, delim);
+  if (!rows.length) return [];
+  // Header detection. Qty header must NOT be money-ish ("Sales", "Total
+  // Cost", "Item Profit" are amounts, not counts).
+  const heads = rows[0].map(h => String(h || '').trim().toLowerCase());
+  let nameCol = heads.findIndex(h => /product|item|name|منتج|صنف|اسم/.test(h));
+  let qtyCol  = heads.findIndex(h => /qty|quantit|كمية|عدد/.test(h) && !/sale|price|cost|profit|%/.test(h));
+  let dataRows;
+  if (nameCol >= 0 && qtyCol >= 0){
+    dataRows = rows.slice(1);
+  } else {
+    // Heuristic: name = column with the most non-numeric cells, qty = first
+    // other column where most cells parse as numbers.
+    const sample = rows.slice(0, 20);
+    const width = Math.max(...sample.map(r => r.length));
+    const numericShare = c => sample.filter(r => invCsvNum(r[c]) != null && String(r[c]).trim() !== '').length / sample.length;
+    let best = 0;
+    nameCol = 0;
+    for (let c = 0; c < width; c++){ const t = 1 - numericShare(c); if (t > best){ best = t; nameCol = c; } }
+    qtyCol = -1;
+    for (let c = 0; c < width; c++){ if (c !== nameCol && numericShare(c) >= 0.5){ qtyCol = c; break; } }
+    if (qtyCol < 0) return [];
+    // Drop a header-looking first row (its qty cell doesn't parse).
+    dataRows = invCsvNum(rows[0][qtyCol]) == null ? rows.slice(1) : rows;
+  }
+  return dataRows
+    .map(r => ({ name: String(r[nameCol] || '').trim(), qty: invCsvNum(r[qtyCol]) }))
+    .filter(e => e.name && e.qty != null && e.qty >= 0);
+}
+// Everything the product-mix form can take a quantity for, with its input id.
+function invCsvTargets(){
+  const t = [];
+  INV_DRINK_SERVES.forEach(sv => invDrinksByServe(sv.key).forEach(d =>
+    t.push({ inputId: 'pm-drink-' + d.id, name: d.name, group: sv.label })));
+  INV_MIX_ITEM_CATS.forEach(cat => invActiveItems().filter(i => i.category === cat.key).forEach(it =>
+    t.push({ inputId: 'pm-item-' + it.id, name: it.name, group: cat.label })));
+  return t.map(x => ({ ...x, norm: invCsvNorm(x.name) }));
+}
+// Match a (possibly bilingual, e.g. "قوجي اثيوبيا - guji Ethiopia 250g")
+// Foodics line to one product: exact normalised equality first, then the
+// LONGEST product name contained word-for-word in the line. A length tie
+// (genuinely ambiguous) stays unmatched rather than guessing — that also
+// keeps "DOUBLE ESPRESSO" from landing on plain "Espresso".
+function invCsvAutoMatch(csvName, targets){
+  const n = invCsvNorm(csvName);
+  if (!n) return '';
+  const exact = targets.filter(t => t.norm === n);
+  if (exact.length === 1) return exact[0].inputId;
+  const padded = ' ' + n + ' ';
+  const contained = targets.filter(t => t.norm.length >= 3 && padded.includes(' ' + t.norm + ' '));
+  if (contained.length){
+    const max = Math.max(...contained.map(t => t.norm.length));
+    const best = contained.filter(t => t.norm.length === max);
+    if (best.length === 1) return best[0].inputId;
+  }
+  return '';
+}
+function invOpenCsvImport(){
+  const body = `
+    <div class="space-y-3">
+      <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 text-xs text-slate-600">Export the product report from Foodics as CSV (or copy the table and paste it below). Rows are matched to products by name and you review every match before the form is filled — nothing saves until you press <b>Save product mix</b>.</div>
+      <div>
+        <label class="label">CSV file</label>
+        <input id="csv-file" type="file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" class="input">
+      </div>
+      <div class="text-center text-[11px] text-slate-400">— or —</div>
+      <div>
+        <label class="label">Paste the report</label>
+        <textarea id="csv-text" class="input" rows="5" placeholder="Product,Quantity&#10;Latte,12&#10;GRAPE - عنب,7"></textarea>
+      </div>
+    </div>`;
+  openModal('Import product mix CSV', body, async () => {
+    const f = document.getElementById('csv-file')?.files?.[0];
+    let text = document.getElementById('csv-text')?.value || '';
+    if (f) text = await f.text();
+    if (!text.trim()){ toast('Choose a file or paste the report first', 'error'); return false; }
+    const entries = invCsvExtract(text);
+    if (!entries.length){ toast('Could not find product / quantity rows in that data', 'error'); return false; }
+    invCsvPreviewModal(entries);
+    return false; // the preview modal replaced us — don't let submitModal close IT
+  }, { saveLabel: 'Continue' });
+}
+function invCsvPreviewModal(entries){
+  const targets = invCsvTargets();
+  const withMatch = entries.map(e => ({ ...e, match: invCsvAutoMatch(e.name, targets) }));
+  const matched = withMatch.filter(e => e.match).length;
+  const optionsHTML = sel => {
+    const groups = [];
+    targets.forEach(t => {
+      let g = groups.find(x => x.label === t.group);
+      if (!g){ g = { label: t.group, opts: [] }; groups.push(g); }
+      g.opts.push(t);
+    });
+    return `<option value="">— skip —</option>` + groups.map(g =>
+      `<optgroup label="${escapeHTML(g.label)}">${g.opts.map(t =>
+        `<option value="${t.inputId}" ${sel === t.inputId ? 'selected' : ''}>${escapeHTML(t.name)}</option>`).join('')}</optgroup>`).join('');
+  };
+  const body = `
+    <div>
+      <div class="text-xs text-slate-500 mb-2">${matched} of ${withMatch.length} rows matched automatically${matched < withMatch.length ? ' — fix or skip the highlighted rows' : ''}. Rows pointing at the same product are added together.</div>
+      <div style="max-height:50vh;overflow-y:auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-slate-50/60 border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+              <th class="text-start px-2 py-2 font-semibold">Report line</th>
+              <th class="text-end px-2 py-2 font-semibold">Qty</th>
+              <th class="text-start px-2 py-2 font-semibold">Fills product</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${withMatch.map((e, i) => `
+              <tr class="${e.match ? '' : 'bg-amber-50'}">
+                <td class="px-2 py-1.5 text-slate-700">${escapeHTML(e.name)}</td>
+                <td class="px-2 py-1.5 text-end tabular-nums font-semibold">${e.qty}</td>
+                <td class="px-2 py-1.5"><select id="csvm-${i}" class="input py-1.5">${optionsHTML(e.match)}</select></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  openModal('Review CSV matches', body, async () => {
+    const rows = _invCsvRows || [];
+    const sums = {};
+    let skipped = 0;
+    rows.forEach((e, i) => {
+      const sel = document.getElementById('csvm-' + i);
+      const target = sel ? sel.value : '';
+      if (!target){ skipped++; return; }
+      sums[target] = (sums[target] || 0) + e.qty;
+    });
+    let filled = 0;
+    Object.entries(sums).forEach(([inputId, qty]) => {
+      const el = document.getElementById(inputId);
+      if (el){ el.value = qty; filled++; }
+    });
+    if (!filled){ toast('Nothing selected to fill — pick a product for at least one row', 'error'); return false; }
+    toast(`Filled ${filled} product${filled === 1 ? '' : 's'} from the report${skipped ? ` (${skipped} row${skipped === 1 ? '' : 's'} skipped)` : ''} — review the numbers, then press "Save product mix".`, 'success');
+    return true;
+  }, { saveLabel: 'Fill the form' });
+  // Set AFTER openModal — opening the preview closed the upload modal, and
+  // closeModal() wipes _invCsvRows.
+  _invCsvRows = withMatch;
 }
 
 /* ---- the shared body (board / dashboard / entry) ---- */
