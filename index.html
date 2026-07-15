@@ -765,7 +765,7 @@ function emptyState() {
     alertWeeklyCounts: [],  // bounded: recent weekly counts, all branches (cross-branch alerts card)
     alertExpiryChecks: [],  // bounded: recent expiry checks, all branches (cross-branch alerts card)
     incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
-    roastBatches: [],       // capped recent: [{ id, serialNo, greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg, branch, roastDate, notes, recordedBy, createdAt }] — three-weight roast log (green → roasted → sorted) with RB-serial traceability
+    roastBatches: [],       // capped recent: [{ id, serialNo, serialPrefix, prefixNo, greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg, branch, roastDate, notes, recordedBy, createdAt }] — three-weight roast log (green → roasted → sorted); serial = bean prefix sequence (EG-0001) or global RB-
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
@@ -1467,6 +1467,7 @@ function mapInventoryItemFromDb(r) {
     branch: r.branch || '',
     notes: r.notes || '',
     dcMap: r.dc_map || null,
+    serialPrefix: r.serial_prefix || '',
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -1623,6 +1624,7 @@ function inventoryItemToDb(i) {
     branch: i.branch || null,
     notes: i.notes || null,
     dc_map: i.dcMap || null,
+    serial_prefix: (i.serialPrefix || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || null,
     created_by: i.createdBy || null,
   };
 }
@@ -1677,6 +1679,8 @@ function mapRoastBatchFromDb(r) {
   return {
     id: r.id,
     serialNo: Number(r.serial_no) || 0,
+    serialPrefix: r.serial_prefix || '',
+    prefixNo: Number(r.prefix_no) || 0,
     greenItemId: r.green_item_id,
     roastedItemId: r.roasted_item_id,
     greenInKg: Number(r.green_in_kg) || 0,
@@ -1690,7 +1694,9 @@ function mapRoastBatchFromDb(r) {
   };
 }
 function roastBatchToDb(b) {
-  // serial_no is intentionally omitted — the DB identity assigns it.
+  // serial_no, serial_prefix and prefix_no are intentionally omitted —
+  // the DB assigns them (identity column + block-84 trigger, which reads
+  // the green bean's prefix and its atomic per-prefix counter).
   return {
     green_item_id: b.greenItemId,
     roasted_item_id: b.roastedItemId,
@@ -1703,9 +1709,15 @@ function roastBatchToDb(b) {
     recorded_by: b.recordedBy || null,
   };
 }
-// Display form of a batch serial: RB-00042. Fixed width keeps it legible
-// on a bag label and unambiguous in complaint reports.
-function rbSerial(b) { return 'RB-' + String(b?.serialNo || 0).padStart(5, '0'); }
+// Display form of a batch serial. Beans with a serial prefix get a
+// per-origin sequence (EG-0001); everything else falls back to the
+// global RB-00042 sequence. Fixed width keeps it legible on a bag
+// label and unambiguous in complaint reports. Both parts are assigned
+// DB-side (block 84 trigger / block 83 identity) — never client-side.
+function rbSerial(b) {
+  if (b?.serialPrefix && b?.prefixNo) return b.serialPrefix + '-' + String(b.prefixNo).padStart(4, '0');
+  return 'RB-' + String(b?.serialNo || 0).padStart(5, '0');
+}
 function mapMaintenanceFromDb(r) {
   return {
     id: r.id,
@@ -17990,7 +18002,7 @@ function openInventoryItemModal(id, defaults = {}) {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="md:col-span-2">
           <label class="label label-required">Item name</label>
-          <input id="inv-name" class="input" required placeholder="e.g. House Espresso Beans" value="${escapeHTML(editing?.name||'')}">
+          <input id="inv-name" class="input" required placeholder="e.g. House Espresso Beans" value="${escapeHTML(editing?.name||'')}" oninput="invPrefixSuggest()">
         </div>
         <div>
           <label class="label">SKU (optional)</label>
@@ -17998,9 +18010,18 @@ function openInventoryItemModal(id, defaults = {}) {
         </div>
         <div>
           <label class="label">Category</label>
-          <select id="inv-cat" class="input">
+          <select id="inv-cat" class="input" onchange="invPrefixToggle()">
             ${Object.entries(INVENTORY_CATEGORIES).map(([k,c]) => `<option value="${k}" ${(initial.category||'other')===k?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}
           </select>
+        </div>
+        <div id="inv-prefix-wrap" class="${(initial.category==='beans_raw')?'':'hidden'}">
+          <label class="label">Batch serial prefix (optional)</label>
+          <input id="inv-prefix" class="input uppercase" maxlength="6" placeholder="e.g. EG"
+                 value="${escapeHTML(editing?.serialPrefix||'')}"
+                 data-user-touched="${editing?.serialPrefix ? '1' : ''}"
+                 oninput="this.dataset.userTouched='1'; invPrefixDupCheck('${editing?.id||''}')">
+          <div class="text-[10px] text-slate-500 mt-1">Roast batches from this bean get their own serial sequence, e.g. <span class="font-mono">EG-0001</span>. Leave blank to use the shared <span class="font-mono">RB-</span> sequence.</div>
+          <div id="inv-prefix-warn" class="text-[10px] text-amber-700 mt-1 hidden"></div>
         </div>
         <div>
           <label class="label">Unit</label>
@@ -18082,6 +18103,7 @@ function openInventoryItemModal(id, defaults = {}) {
       supplierId:       supId,
       branch:           $('#inv-br').value.trim(),
       notes:            $('#inv-notes').value.trim(),
+      serialPrefix:     $('#inv-cat').value === 'beans_raw' ? $('#inv-prefix').value : (editing?.serialPrefix || ''),
       createdBy:        editing?.createdBy || me?.id,
     };
     const dcMap = {};
@@ -18105,6 +18127,43 @@ function openInventoryItemModal(id, defaults = {}) {
     render();
     return true;
   }, { saveLabel: editing ? 'Save changes' : 'Add item' });
+}
+
+// Initials-based suggestion for a green bean's batch-serial prefix:
+// "Ethiopia Guji" → EG, "Panama" → PA. Only ever fills the field while
+// the user hasn't typed in it themselves (same userTouched pattern as
+// recalcRoastYield), so it never fights a deliberate choice.
+function suggestSerialPrefix(name) {
+  const words = String(name || '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  return words.length === 1 ? words[0].slice(0, 2) : words.slice(0, 3).map(w => w[0]).join('');
+}
+function invPrefixToggle() {
+  const wrap = document.getElementById('inv-prefix-wrap');
+  const cat  = document.getElementById('inv-cat');
+  if (wrap && cat) wrap.classList.toggle('hidden', cat.value !== 'beans_raw');
+}
+function invPrefixSuggest() {
+  const el  = document.getElementById('inv-prefix');
+  const cat = document.getElementById('inv-cat');
+  if (!el || !cat || cat.value !== 'beans_raw' || el.dataset.userTouched === '1') return;
+  el.value = suggestSerialPrefix(document.getElementById('inv-name')?.value);
+  invPrefixDupCheck(el.dataset.editingId || '');
+}
+// Non-blocking duplicate warning: two beans sharing a prefix is legal
+// (they'd share one numbering sequence) but almost always a mistake.
+function invPrefixDupCheck(editingId) {
+  const el = document.getElementById('inv-prefix');
+  const warn = document.getElementById('inv-prefix-warn');
+  if (!el || !warn) return;
+  el.dataset.editingId = editingId || '';
+  const v = el.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const clash = v && (state.inventory || []).find(i =>
+    i.id !== editingId && (i.serialPrefix || '').toUpperCase() === v);
+  warn.classList.toggle('hidden', !clash);
+  warn.textContent = clash
+    ? `"${v}" is already used by ${clash.name} — batches from both beans would share one numbering sequence.`
+    : '';
 }
 
 // Single source of truth for changing inventory quantity. Updates
@@ -18349,13 +18408,13 @@ function openRoastBatchModal() {
   const form = `
     <div class="space-y-4">
       <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800">
-        ${icon('cash','w-4 h-4 inline')} A batch records three weights — green in, after roasting, and after sorting (defect beans excluded). Only the <strong>sorted</strong> weight lands on the shelf. A serial number (RB-…) is generated for the batch — write it on the bags for complaint traceability.
+        ${icon('cash','w-4 h-4 inline')} A batch records three weights — green in, after roasting, and after sorting (defect beans excluded). Only the <strong>sorted</strong> weight lands on the shelf. A serial number is generated for the batch — beans with a serial prefix get their own sequence (e.g. EG-0001), others use the shared RB- sequence. Write it on the bags for complaint traceability.
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <label class="label">Green bean (in)</label>
           <select id="rb-green" class="input">
-            ${greens.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')} on hand)</option>`).join('')}
+            ${greens.map(i => `<option value="${i.id}">${escapeHTML(i.name)}${i.serialPrefix ? ` [${escapeHTML(i.serialPrefix)}-]` : ''} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')} on hand)</option>`).join('')}
           </select>
         </div>
         <div>
@@ -18996,6 +19055,7 @@ function renderRoasterBatchesSection() {
     if (!q) return true;
     return rbSerial(b).toLowerCase().includes(q)
       || String(b.serialNo).includes(q)
+      || (b.serialPrefix && b.prefixNo && String(b.prefixNo).includes(q))
       || itemName(b.greenItemId).toLowerCase().includes(q)
       || itemName(b.roastedItemId).toLowerCase().includes(q)
       || (b.notes || '').toLowerCase().includes(q);
@@ -22246,7 +22306,38 @@ function invFilterStaff(q){
   });
 }
 
+// Error boundary. A throw anywhere in a render path used to leave whatever
+// was last painted on screen forever — during bootstrap that's the
+// "Loading…" splash, which is exactly how PR #206's attMinutes recursion
+// bricked the live app. Catch here and paint a recovery screen instead.
+// The screen is dependency-free (inline styles, no icon()/t()/state) so it
+// can't itself throw for the same reason the page did.
 function render() {
+  try { renderMain(); }
+  catch (err) {
+    console.error('Render failed:', err);
+    try { stopClockTicker(); } catch(_) { /* ticker may not exist yet */ }
+    const msg = String((err && (err.message || err)) || 'Unknown error').slice(0, 300)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const app = document.getElementById('app');
+    if (!app) return;
+    app.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fbf7f1;padding:24px">
+        <div style="max-width:28rem;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.06)">
+          <div style="font-size:40px;line-height:1">⚠️</div>
+          <h1 style="margin-top:12px;font-size:18px;font-weight:700;color:#1e293b">Something went wrong</h1>
+          <p style="margin-top:8px;font-size:13px;color:#64748b">The page hit an error while drawing. Your data is safe — this is a display problem, not a data problem. Reloading usually fixes it.</p>
+          <p style="margin-top:8px;font-size:11px;color:#94a3b8;font-family:monospace;word-break:break-word">${msg}</p>
+          <div style="margin-top:20px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <button onclick="location.reload()" style="background:#7a3b14;color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Reload the app</button>
+            <button onclick="location.hash='#/dashboard';location.reload()" style="background:#f1f5f9;color:#334155;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Go to dashboard</button>
+          </div>
+          <p style="margin-top:16px;font-size:11px;color:#94a3b8">If it keeps happening, send a screenshot of this page to the admin.</p>
+        </div>
+      </div>`;
+  }
+}
+function renderMain() {
   document.documentElement.dir = state.settings.lang==='ar' ? 'rtl' : 'ltr';
   document.documentElement.lang = state.settings.lang;
   const app = $('#app');
