@@ -4637,6 +4637,181 @@ CREATE TRIGGER assign_roast_serial_trigger
   FOR EACH ROW EXECUTE FUNCTION public.assign_roast_serial();
 
 -- =============================================================
+-- 85. BRANCH-SCOPED INVENTORY RLS — enforce branch separation DB-side
+--     Until now branch separation on the shift/count tables was app-layer
+--     only (.eq('branch', invBranch())): RLS checked ROLE, so any
+--     inventory-role login could read/write another branch's rows through
+--     the API. This block binds branch-locked roles to their assigned
+--     branch at the database:
+--       · admin + operations stay cross-branch (they're the only roles the
+--         app gives a branch picker — see invBranch() in index.html).
+--       · head_barista, barista and branch_device are bound to their
+--         employee_extras.branch.
+--       · SAFETY VALVE: a user with NO branch assigned is unrestricted, so
+--         running this migration can never lock staff out mid-shift —
+--         binding starts when a branch is set on the profile.
+--       · Rows with a NULL/blank branch (shared) stay visible to everyone.
+--     Emergency revert (no data change): redefine branch_ok to
+--       CREATE OR REPLACE FUNCTION public.branch_ok(text) RETURNS boolean
+--         LANGUAGE sql STABLE AS $x$ SELECT true $x$;
+--     Deliberately NOT scoped: inventory_items / inventory_movements /
+--     incoming transfers (the roaster's stock + cross-branch transfers are
+--     genuinely multi-branch), and the catalog tables (global by design).
+-- =============================================================
+CREATE OR REPLACE FUNCTION public.user_branch()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT NULLIF(TRIM(upper(x.branch)), '')
+  FROM public.employees e
+  JOIN public.employee_extras x ON x.employee_id = e.id
+  WHERE e.user_id = auth.uid()
+  LIMIT 1;
+$$;
+REVOKE ALL ON FUNCTION public.user_branch() FROM public;
+GRANT EXECUTE ON FUNCTION public.user_branch() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.branch_ok(p_branch text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.has_role(ARRAY['admin','operations'])
+      OR public.user_branch() IS NULL
+      OR NULLIF(TRIM(upper(p_branch)), '') IS NULL
+      OR NULLIF(TRIM(upper(p_branch)), '') = public.user_branch();
+$$;
+REVOKE ALL ON FUNCTION public.branch_ok(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.branch_ok(text) TO authenticated;
+
+-- Child tables (shift counts / drink sales / usage log) carry no branch
+-- column — they hang off inventory_shifts. SECURITY DEFINER so the lookup
+-- doesn't recurse through inventory_shifts' own RLS.
+CREATE OR REPLACE FUNCTION public.shift_branch_ok(p_shift uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    (SELECT public.branch_ok(s.branch) FROM public.inventory_shifts s WHERE s.id = p_shift),
+    true);  -- no shift row: FK enforcement handles inserts; don't hide orphans
+$$;
+REVOKE ALL ON FUNCTION public.shift_branch_ok(uuid) FROM public;
+GRANT EXECUTE ON FUNCTION public.shift_branch_ok(uuid) TO authenticated;
+
+-- Recreate the policies on the seven branch-bound tables with the branch
+-- condition ANDed in. Role arrays are unchanged from blocks 30/69/73/74.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public'
+             AND tablename IN ('inventory_shifts','inventory_shift_counts',
+                               'inventory_drink_sales','inventory_usage_log',
+                               'daily_counts','weekly_counts','expiry_checks')
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "ish_select_floor_ops_device"
+  ON public.inventory_shifts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.branch_ok(branch));
+CREATE POLICY "ish_insert_floor_ops_device"
+  ON public.inventory_shifts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.branch_ok(branch));
+CREATE POLICY "ish_update_floor_ops_device"
+  ON public.inventory_shifts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.branch_ok(branch))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.branch_ok(branch));
+CREATE POLICY "ish_delete_admin_or_head_barista"
+  ON public.inventory_shifts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']) AND public.branch_ok(branch));
+
+CREATE POLICY "isc_select_floor_ops_device"
+  ON public.inventory_shift_counts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "isc_insert_floor_ops_device"
+  ON public.inventory_shift_counts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "isc_update_floor_ops_device"
+  ON public.inventory_shift_counts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "isc_delete_admin_or_head_barista"
+  ON public.inventory_shift_counts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']) AND public.shift_branch_ok(shift_id));
+
+CREATE POLICY "ids_select_floor_ops_device" ON public.inventory_drink_sales FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "ids_insert_floor_ops_device" ON public.inventory_drink_sales FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "ids_update_floor_ops_device" ON public.inventory_drink_sales FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "ids_delete_floor_ops_device" ON public.inventory_drink_sales FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+
+CREATE POLICY "iul_select_floor_ops_device" ON public.inventory_usage_log FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "iul_insert_floor_ops_device" ON public.inventory_usage_log FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "iul_update_floor_ops_device" ON public.inventory_usage_log FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "iul_delete_floor_ops_device" ON public.inventory_usage_log FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+
+CREATE POLICY "dc_select_floor_or_ops"
+  ON public.daily_counts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']) AND public.branch_ok(branch));
+CREATE POLICY "dc_insert_floor"
+  ON public.daily_counts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch));
+CREATE POLICY "dc_update_floor"
+  ON public.daily_counts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch));
+CREATE POLICY "dc_delete_admin_or_head_barista"
+  ON public.daily_counts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']) AND public.branch_ok(branch));
+
+CREATE POLICY "wc_select_floor_or_ops"
+  ON public.weekly_counts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']) AND public.branch_ok(branch));
+CREATE POLICY "wc_insert_floor"
+  ON public.weekly_counts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch));
+CREATE POLICY "wc_update_floor"
+  ON public.weekly_counts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch));
+CREATE POLICY "wc_delete_admin_or_head_barista"
+  ON public.weekly_counts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']) AND public.branch_ok(branch));
+
+CREATE POLICY "ec_select_floor_or_ops"
+  ON public.expiry_checks FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']) AND public.branch_ok(branch));
+CREATE POLICY "ec_insert_floor"
+  ON public.expiry_checks FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch));
+CREATE POLICY "ec_update_floor"
+  ON public.expiry_checks FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']) AND public.branch_ok(branch));
+CREATE POLICY "ec_delete_admin_or_head_barista"
+  ON public.expiry_checks FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista']) AND public.branch_ok(branch));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
