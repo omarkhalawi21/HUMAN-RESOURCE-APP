@@ -19078,7 +19078,64 @@ function renderRoasterBatchesSection() {
       </div>`;
   }
 
-  return `${searchBox}
+  // Loss by origin: weighted rollup of every loaded batch per green bean,
+  // worst sorting loss first — answers "which origin costs us the most in
+  // sorting waste". Weighted by kg (Σ over batches), NOT an average of the
+  // per-batch percentages, so one big batch counts more than three tiny
+  // ones. Hidden while searching (it's origin-level, a search is
+  // batch-level) and pointless with a single batch.
+  let originCard = '';
+  if (!q && (state.roastBatches || []).length > 1) {
+    const byOrigin = {};
+    (state.roastBatches || []).forEach(b => {
+      const o = byOrigin[b.greenItemId] || (byOrigin[b.greenItemId] = { greenItemId: b.greenItemId, n: 0, green: 0, roasted: 0, sorted: 0 });
+      o.n++; o.green += b.greenInKg; o.roasted += b.roastedKg; o.sorted += b.sortedKg;
+    });
+    const origins = Object.values(byOrigin)
+      .map(o => ({ ...o,
+        roastLoss: pct(o.green - o.roasted, o.green),
+        sortLoss:  pct(o.roasted - o.sorted, o.roasted),
+        finalPct:  pct(o.sorted, o.green),
+      }))
+      .sort((a, b) => b.sortLoss - a.sortLoss);
+    const prefixOf = id => (state.inventory || []).find(i => i.id === id)?.serialPrefix || '';
+    originCard = `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
+        <div class="px-4 pt-4 pb-2">
+          <h3 class="font-display font-semibold text-slate-900">Loss by origin</h3>
+          <p class="text-xs text-slate-500 mt-0.5">Weighted across the ${(state.roastBatches||[]).length} loaded batches — worst sorting loss first. Sorting loss above 8% is flagged.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-slate-50/60 border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+                <th class="text-start px-4 py-2.5 font-semibold">Green bean</th>
+                <th class="text-end px-4 py-2.5 font-semibold">Batches</th>
+                <th class="text-end px-4 py-2.5 font-semibold">Green in</th>
+                <th class="text-end px-4 py-2.5 font-semibold">To shelf</th>
+                <th class="text-end px-4 py-2.5 font-semibold">Roast loss</th>
+                <th class="text-end px-4 py-2.5 font-semibold">Sorting loss</th>
+                <th class="text-end px-4 py-2.5 font-semibold">Final yield</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              ${origins.map(o => `
+                <tr class="hover:bg-slate-50">
+                  <td class="px-4 py-2.5 font-medium text-slate-900">${escapeHTML(itemName(o.greenItemId))}${prefixOf(o.greenItemId) ? ` <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">${escapeHTML(prefixOf(o.greenItemId))}-</span>` : ''}</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums text-slate-600">${o.n}</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums">${fmt(o.green)} kg</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums font-semibold">${fmt(o.sorted)} kg</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums text-slate-600">${o.roastLoss.toFixed(1)}%</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums ${o.sortLoss > 8 ? 'text-rose-600 font-semibold' : 'text-slate-600'}">${o.sortLoss.toFixed(1)}%</td>
+                  <td class="px-4 py-2.5 text-end tabular-nums ${roastYieldTone(o.finalPct, true)}">${o.finalPct.toFixed(1)}%</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  return `${searchBox}${originCard}
     <div class="bg-white rounded-2xl shadow-card overflow-hidden">
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
