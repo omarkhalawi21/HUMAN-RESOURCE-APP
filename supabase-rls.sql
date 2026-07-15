@@ -4577,6 +4577,66 @@ CREATE POLICY "roast_batches_delete_roles"
   USING (public.has_role(ARRAY['admin','head_barista','roaster']));
 
 -- =============================================================
+-- 84. BEAN-CODED BATCH SERIALS — per-origin prefixes (EG-0001)
+--     Each green bean can carry a short serial prefix (e.g. Ethiopia
+--     Guji = EG, Panama = PN). Batches roasted from that bean are then
+--     numbered per prefix (EG-0001, EG-0002, …) instead of the global
+--     RB- sequence, so the bag label immediately identifies the origin.
+--     The global serial_no identity column stays as the fallback for
+--     beans without a prefix and for all pre-existing batches.
+--     Numbering is assigned DB-side by a BEFORE INSERT trigger reading
+--     an atomic per-prefix counter table, so two simultaneous inserts
+--     can never mint the same number. The counter table has RLS enabled
+--     with NO policies — only the SECURITY DEFINER trigger touches it.
+-- =============================================================
+ALTER TABLE public.inventory_items ADD COLUMN IF NOT EXISTS serial_prefix text;
+ALTER TABLE public.roast_batches   ADD COLUMN IF NOT EXISTS serial_prefix text;
+ALTER TABLE public.roast_batches   ADD COLUMN IF NOT EXISTS prefix_no bigint;
+
+CREATE TABLE IF NOT EXISTS public.roast_serial_counters (
+  prefix  text primary key,
+  last_no bigint not null default 0
+);
+ALTER TABLE public.roast_serial_counters ENABLE ROW LEVEL SECURITY;
+-- Deliberately no policies: clients never read or write counters directly.
+
+CREATE UNIQUE INDEX IF NOT EXISTS roast_batches_prefix_serial_idx
+  ON public.roast_batches(serial_prefix, prefix_no)
+  WHERE serial_prefix IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.assign_roast_serial()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Normalize whatever the client sent; blank means "no prefix".
+  NEW.serial_prefix := nullif(upper(btrim(coalesce(NEW.serial_prefix, ''))), '');
+  -- Default to the green bean's configured prefix (stamped at roast
+  -- time — renaming the bean's prefix later never rewrites history).
+  IF NEW.serial_prefix IS NULL THEN
+    SELECT nullif(upper(btrim(coalesce(i.serial_prefix, ''))), '')
+      INTO NEW.serial_prefix
+      FROM public.inventory_items i
+     WHERE i.id = NEW.green_item_id;
+  END IF;
+  NEW.serial_prefix := left(NEW.serial_prefix, 6);
+  IF NEW.serial_prefix IS NOT NULL AND NEW.prefix_no IS NULL THEN
+    INSERT INTO public.roast_serial_counters AS c (prefix, last_no)
+    VALUES (NEW.serial_prefix, 1)
+    ON CONFLICT (prefix) DO UPDATE SET last_no = c.last_no + 1
+    RETURNING last_no INTO NEW.prefix_no;
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS assign_roast_serial_trigger ON public.roast_batches;
+CREATE TRIGGER assign_roast_serial_trigger
+  BEFORE INSERT ON public.roast_batches
+  FOR EACH ROW EXECUTE FUNCTION public.assign_roast_serial();
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
