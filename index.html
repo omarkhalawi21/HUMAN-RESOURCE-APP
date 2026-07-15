@@ -924,7 +924,7 @@ function logoURL() {
 ============================================================ */
 const LETTERHEAD_DEFAULTS = {
   legalName:    'Hassad Al-Khobar Trading Company',
-  regNumber:    '7037495061',
+  regNumber:    '7021976688',
   addressLine1: 'Kingdom of Saudi Arabia',
   addressLine2: 'Eastern Province',
   addressLine3: 'Khobar 33425',
@@ -1055,7 +1055,7 @@ function mapCompanyFromDb(r) {
     // Letterhead — fall back to the Hassad defaults so existing rows
     // without these columns still print correctly.
     legalName:    r.legal_name           || 'Hassad Al-Khobar Trading Company',
-    regNumber:    r.registration_number  || '7037495061',
+    regNumber:    r.registration_number  || '7021976688',
     addressLine1: r.address_line1        || 'Kingdom of Saudi Arabia',
     addressLine2: r.address_line2        || 'Eastern Province',
     addressLine3: r.address_line3        || 'Khobar 33425',
@@ -8025,7 +8025,7 @@ function renderSettings() {
             <p class="text-xs text-slate-500 mb-4">Shown at the top of every printed HR document (warning letter, payslip, advance slip, attendance evidence, payroll report).</p>
             <div class="space-y-3">
               <div><label class="label">Legal entity name</label><input id="set-legal" class="input" value="${escapeHTML(s.legalName||'')}" placeholder="e.g. Hassad Al-Khobar Trading Company"></div>
-              <div><label class="label">Commercial registration number</label><input id="set-reg" class="input" value="${escapeHTML(s.regNumber||'')}" placeholder="7037495061"></div>
+              <div><label class="label">Commercial registration number</label><input id="set-reg" class="input" value="${escapeHTML(s.regNumber||'')}" placeholder="7021976688"></div>
               <div><label class="label">Address line 1</label><input id="set-addr1" class="input" value="${escapeHTML(s.addressLine1||'')}" placeholder="Kingdom of Saudi Arabia"></div>
               <div class="grid grid-cols-2 gap-3">
                 <div><label class="label">Address line 2</label><input id="set-addr2" class="input" value="${escapeHTML(s.addressLine2||'')}" placeholder="Eastern Province"></div>
