@@ -22946,6 +22946,7 @@ function printB2bInvoice(id){
         </div>
       </div>
       <div class="co">
+        <img src="${logoURL()}" alt="" style="width:64px;height:64px;object-fit:contain;margin:0 0 6px auto;display:block;" onerror="this.style.display='none'">
         <div style="font-weight:700;font-size:14px;">${escapeHTML(s.companyName || 'Hassad Coffee Roasters')}</div>
         ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
         <div style="margin-top:4px;"><span class="lbl">Vat Number رقم التسجيل الضريبي</span><br><b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
