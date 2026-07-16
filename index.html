@@ -22684,8 +22684,10 @@ function zatcaQrDataUrl(inv){
   try {
     const enc = new TextEncoder();
     const tlv = (tag, str) => { const b = enc.encode(String(str)); return [tag, b.length, ...b]; };
+    // Seller name = the LEGAL entity (matches the printed header) — ZATCA
+    // expects the registered name, not the brand.
     const bytes = [
-      ...tlv(1, state.settings.companyName || 'Hassad Coffee Roasters'),
+      ...tlv(1, state.settings.legalName || LETTERHEAD_DEFAULTS.legalName),
       ...tlv(2, state.settings.vatNumber || LETTERHEAD_DEFAULTS.vatNumber),
       ...tlv(3, new Date(inv.createdAt || (inv.invoiceDate + 'T12:00:00Z')).toISOString()),
       ...tlv(4, Number(inv.total).toFixed(2)),
@@ -22974,7 +22976,7 @@ function printB2bInvoice(id){
       </div>
       <div class="co">
         <img src="${logoURL()}" alt="" style="width:64px;height:64px;object-fit:contain;margin:0 0 6px auto;display:block;" onerror="this.style.display='none'">
-        <div style="font-weight:700;font-size:14px;">${escapeHTML(s.companyName || 'Hassad Coffee Roasters')}</div>
+        <div style="font-weight:700;font-size:14px;">${escapeHTML(s.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
         ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
         <div style="margin-top:4px;"><span class="lbl">Vat Number رقم التسجيل الضريبي</span><br><b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
       </div>
