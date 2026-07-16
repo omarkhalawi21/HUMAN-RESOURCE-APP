@@ -22946,45 +22946,46 @@ function printB2bInvoice(id){
     </tr>` : '');
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(b2bNo(v))}</title>
     <style>
-      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:28px;font-size:13px;}
-      .top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px;}
-      h1{font-size:22px;margin:0;}.ar{color:#64748b;}
-      .co{text-align:right;font-size:12px;line-height:1.5;}
-      .meta,.bill{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;}
-      .meta{display:flex;gap:24px;flex-wrap:wrap;}
-      .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;}
+      /* Everything prints in TRUE BLACK — the first live print came out with
+         washed-out grey labels (owner photo, 2026-07-16). Only backgrounds
+         and hairlines stay light. */
+      @page { size: A4; margin: 14mm; }
+      *{color:#000;}
+      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:28px;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      .top{display:flex;justify-content:space-between;gap:24px;align-items:stretch;margin-bottom:14px;}
+      h1{font-size:22px;margin:0 0 12px;}
+      .co{text-align:right;font-size:12px;line-height:1.55;}
+      .field{margin-bottom:8px;}
+      .bill{border:1px solid #999;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;}
+      .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;}
       table{width:100%;border-collapse:collapse;margin-top:4px;}
-      th,td{padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:left;}
-      th{font-size:10px;text-transform:uppercase;color:#94a3b8;background:#f8fafc;}
+      th,td{padding:7px 8px;border-bottom:1px solid #bbb;font-size:12px;text-align:left;}
+      th{font-size:10px;text-transform:uppercase;background:#eee;border-bottom:1.5px solid #000;}
       .r{text-align:right;}.c{text-align:center;}
-      .totals{margin-top:12px;margin-left:auto;width:320px;font-size:13px;}
-      .totals div{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;}
-      .totals .grand{font-weight:700;font-size:15px;border-top:2px solid #1e293b;border-bottom:none;padding-top:8px;}
-      .qr{margin-top:20px;display:flex;align-items:center;gap:12px;}
+      .bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-top:16px;}
+      .qr{display:flex;align-items:center;gap:12px;}
       .qr img{width:110px;height:110px;}
-      .qr .cap{font-size:10px;color:#94a3b8;max-width:220px;}
-      .notes{margin-top:14px;font-size:12px;color:#475569;}
+      .qr .cap{font-size:10px;max-width:200px;}
+      .totals{width:340px;font-size:13px;}
+      .totals div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #ccc;}
+      .totals .grand{font-weight:700;font-size:15px;border-top:2px solid #000;border-bottom:none;padding-top:8px;}
+      .notes{margin-top:14px;font-size:12px;}
       @media print { body{padding:0;} }
     </style></head><body>
     <div class="top">
       <div>
-        <h1>Tax Invoice <span class="ar">فاتورة ضريبية</span></h1>
-        <div style="margin-top:10px;font-size:12px;">
-          <div class="lbl">Invoice number رقم الفاتورة</div>
-          <div style="font-weight:700;font-size:15px;">${escapeHTML(b2bNo(v))}</div>
-        </div>
+        <h1>Tax Invoice فاتورة ضريبية</h1>
+        <div class="field"><div class="lbl">Invoice number رقم الفاتورة</div><div style="font-weight:700;font-size:15px;">${escapeHTML(b2bNo(v))}</div></div>
+        <div class="field"><div class="lbl">Date التاريخ</div><div>${escapeHTML(fmtDate(v.invoiceDate))}</div></div>
+        <div class="field"><div class="lbl">Due date تاريخ الاستحقاق</div><div>${escapeHTML(v.dueTerms)}</div></div>
       </div>
       <div class="co">
-        <img src="${logoURL()}" alt="" style="width:64px;height:64px;object-fit:contain;margin:0 0 6px auto;display:block;" onerror="this.style.display='none'">
+        <img src="${logoURL()}" alt="" style="width:60px;height:60px;object-fit:contain;margin:0 0 6px auto;display:block;" onerror="this.style.display='none'">
         <div style="font-weight:700;font-size:14px;">${escapeHTML(s.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
         ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
-        <div style="margin-top:4px;"><span class="lbl">C.R. Number السجل التجاري</span><br><b>${escapeHTML(s.regNumber || LETTERHEAD_DEFAULTS.regNumber)}</b></div>
-        <div style="margin-top:4px;"><span class="lbl">Vat Number رقم التسجيل الضريبي</span><br><b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
+        <div style="margin-top:4px;"><span class="lbl">C.R. Number السجل التجاري</span> <b>${escapeHTML(s.regNumber || LETTERHEAD_DEFAULTS.regNumber)}</b></div>
+        <div><span class="lbl">Vat Number رقم التسجيل الضريبي</span> <b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
       </div>
-    </div>
-    <div class="meta">
-      <div><div class="lbl">Date التاريخ</div><div>${escapeHTML(fmtDate(v.invoiceDate))}</div></div>
-      <div><div class="lbl">Due date تاريخ الاستحقاق</div><div>${escapeHTML(v.dueTerms)}</div></div>
     </div>
     <div class="bill">
       <div class="lbl">Bill to العميل</div>
@@ -22999,13 +23000,15 @@ function printB2bInvoice(id){
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="totals">
-      <div><span>Sub Total المجموع الفرعي</span><b>SAR ${b2bMoney(c.subtotal)}</b></div>
-      <div><span>Total Vat إجمالي ضريبة القيمة المضافة</span><b>SAR ${b2bMoney(c.vatTotal)}</b></div>
-      <div class="grand"><span>Total Including Vat الإجمالي شامل ضريبة القيمة المضافة</span><span>SAR ${b2bMoney(c.total)}</span></div>
+    <div class="bottom">
+      ${qrUrl ? `<div class="qr"><img src="${qrUrl}" alt="ZATCA QR"><div class="cap">This QR code is encoded as per ZATCA e-invoicing requirements</div></div>` : '<div></div>'}
+      <div class="totals">
+        <div><span>Sub Total المجموع الفرعي</span><b>SAR ${b2bMoney(c.subtotal)}</b></div>
+        <div><span>Total Vat إجمالي ضريبة القيمة المضافة</span><b>SAR ${b2bMoney(c.vatTotal)}</b></div>
+        <div class="grand"><span>Total Including Vat الإجمالي شامل ضريبة القيمة المضافة</span><span>SAR ${b2bMoney(c.total)}</span></div>
+      </div>
     </div>
     ${v.notes ? `<div class="notes"><b>Notes:</b> ${escapeHTML(v.notes)}</div>` : ''}
-    ${qrUrl ? `<div class="qr"><img src="${qrUrl}" alt="ZATCA QR"><div class="cap">This QR code is encoded as per ZATCA e-invoicing requirements</div></div>` : ''}
     </body></html>`;
   openPrintWindow(html);
 }
