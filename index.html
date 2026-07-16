@@ -22988,14 +22988,14 @@ function printB2bInvoice(id){
         <div style="font-weight:700;font-size:14px;">${escapeHTML(s.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
         ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
         <div style="margin-top:4px;"><span class="lbl">C.R.</span> <b>${escapeHTML(s.regNumber || LETTERHEAD_DEFAULTS.regNumber)}</b></div>
-        <div><span class="lbl">VAT</span> <b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
+        <div><span class="lbl">VAT:</span> <b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
       </div>
     </div>
     <div class="bill">
       <div class="lbl">Bill to العميل</div>
       <div style="font-weight:700;">${escapeHTML(v.customerName)}</div>
       ${v.customerAddress ? `<div>${escapeHTML(v.customerAddress)}</div>` : ''}
-      ${v.customerVat ? `<div><span class="lbl">VAT</span> ${escapeHTML(v.customerVat)}</div>` : ''}
+      ${v.customerVat ? `<div><span class="lbl">VAT:</span> ${escapeHTML(v.customerVat)}</div>` : ''}
     </div>
     <table>
       <thead><tr>
