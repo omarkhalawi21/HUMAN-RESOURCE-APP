@@ -22652,6 +22652,21 @@ function b2bCalc(items){
     total:    b2bRound(lines.reduce((s, l) => s + l.amount, 0)),
   };
 }
+// Registered street address as printed on the owner's sample invoice.
+// Used on the invoice whenever the Settings letterhead address is still the
+// generic default — customizing the letterhead in Settings overrides this.
+const B2B_SELLER_ADDRESS = ['8323 King Khalid Rd', 'Alkhobar Al Shamalia', 'Kingdom of Saudi Arabia'];
+function b2bSellerAddress(){
+  const s = state.settings || {};
+  const isDefault =
+       (s.addressLine1 || LETTERHEAD_DEFAULTS.addressLine1) === LETTERHEAD_DEFAULTS.addressLine1
+    && (s.addressLine2 || LETTERHEAD_DEFAULTS.addressLine2) === LETTERHEAD_DEFAULTS.addressLine2
+    && (s.addressLine3 || LETTERHEAD_DEFAULTS.addressLine3) === LETTERHEAD_DEFAULTS.addressLine3;
+  // Settings letterhead order is country → province → city; the invoice
+  // prints street-first like the sample, so reverse when customized.
+  return isDefault ? B2B_SELLER_ADDRESS
+                   : [s.addressLine3, s.addressLine2, s.addressLine1].filter(Boolean);
+}
 // ZATCA phase-1 QR: Base64 of TLV(seller name, VAT no, timestamp, total
 // incl VAT, VAT amount), rendered to a data-URL by the qrcode-generator
 // CDN lib. Returns '' if the lib failed to load — print degrades to no QR.
@@ -22932,9 +22947,7 @@ function printB2bInvoice(id){
       </div>
       <div class="co">
         <div style="font-weight:700;font-size:14px;">${escapeHTML(s.companyName || 'Hassad Coffee Roasters')}</div>
-        <div>${escapeHTML(s.addressLine3 || '')}</div>
-        <div>${escapeHTML(s.addressLine2 || '')}</div>
-        <div>${escapeHTML(s.addressLine1 || '')}</div>
+        ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
         <div style="margin-top:4px;"><span class="lbl">Vat Number رقم التسجيل الضريبي</span><br><b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
       </div>
     </div>
