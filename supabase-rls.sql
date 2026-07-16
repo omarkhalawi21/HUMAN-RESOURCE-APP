@@ -4869,6 +4869,16 @@ CREATE POLICY "b2b_delete_admin"
   USING (public.is_admin());
 
 -- =============================================================
+-- 87. B2B INVOICE SHIPPING — optional shipping charge per invoice.
+--     Entered ex-VAT like the line items (15% VAT added on top),
+--     printed as its own "Shipping charges" line, included in the
+--     stored subtotal/vat/total. A dedicated column (not a jsonb item
+--     line) so future auto-calculation rules (per-kg, per-city, free
+--     over threshold) have something structured to write to.
+-- =============================================================
+ALTER TABLE public.b2b_invoices ADD COLUMN IF NOT EXISTS shipping numeric(14,2) NOT NULL DEFAULT 0;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
