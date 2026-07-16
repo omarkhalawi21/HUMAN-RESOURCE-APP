@@ -28,6 +28,10 @@
      app degrades gracefully if it fails: initInvCharts() guards on
      `typeof Chart`. -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<!-- QR encoder for the ZATCA code on B2B tax invoices. Same jsdelivr host
+     as Chart.js — already in the CSP script-src allowlist. The feature
+     guards on `typeof qrcode` so a CDN failure degrades to no-QR, not a crash. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js" crossorigin="anonymous"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&display=swap" rel="stylesheet">
@@ -766,6 +770,7 @@ function emptyState() {
     alertExpiryChecks: [],  // bounded: recent expiry checks, all branches (cross-branch alerts card)
     incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
     roastBatches: [],       // capped recent: [{ id, serialNo, serialPrefix, prefixNo, greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg, branch, roastDate, notes, recordedBy, createdAt }] — three-weight roast log (green → roasted → sorted); serial = bean prefix sequence (EG-0001) or global RB-
+    b2bInvoices: [],        // capped recent: [{ id, invoiceNo, customerName, customerVat, customerAddress, invoiceDate, dueTerms, items:[{description,qty,unit,price}], subtotal, vatTotal, total, notes, createdBy, createdAt }] — ZATCA-style B2B tax invoices, prices ex-VAT
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
@@ -928,6 +933,7 @@ const LETTERHEAD_DEFAULTS = {
   addressLine1: 'Kingdom of Saudi Arabia',
   addressLine2: 'Eastern Province',
   addressLine3: 'Khobar 33425',
+  vatNumber:    '310901149400003',
 };
 // Renders the centered logo + company address block used at the top of
 // every official document (warning letter, payslip, advance slip, etc.).
@@ -1059,6 +1065,7 @@ function mapCompanyFromDb(r) {
     addressLine1: r.address_line1        || 'Kingdom of Saudi Arabia',
     addressLine2: r.address_line2        || 'Eastern Province',
     addressLine3: r.address_line3        || 'Khobar 33425',
+    vatNumber:    r.vat_number           || '310901149400003',
   };
 }
 // System roles drive permissions, dashboards, and routing. Distinct from
@@ -1709,6 +1716,46 @@ function roastBatchToDb(b) {
     recorded_by: b.recordedBy || null,
   };
 }
+function mapB2bInvoiceFromDb(r) {
+  return {
+    id: r.id,
+    invoiceNo: Number(r.invoice_no) || 0,
+    customerName: r.customer_name || '',
+    customerVat: r.customer_vat || '',
+    customerAddress: r.customer_address || '',
+    invoiceDate: r.invoice_date,
+    dueTerms: r.due_terms || 'Immediate',
+    items: Array.isArray(r.items) ? r.items.map(it => ({
+      description: it.description || '',
+      qty: Number(it.qty) || 0,
+      unit: it.unit || 'Pc',
+      price: Number(it.price) || 0,
+    })) : [],
+    subtotal: Number(r.subtotal) || 0,
+    vatTotal: Number(r.vat_total) || 0,
+    total: Number(r.total) || 0,
+    notes: r.notes || '',
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+  };
+}
+function b2bInvoiceToDb(v) {
+  // invoice_no is intentionally omitted — the DB identity assigns it.
+  return {
+    customer_name: v.customerName,
+    customer_vat: v.customerVat || null,
+    customer_address: v.customerAddress || null,
+    invoice_date: v.invoiceDate || null,
+    due_terms: v.dueTerms || 'Immediate',
+    items: v.items || [],
+    subtotal: Number(v.subtotal) || 0,
+    vat_total: Number(v.vatTotal) || 0,
+    total: Number(v.total) || 0,
+    notes: v.notes || null,
+    created_by: v.createdBy || null,
+    updated_at: new Date().toISOString(),
+  };
+}
 // Display form of a batch serial. Beans with a serial prefix get a
 // per-origin sequence (EG-0001); everything else falls back to the
 // global RB-00042 sequence. Fixed width keeps it legible on a bag
@@ -1913,7 +1960,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2034,6 +2081,9 @@ async function loadAll() {
       // of roasting; older batches stay queryable in the DB for complaint
       // lookups beyond the cap if ever needed.
       sb.from('roast_batches').select('*').order('roast_date', { ascending: false }).order('serial_no', { ascending: false }).limit(500),
+      // B2B tax invoices: low-volume but grows forever — same capped-bulk
+      // pattern as roast_batches. Older invoices stay queryable in the DB.
+      sb.from('b2b_invoices').select('*').order('invoice_no', { ascending: false }).limit(500),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2049,6 +2099,7 @@ async function loadAll() {
         addressLine1: c.addressLine1,
         addressLine2: c.addressLine2,
         addressLine3: c.addressLine3,
+        vatNumber:    c.vatNumber,
       };
       state.companyStamp = c.companyStamp || '';
       // Keep the per-device login-screen cache in sync with the
@@ -2095,6 +2146,7 @@ async function loadAll() {
     state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
     state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
     state.roastBatches       = (roastBatchesR?.data || []).map(mapRoastBatchFromDb);
+    state.b2bInvoices        = (b2bInvoicesR?.data || []).map(mapB2bInvoiceFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -2696,7 +2748,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -3011,6 +3063,7 @@ function renderShell(routeContent) {
     { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company' },
     { key:'resources',    icon:'shield',    label:'Resources',       show:hasRole('admin','barista','head_barista','roaster'),  group:'company' },
     { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
+    { key:'b2b_invoices', icon:'receipt',   label:'B2B Invoices',    show:hasRole('admin','accounting','operations'), group:'company' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'inventory_hub',icon:'report',    label:'Inventory hub',   show:hasRole('admin','operations','head_barista','barista'), group:'company', parent:'inventory' },
@@ -8038,6 +8091,7 @@ function renderSettings() {
             <div class="space-y-3">
               <div><label class="label">Legal entity name</label><input id="set-legal" class="input" value="${escapeHTML(s.legalName||'')}" placeholder="e.g. Hassad Al-Khobar Trading Company"></div>
               <div><label class="label">Commercial registration number</label><input id="set-reg" class="input" value="${escapeHTML(s.regNumber||'')}" placeholder="7021976688"></div>
+              <div><label class="label">VAT registration number</label><input id="set-vat" class="input" value="${escapeHTML(s.vatNumber||'')}" placeholder="310901149400003"><div class="text-[10px] text-slate-500 mt-1">Shown on B2B tax invoices and encoded in their ZATCA QR code.</div></div>
               <div><label class="label">Address line 1</label><input id="set-addr1" class="input" value="${escapeHTML(s.addressLine1||'')}" placeholder="Kingdom of Saudi Arabia"></div>
               <div class="grid grid-cols-2 gap-3">
                 <div><label class="label">Address line 2</label><input id="set-addr2" class="input" value="${escapeHTML(s.addressLine2||'')}" placeholder="Eastern Province"></div>
@@ -9339,6 +9393,7 @@ async function saveSettings() {
     language: $('#set-lang').value,
     legal_name:          $('#set-legal')?.value.trim() || null,
     registration_number: $('#set-reg')?.value.trim()   || null,
+    vat_number:          $('#set-vat')?.value.trim()   || null,
     address_line1:       $('#set-addr1')?.value.trim() || null,
     address_line2:       $('#set-addr2')?.value.trim() || null,
     address_line3:       $('#set-addr3')?.value.trim() || null,
@@ -9352,6 +9407,7 @@ async function saveSettings() {
   state.settings.requireLocation = updates.require_location;
   state.settings.legalName    = updates.legal_name          || LETTERHEAD_DEFAULTS.legalName;
   state.settings.regNumber    = updates.registration_number || LETTERHEAD_DEFAULTS.regNumber;
+  state.settings.vatNumber    = updates.vat_number          || LETTERHEAD_DEFAULTS.vatNumber;
   state.settings.addressLine1 = updates.address_line1       || LETTERHEAD_DEFAULTS.addressLine1;
   state.settings.addressLine2 = updates.address_line2       || LETTERHEAD_DEFAULTS.addressLine2;
   state.settings.addressLine3 = updates.address_line3       || LETTERHEAD_DEFAULTS.addressLine3;
@@ -22561,6 +22617,356 @@ function invFilterStaff(q){
   });
 }
 
+/* -------------------- B2B TAX INVOICES -------------------- */
+// ZATCA-style bilingual tax invoices for wholesale customers, modelled on
+// the owner's sample (INV-000115). Unit prices are entered EXCLUDING VAT;
+// the app adds 15%. Line math rounds each line to 2dp, then sums — the
+// stored subtotal/vat/total never drift from what was printed.
+const B2B_UNITS = ['Kg', 'Pc', 'Bag', 'Box'];
+const B2B_VAT_RATE = 0.15;
+let b2bQ = '';
+let _b2bQTimer = null;
+function setB2bQ(v){
+  b2bQ = v;
+  clearTimeout(_b2bQTimer);
+  _b2bQTimer = setTimeout(() => {
+    render();
+    const inp = document.getElementById('b2bq');
+    if (inp) { inp.focus(); const val = inp.value; inp.setSelectionRange(val.length, val.length); }
+  }, 200);
+}
+function b2bNo(v){ return 'INV-' + String(v?.invoiceNo || 0).padStart(6, '0'); }
+function b2bRound(n){ return Math.round((Number(n) || 0) * 100) / 100; }
+function b2bMoney(n){ return Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// Line + invoice math from raw {qty, price} items (prices ex-VAT).
+function b2bCalc(items){
+  const lines = (items || []).map(it => {
+    const taxable = b2bRound((Number(it.qty) || 0) * (Number(it.price) || 0));
+    const vat = b2bRound(taxable * B2B_VAT_RATE);
+    return { ...it, taxable, vat, amount: b2bRound(taxable + vat) };
+  });
+  return {
+    lines,
+    subtotal: b2bRound(lines.reduce((s, l) => s + l.taxable, 0)),
+    vatTotal: b2bRound(lines.reduce((s, l) => s + l.vat, 0)),
+    total:    b2bRound(lines.reduce((s, l) => s + l.amount, 0)),
+  };
+}
+// ZATCA phase-1 QR: Base64 of TLV(seller name, VAT no, timestamp, total
+// incl VAT, VAT amount), rendered to a data-URL by the qrcode-generator
+// CDN lib. Returns '' if the lib failed to load — print degrades to no QR.
+function zatcaQrDataUrl(inv){
+  if (typeof qrcode === 'undefined') return '';
+  try {
+    const enc = new TextEncoder();
+    const tlv = (tag, str) => { const b = enc.encode(String(str)); return [tag, b.length, ...b]; };
+    const bytes = [
+      ...tlv(1, state.settings.companyName || 'Hassad Coffee Roasters'),
+      ...tlv(2, state.settings.vatNumber || LETTERHEAD_DEFAULTS.vatNumber),
+      ...tlv(3, new Date(inv.createdAt || (inv.invoiceDate + 'T12:00:00Z')).toISOString()),
+      ...tlv(4, Number(inv.total).toFixed(2)),
+      ...tlv(5, Number(inv.vatTotal).toFixed(2)),
+    ];
+    const b64 = btoa(String.fromCharCode.apply(null, bytes));
+    const qr = qrcode(0, 'M');
+    qr.addData(b64);
+    qr.make();
+    return qr.createDataURL(4, 8);
+  } catch (e) { console.error('ZATCA QR failed:', e); return ''; }
+}
+function renderB2bInvoices(){
+  const q = (b2bQ || '').trim().toLowerCase();
+  const invoices = (state.b2bInvoices || []).filter(v => {
+    if (!q) return true;
+    return b2bNo(v).toLowerCase().includes(q)
+      || String(v.invoiceNo).includes(q)
+      || (v.customerName || '').toLowerCase().includes(q)
+      || (v.customerVat || '').toLowerCase().includes(q)
+      || (v.notes || '').toLowerCase().includes(q);
+  });
+  const rows = invoices.map(v => `
+    <tr class="hover:bg-slate-50">
+      <td class="px-4 py-2.5 font-semibold text-brand-700 whitespace-nowrap">${escapeHTML(b2bNo(v))}</td>
+      <td class="px-4 py-2.5 text-slate-600 whitespace-nowrap">${escapeHTML(fmtDate(v.invoiceDate))}</td>
+      <td class="px-4 py-2.5 text-slate-800">${escapeHTML(v.customerName)}${v.customerVat ? `<div class="text-[11px] text-slate-400">VAT ${escapeHTML(v.customerVat)}</div>` : ''}</td>
+      <td class="px-4 py-2.5 text-end tabular-nums text-slate-600">${b2bMoney(v.vatTotal)}</td>
+      <td class="px-4 py-2.5 text-end tabular-nums font-semibold">${b2bMoney(v.total)}</td>
+      <td class="px-4 py-2.5 whitespace-nowrap text-end">
+        <button onclick="printB2bInvoice('${v.id}')" title="Print" class="text-slate-500 hover:text-brand-700 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
+        <button onclick="openB2bInvoiceModal('${v.id}')" title="Edit" class="text-slate-500 hover:text-brand-700 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+        ${isAdmin() ? `<button onclick="deleteB2bInvoice('${v.id}')" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>` : ''}
+      </td>
+    </tr>`).join('');
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5">
+      <div class="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('receipt','w-3.5 h-3.5')} Wholesale</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">B2B Invoices</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Bilingual ZATCA tax invoices for wholesale customers. Prices are entered excluding VAT — 15% is added automatically.</p>
+        </div>
+        <button onclick="openB2bInvoiceModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New invoice</button>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-4">
+      <input id="b2bq" type="text" class="input" placeholder="Search by number (INV-000001), customer, or VAT number..." value="${escapeHTML(b2bQ)}" oninput="setB2bQ(this.value)">
+    </div>
+    ${invoices.length === 0 ? `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('receipt','w-8 h-8')}</div>
+        <h3 class="font-display text-lg font-semibold text-slate-900">${q ? 'No invoices match that search' : 'No B2B invoices yet'}</h3>
+        <p class="text-sm text-slate-500 mt-1">${q ? 'Try the invoice number or the customer name.' : 'Create the first invoice — it gets a sequential number (INV-000001) and a ZATCA QR code.'}</p>
+        ${q ? '' : `<button onclick="openB2bInvoiceModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} New invoice</button>`}
+      </div>` : `
+      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-slate-50/60 border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+                <th class="text-start px-4 py-2.5 font-semibold">Invoice</th>
+                <th class="text-start px-4 py-2.5 font-semibold">Date</th>
+                <th class="text-start px-4 py-2.5 font-semibold">Customer</th>
+                <th class="text-end px-4 py-2.5 font-semibold">VAT</th>
+                <th class="text-end px-4 py-2.5 font-semibold">Total (SAR)</th>
+                <th class="px-4 py-2.5"></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">${rows}</tbody>
+          </table>
+        </div>
+      </div>`}`;
+}
+// One item row in the editor. Grid (not flex) so the width-100% .input
+// can't collapse its siblings — the documented .input-in-flex gotcha.
+function b2bItemRowHTML(it = {}){
+  return `
+    <div class="b2b-row grid grid-cols-12 gap-2 items-center mb-2">
+      <div class="col-span-5"><input class="input b2b-desc" list="b2b-desc-list" placeholder="Item / description" value="${escapeHTML(it.description || '')}" oninput="b2bRecalc()"></div>
+      <div class="col-span-2"><input class="input b2b-qty" type="number" inputmode="decimal" min="0" step="any" placeholder="Qty" value="${it.qty ?? ''}" oninput="b2bRecalc()"></div>
+      <div class="col-span-2"><select class="input b2b-unit">${B2B_UNITS.map(u => `<option ${it.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+      <div class="col-span-2"><input class="input b2b-price" type="number" inputmode="decimal" min="0" step="any" placeholder="Price" value="${it.price ?? ''}" oninput="b2bRecalc()"></div>
+      <div class="col-span-1 text-center"><button type="button" onclick="this.closest('.b2b-row').remove(); b2bRecalc()" class="text-slate-400 hover:text-rose-600 p-1" title="Remove line">${icon('close','w-4 h-4')}</button></div>
+    </div>`;
+}
+function b2bAddItemRow(it){
+  const wrap = document.getElementById('b2b-items');
+  if (!wrap) return;
+  const div = document.createElement('div');
+  div.innerHTML = b2bItemRowHTML(it || {});
+  wrap.appendChild(div.firstElementChild);
+}
+// Read the raw items out of the editor DOM (skips fully empty rows).
+function b2bReadItems(){
+  return [...document.querySelectorAll('#b2b-items .b2b-row')].map(row => ({
+    description: row.querySelector('.b2b-desc').value.trim(),
+    qty: parseFloat(row.querySelector('.b2b-qty').value) || 0,
+    unit: row.querySelector('.b2b-unit').value,
+    price: parseFloat(row.querySelector('.b2b-price').value) || 0,
+  })).filter(it => it.description || it.qty || it.price);
+}
+function b2bRecalc(){
+  const el = document.getElementById('b2b-totals');
+  if (!el) return;
+  const c = b2bCalc(b2bReadItems());
+  el.innerHTML = `Sub total <b>SAR ${b2bMoney(c.subtotal)}</b> &nbsp;·&nbsp; VAT 15% <b>SAR ${b2bMoney(c.vatTotal)}</b> &nbsp;·&nbsp; Total <b class="text-brand-700">SAR ${b2bMoney(c.total)}</b>`;
+}
+// Autofill VAT/address from the customer's most recent invoice when the
+// name matches — repeat B2B customers shouldn't be retyped.
+function b2bCustAutofill(){
+  const name = document.getElementById('b2b-cust')?.value.trim().toLowerCase();
+  if (!name) return;
+  const prev = (state.b2bInvoices || []).find(v => (v.customerName || '').trim().toLowerCase() === name);
+  if (!prev) return;
+  const vatEl = document.getElementById('b2b-cust-vat'), adrEl = document.getElementById('b2b-cust-addr');
+  if (vatEl && !vatEl.value) vatEl.value = prev.customerVat || '';
+  if (adrEl && !adrEl.value) adrEl.value = prev.customerAddress || '';
+}
+function openB2bInvoiceModal(id){
+  const editing = id ? (state.b2bInvoices || []).find(v => v.id === id) : null;
+  const today = todayISO();
+  const customers = [...new Set((state.b2bInvoices || []).map(v => v.customerName).filter(Boolean))];
+  const descs = [...new Set([
+    ...(state.inventory || []).map(i => i.name),
+    ...(state.b2bInvoices || []).flatMap(v => (v.items || []).map(it => it.description)),
+  ].filter(Boolean))];
+  const body = `
+    <div class="space-y-4">
+      <datalist id="b2b-cust-list">${customers.map(c => `<option value="${escapeHTML(c)}">`).join('')}</datalist>
+      <datalist id="b2b-desc-list">${descs.map(d => `<option value="${escapeHTML(d)}">`).join('')}</datalist>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="md:col-span-2">
+          <label class="label label-required">Customer name</label>
+          <input id="b2b-cust" class="input" list="b2b-cust-list" placeholder="e.g. شركة ارض الشرق لتقديم المشروبات" value="${escapeHTML(editing?.customerName || '')}" onchange="b2bCustAutofill()">
+        </div>
+        <div>
+          <label class="label">Customer VAT number</label>
+          <input id="b2b-cust-vat" class="input" inputmode="numeric" placeholder="15 digits" value="${escapeHTML(editing?.customerVat || '')}">
+        </div>
+        <div>
+          <label class="label">Customer address</label>
+          <input id="b2b-cust-addr" class="input" placeholder="city, district" value="${escapeHTML(editing?.customerAddress || '')}">
+        </div>
+        <div>
+          <label class="label">Invoice date</label>
+          <input id="b2b-date" type="date" class="input" value="${editing?.invoiceDate || today}">
+        </div>
+        <div>
+          <label class="label">Due</label>
+          <input id="b2b-due" class="input" placeholder="Immediate" value="${escapeHTML(editing?.dueTerms || 'Immediate')}">
+        </div>
+      </div>
+      <div>
+        <div class="grid grid-cols-12 gap-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+          <div class="col-span-5">Item / description</div><div class="col-span-2">Qty</div><div class="col-span-2">Unit</div><div class="col-span-2">Unit price (ex-VAT)</div><div class="col-span-1"></div>
+        </div>
+        <div id="b2b-items"></div>
+        <button type="button" onclick="b2bAddItemRow()" class="btn btn-ghost btn-sm mt-1">${icon('plus','w-4 h-4')} Add line</button>
+      </div>
+      <div id="b2b-totals" class="bg-slate-50 rounded-xl p-3 text-sm text-slate-700">Sub total <b>SAR 0.00</b> &nbsp;·&nbsp; VAT 15% <b>SAR 0.00</b> &nbsp;·&nbsp; Total <b class="text-brand-700">SAR 0.00</b></div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="b2b-notes" class="input" rows="2" placeholder="PO number, delivery reference...">${escapeHTML(editing?.notes || '')}</textarea>
+      </div>
+    </div>`;
+  openModal(editing ? `Edit ${b2bNo(editing)}` : 'New B2B tax invoice', body, async () => {
+    const customerName = $('#b2b-cust').value.trim();
+    if (!customerName) { toast('Customer name is required', 'error'); return false; }
+    const items = b2bReadItems();
+    if (!items.length || !items.some(it => it.description && it.qty > 0)) {
+      toast('Add at least one line with a description and quantity', 'error'); return false;
+    }
+    const bad = items.find(it => !it.description || it.qty <= 0 || it.price < 0);
+    if (bad) { toast('Every line needs a description, a quantity above zero, and a price', 'error'); return false; }
+    const c = b2bCalc(items);
+    const me = currentEmployee();
+    const data = {
+      customerName,
+      customerVat: $('#b2b-cust-vat').value.trim(),
+      customerAddress: $('#b2b-cust-addr').value.trim(),
+      invoiceDate: $('#b2b-date').value || todayISO(),
+      dueTerms: $('#b2b-due').value.trim() || 'Immediate',
+      items,
+      subtotal: c.subtotal, vatTotal: c.vatTotal, total: c.total,
+      notes: $('#b2b-notes').value.trim(),
+      createdBy: editing?.createdBy || me?.id || null,
+    };
+    if (editing) {
+      const { data: row, error } = await sb.from('b2b_invoices').update(b2bInvoiceToDb(data)).eq('id', editing.id).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      Object.assign(editing, mapB2bInvoiceFromDb(row));
+      toast(`${b2bNo(editing)} updated`, 'success');
+    } else {
+      const { data: row, error } = await sb.from('b2b_invoices').insert(b2bInvoiceToDb(data)).select().single();
+      if (error) {
+        toast(humanizeError(error) + (error?.message?.includes('does not exist') ? ' — run SQL block 86 first' : ''), 'error');
+        return false;
+      }
+      const inv = mapB2bInvoiceFromDb(row);
+      state.b2bInvoices.unshift(inv);
+      toast(`${b2bNo(inv)} created — SAR ${b2bMoney(inv.total)} incl. VAT`, 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: editing ? 'Save changes' : 'Create invoice' });
+  setTimeout(() => {
+    (editing?.items?.length ? editing.items : [{}]).forEach(it => b2bAddItemRow(it));
+    b2bRecalc();
+  }, 0);
+}
+async function deleteB2bInvoice(id){
+  const v = (state.b2bInvoices || []).find(x => x.id === id);
+  if (!v) return;
+  if (!confirm(`Delete ${b2bNo(v)} (${v.customerName}, SAR ${b2bMoney(v.total)})? Tax records should normally be kept — only delete a mistake.`)) return;
+  const { error } = await sb.from('b2b_invoices').delete().eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  state.b2bInvoices = state.b2bInvoices.filter(x => x.id !== id);
+  render();
+  toast(`${b2bNo(v)} deleted`, 'success');
+}
+function printB2bInvoice(id){
+  const v = (state.b2bInvoices || []).find(x => x.id === id);
+  if (!v) return;
+  const s = state.settings || {};
+  const c = b2bCalc(v.items);
+  const qrUrl = zatcaQrDataUrl(v);
+  const rows = c.lines.map((l, i) => `
+    <tr>
+      <td class="c">${i + 1}</td>
+      <td>${escapeHTML(l.description)}</td>
+      <td class="c">${l.qty}</td>
+      <td class="c">${escapeHTML(l.unit)}</td>
+      <td class="r">${b2bMoney(l.price)}</td>
+      <td class="r">${b2bMoney(l.taxable)}</td>
+      <td class="r">${b2bMoney(l.vat)}</td>
+      <td class="r">${b2bMoney(l.amount)}</td>
+    </tr>`).join('');
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(b2bNo(v))}</title>
+    <style>
+      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:28px;font-size:13px;}
+      .top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px;}
+      h1{font-size:22px;margin:0;}.ar{color:#64748b;}
+      .co{text-align:right;font-size:12px;line-height:1.5;}
+      .meta,.bill{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;}
+      .meta{display:flex;gap:24px;flex-wrap:wrap;}
+      .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;}
+      table{width:100%;border-collapse:collapse;margin-top:4px;}
+      th,td{padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:left;}
+      th{font-size:10px;text-transform:uppercase;color:#94a3b8;background:#f8fafc;}
+      .r{text-align:right;}.c{text-align:center;}
+      .totals{margin-top:12px;margin-left:auto;width:320px;font-size:13px;}
+      .totals div{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f1f5f9;}
+      .totals .grand{font-weight:700;font-size:15px;border-top:2px solid #1e293b;border-bottom:none;padding-top:8px;}
+      .qr{margin-top:20px;display:flex;align-items:center;gap:12px;}
+      .qr img{width:110px;height:110px;}
+      .qr .cap{font-size:10px;color:#94a3b8;max-width:220px;}
+      .notes{margin-top:14px;font-size:12px;color:#475569;}
+      @media print { body{padding:0;} }
+    </style></head><body>
+    <div class="top">
+      <div>
+        <h1>Tax Invoice <span class="ar">فاتورة ضريبية</span></h1>
+        <div style="margin-top:10px;font-size:12px;">
+          <div class="lbl">Invoice number رقم الفاتورة</div>
+          <div style="font-weight:700;font-size:15px;">${escapeHTML(b2bNo(v))}</div>
+        </div>
+      </div>
+      <div class="co">
+        <div style="font-weight:700;font-size:14px;">${escapeHTML(s.companyName || 'Hassad Coffee Roasters')}</div>
+        <div>${escapeHTML(s.addressLine3 || '')}</div>
+        <div>${escapeHTML(s.addressLine2 || '')}</div>
+        <div>${escapeHTML(s.addressLine1 || '')}</div>
+        <div style="margin-top:4px;"><span class="lbl">Vat Number رقم التسجيل الضريبي</span><br><b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
+      </div>
+    </div>
+    <div class="meta">
+      <div><div class="lbl">Date التاريخ</div><div>${escapeHTML(fmtDate(v.invoiceDate))}</div></div>
+      <div><div class="lbl">Due date تاريخ الاستحقاق</div><div>${escapeHTML(v.dueTerms)}</div></div>
+      <div style="margin-left:auto;text-align:right;"><div class="lbl">Total due مجموع المستحق</div><div style="font-weight:700;font-size:15px;">SAR ${b2bMoney(c.total)}</div></div>
+    </div>
+    <div class="bill">
+      <div class="lbl">Bill to العميل</div>
+      <div style="font-weight:700;">${escapeHTML(v.customerName)}</div>
+      ${v.customerAddress ? `<div>${escapeHTML(v.customerAddress)}</div>` : ''}
+      ${v.customerVat ? `<div><span class="lbl">Vat Number رقم التسجيل الضريبي</span> ${escapeHTML(v.customerVat)}</div>` : ''}
+    </div>
+    <table>
+      <thead><tr>
+        <th class="c">Sr No<br>رقم</th><th>Item/Description<br>المنتج / الوصف</th><th class="c">Qty<br>الكمية</th><th class="c">Unit<br>وحدة</th>
+        <th class="r">Unit Price<br>السعر</th><th class="r">Taxable Amount<br>المبلغ الخاضع للضريبة</th><th class="r">Vat 15%<br>القيمة المضافة</th><th class="r">Amount<br>المجموع</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="totals">
+      <div><span>Sub Total المجموع الفرعي</span><b>SAR ${b2bMoney(c.subtotal)}</b></div>
+      <div><span>Total Vat إجمالي ضريبة القيمة المضافة</span><b>SAR ${b2bMoney(c.vatTotal)}</b></div>
+      <div class="grand"><span>Total Including Vat الإجمالي شامل ضريبة القيمة المضافة</span><span>SAR ${b2bMoney(c.total)}</span></div>
+    </div>
+    ${v.notes ? `<div class="notes"><b>Notes:</b> ${escapeHTML(v.notes)}</div>` : ''}
+    ${qrUrl ? `<div class="qr"><img src="${qrUrl}" alt="ZATCA QR"><div class="cap">This QR code is encoded as per ZATCA e-invoicing requirements</div></div>` : ''}
+    </body></html>`;
+  openPrintWindow(html);
+}
+
 // Error boundary. A throw anywhere in a render path used to leave whatever
 // was last painted on screen forever — during bootstrap that's the
 // "Loading…" splash, which is exactly how PR #206's attMinutes recursion
@@ -22653,6 +23059,7 @@ function renderMain() {
     case 'archive':      content = hasRole('admin','operations') ? renderArchive() : renderRoleDashboard(); break;
     case 'resources':    content = hasRole('admin','barista','head_barista','roaster') ? renderResources() : renderRoleDashboard(); break;
     case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
+    case 'b2b_invoices': content = hasRole('admin','accounting','operations') ? renderB2bInvoices() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'inventory_hub': content = hasRole('admin','operations','head_barista','barista') ? renderInventoryHub() : renderRoleDashboard(); break;
