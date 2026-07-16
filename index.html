@@ -1731,6 +1731,7 @@ function mapB2bInvoiceFromDb(r) {
       unit: it.unit || 'Pc',
       price: Number(it.price) || 0,
     })) : [],
+    shipping: Number(r.shipping) || 0,
     subtotal: Number(r.subtotal) || 0,
     vatTotal: Number(r.vat_total) || 0,
     total: Number(r.total) || 0,
@@ -1748,6 +1749,7 @@ function b2bInvoiceToDb(v) {
     invoice_date: v.invoiceDate || null,
     due_terms: v.dueTerms || 'Immediate',
     items: v.items || [],
+    shipping: Number(v.shipping) || 0,
     subtotal: Number(v.subtotal) || 0,
     vat_total: Number(v.vatTotal) || 0,
     total: Number(v.total) || 0,
@@ -22638,18 +22640,25 @@ function setB2bQ(v){
 function b2bNo(v){ return 'INV-' + String(v?.invoiceNo || 0).padStart(6, '0'); }
 function b2bRound(n){ return Math.round((Number(n) || 0) * 100) / 100; }
 function b2bMoney(n){ return Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-// Line + invoice math from raw {qty, price} items (prices ex-VAT).
-function b2bCalc(items){
+// Line + invoice math from raw {qty, price} items (prices ex-VAT), plus an
+// optional shipping charge (also ex-VAT — shipping is VATable at 15% in KSA
+// when it's part of the supply, exactly as on the owner's sample invoice).
+function b2bCalc(items, shipping){
   const lines = (items || []).map(it => {
     const taxable = b2bRound((Number(it.qty) || 0) * (Number(it.price) || 0));
     const vat = b2bRound(taxable * B2B_VAT_RATE);
     return { ...it, taxable, vat, amount: b2bRound(taxable + vat) };
   });
+  const ship = b2bRound(shipping);
+  const shipVat = b2bRound(ship * B2B_VAT_RATE);
   return {
     lines,
-    subtotal: b2bRound(lines.reduce((s, l) => s + l.taxable, 0)),
-    vatTotal: b2bRound(lines.reduce((s, l) => s + l.vat, 0)),
-    total:    b2bRound(lines.reduce((s, l) => s + l.amount, 0)),
+    shipping: ship,
+    shippingVat: shipVat,
+    shippingAmount: b2bRound(ship + shipVat),
+    subtotal: b2bRound(lines.reduce((s, l) => s + l.taxable, 0) + ship),
+    vatTotal: b2bRound(lines.reduce((s, l) => s + l.vat, 0) + shipVat),
+    total:    b2bRound(lines.reduce((s, l) => s + l.amount, 0) + ship + shipVat),
   };
 }
 // Registered street address as printed on the owner's sample invoice.
@@ -22675,8 +22684,10 @@ function zatcaQrDataUrl(inv){
   try {
     const enc = new TextEncoder();
     const tlv = (tag, str) => { const b = enc.encode(String(str)); return [tag, b.length, ...b]; };
+    // Seller name = the LEGAL entity (matches the printed header) — ZATCA
+    // expects the registered name, not the brand.
     const bytes = [
-      ...tlv(1, state.settings.companyName || 'Hassad Coffee Roasters'),
+      ...tlv(1, state.settings.legalName || LETTERHEAD_DEFAULTS.legalName),
       ...tlv(2, state.settings.vatNumber || LETTERHEAD_DEFAULTS.vatNumber),
       ...tlv(3, new Date(inv.createdAt || (inv.invoiceDate + 'T12:00:00Z')).toISOString()),
       ...tlv(4, Number(inv.total).toFixed(2)),
@@ -22782,8 +22793,8 @@ function b2bReadItems(){
 function b2bRecalc(){
   const el = document.getElementById('b2b-totals');
   if (!el) return;
-  const c = b2bCalc(b2bReadItems());
-  el.innerHTML = `Sub total <b>SAR ${b2bMoney(c.subtotal)}</b> &nbsp;·&nbsp; VAT 15% <b>SAR ${b2bMoney(c.vatTotal)}</b> &nbsp;·&nbsp; Total <b class="text-brand-700">SAR ${b2bMoney(c.total)}</b>`;
+  const c = b2bCalc(b2bReadItems(), parseFloat(document.getElementById('b2b-ship')?.value) || 0);
+  el.innerHTML = `Sub total <b>SAR ${b2bMoney(c.subtotal)}</b>${c.shipping ? ` <span class="text-slate-400">(incl. shipping ${b2bMoney(c.shipping)})</span>` : ''} &nbsp;·&nbsp; VAT 15% <b>SAR ${b2bMoney(c.vatTotal)}</b> &nbsp;·&nbsp; Total <b class="text-brand-700">SAR ${b2bMoney(c.total)}</b>`;
 }
 // Autofill VAT/address from the customer's most recent invoice when the
 // name matches — repeat B2B customers shouldn't be retyped.
@@ -22829,6 +22840,11 @@ function openB2bInvoiceModal(id){
           <label class="label">Due</label>
           <input id="b2b-due" class="input" placeholder="Immediate" value="${escapeHTML(editing?.dueTerms || 'Immediate')}">
         </div>
+        <div>
+          <label class="label">Shipping (SAR, ex-VAT — optional)</label>
+          <input id="b2b-ship" type="number" inputmode="decimal" min="0" step="any" class="input" placeholder="0.00" value="${editing?.shipping ? editing.shipping : ''}" oninput="b2bRecalc()">
+          <div class="text-[10px] text-slate-500 mt-1">Carrier quote for this order. 15% VAT is added and it prints as its own "Shipping charges" line.</div>
+        </div>
       </div>
       <div>
         <div class="grid grid-cols-12 gap-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
@@ -22852,7 +22868,9 @@ function openB2bInvoiceModal(id){
     }
     const bad = items.find(it => !it.description || it.qty <= 0 || it.price < 0);
     if (bad) { toast('Every line needs a description, a quantity above zero, and a price', 'error'); return false; }
-    const c = b2bCalc(items);
+    const shipping = parseFloat($('#b2b-ship').value) || 0;
+    if (shipping < 0) { toast('Shipping cannot be negative', 'error'); return false; }
+    const c = b2bCalc(items, shipping);
     const me = currentEmployee();
     const data = {
       customerName,
@@ -22861,6 +22879,7 @@ function openB2bInvoiceModal(id){
       invoiceDate: $('#b2b-date').value || todayISO(),
       dueTerms: $('#b2b-due').value.trim() || 'Immediate',
       items,
+      shipping,
       subtotal: c.subtotal, vatTotal: c.vatTotal, total: c.total,
       notes: $('#b2b-notes').value.trim(),
       createdBy: editing?.createdBy || me?.id || null,
@@ -22902,7 +22921,7 @@ function printB2bInvoice(id){
   const v = (state.b2bInvoices || []).find(x => x.id === id);
   if (!v) return;
   const s = state.settings || {};
-  const c = b2bCalc(v.items);
+  const c = b2bCalc(v.items, v.shipping);
   const qrUrl = zatcaQrDataUrl(v);
   const rows = c.lines.map((l, i) => `
     <tr>
@@ -22914,7 +22933,17 @@ function printB2bInvoice(id){
       <td class="r">${b2bMoney(l.taxable)}</td>
       <td class="r">${b2bMoney(l.vat)}</td>
       <td class="r">${b2bMoney(l.amount)}</td>
-    </tr>`).join('');
+    </tr>`).join('') + (c.shipping ? `
+    <tr>
+      <td class="c">${c.lines.length + 1}</td>
+      <td>Shipping charges رسوم الشحن</td>
+      <td class="c">1</td>
+      <td class="c">—</td>
+      <td class="r">${b2bMoney(c.shipping)}</td>
+      <td class="r">${b2bMoney(c.shipping)}</td>
+      <td class="r">${b2bMoney(c.shippingVat)}</td>
+      <td class="r">${b2bMoney(c.shippingAmount)}</td>
+    </tr>` : '');
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(b2bNo(v))}</title>
     <style>
       body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:28px;font-size:13px;}
@@ -22947,15 +22976,15 @@ function printB2bInvoice(id){
       </div>
       <div class="co">
         <img src="${logoURL()}" alt="" style="width:64px;height:64px;object-fit:contain;margin:0 0 6px auto;display:block;" onerror="this.style.display='none'">
-        <div style="font-weight:700;font-size:14px;">${escapeHTML(s.companyName || 'Hassad Coffee Roasters')}</div>
+        <div style="font-weight:700;font-size:14px;">${escapeHTML(s.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
         ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
+        <div style="margin-top:4px;"><span class="lbl">C.R. Number السجل التجاري</span><br><b>${escapeHTML(s.regNumber || LETTERHEAD_DEFAULTS.regNumber)}</b></div>
         <div style="margin-top:4px;"><span class="lbl">Vat Number رقم التسجيل الضريبي</span><br><b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
       </div>
     </div>
     <div class="meta">
       <div><div class="lbl">Date التاريخ</div><div>${escapeHTML(fmtDate(v.invoiceDate))}</div></div>
       <div><div class="lbl">Due date تاريخ الاستحقاق</div><div>${escapeHTML(v.dueTerms)}</div></div>
-      <div style="margin-left:auto;text-align:right;"><div class="lbl">Total due مجموع المستحق</div><div style="font-weight:700;font-size:15px;">SAR ${b2bMoney(c.total)}</div></div>
     </div>
     <div class="bill">
       <div class="lbl">Bill to العميل</div>
