@@ -22946,32 +22946,36 @@ function printB2bInvoice(id){
     </tr>` : '');
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(b2bNo(v))}</title>
     <style>
-      /* Everything prints in TRUE BLACK — the first live print came out with
-         washed-out grey labels (owner photo, 2026-07-16). Only backgrounds
-         and hairlines stay light. */
-      @page { size: A4; margin: 14mm; }
-      *{color:#000;}
-      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:28px;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .top{display:flex;justify-content:space-between;gap:24px;align-items:stretch;margin-bottom:14px;}
+      /* TRUE BLACK ONLY — greys/slates printed as faint blue on the owner's
+         printer (photos, 2026-07-16). Text, borders and rules are all #000.
+         @page margin is ZERO on purpose: the browser prints its header/footer
+         (title, date/time, blob: URL) in the page margin strip, so with no
+         margin there is nowhere to print them — the white border comes from
+         body padding instead. */
+      @page { size: A4; margin: 0; }
+      *{color:#000;box-sizing:border-box;}
+      html,body{margin:0;}
+      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:16mm 14mm;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      .wrap{max-width:182mm;margin:0 auto;}
+      .top{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:16px;}
       h1{font-size:22px;margin:0 0 12px;}
       .co{text-align:right;font-size:12px;line-height:1.55;}
       .field{margin-bottom:8px;}
-      .bill{border:1px solid #999;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:14px;}
+      .bill{border:1.5px solid #000;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:16px;}
       .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;}
       table{width:100%;border-collapse:collapse;margin-top:4px;}
-      th,td{padding:7px 8px;border-bottom:1px solid #bbb;font-size:12px;text-align:left;}
-      th{font-size:10px;text-transform:uppercase;background:#eee;border-bottom:1.5px solid #000;}
+      th,td{padding:7px 8px;border-bottom:1px solid #000;font-size:12px;text-align:left;}
+      th{font-size:10px;text-transform:uppercase;border-bottom:2px solid #000;border-top:2px solid #000;}
       .r{text-align:right;}.c{text-align:center;}
-      .bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-top:16px;}
+      .bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-top:18px;}
       .qr{display:flex;align-items:center;gap:12px;}
       .qr img{width:110px;height:110px;}
       .qr .cap{font-size:10px;max-width:200px;}
       .totals{width:340px;font-size:13px;}
-      .totals div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #ccc;}
+      .totals div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #000;}
       .totals .grand{font-weight:700;font-size:15px;border-top:2px solid #000;border-bottom:none;padding-top:8px;}
       .notes{margin-top:14px;font-size:12px;}
-      @media print { body{padding:0;} }
-    </style></head><body>
+    </style></head><body><div class="wrap">
     <div class="top">
       <div>
         <h1>Tax Invoice فاتورة ضريبية</h1>
@@ -23009,7 +23013,7 @@ function printB2bInvoice(id){
       </div>
     </div>
     ${v.notes ? `<div class="notes"><b>Notes:</b> ${escapeHTML(v.notes)}</div>` : ''}
-    </body></html>`;
+    </div></body></html>`;
   openPrintWindow(html);
 }
 
