@@ -2716,6 +2716,7 @@ function statusBadge(status) {
     pending:  ['badge-amber',  t('pending')],
     approved: ['badge-green',  t('approved')],
     rejected: ['badge-red',    t('rejected')],
+    cancelled:['badge-slate',  'Cancelled'],
     paid:     ['badge-green',  'Paid'],
     active:   ['badge-green',  'Active'],
     on_leave: ['badge-blue',   t('on_leave')],
@@ -5724,6 +5725,8 @@ function renderLeave() {
                     ${r.status==='pending'?`
                       <button onclick="decideLeave('${r.id}','approved')" class="btn btn-sm btn-success">${icon('check','w-4 h-4')} ${escapeHTML(t('approve'))}</button>
                       <button onclick="decideLeave('${r.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
+                    `:r.status==='approved'?`
+                      <button onclick="cancelLeave('${r.id}')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} Cancel</button>
                     `:'<span class="text-xs text-slate-400">decided</span>'}
                   </td>`:''}
                 </tr>${leaveTravelRowHTML(r, colspan, canManage)}`;
@@ -5820,6 +5823,30 @@ async function decideLeave(id, decision) {
   }
   render();
   toast(`Request ${decision}`, 'success');
+}
+
+// Reverse an APPROVED leave (employee changed their mind). Server-side
+// RPC gives the balance days back and flips status to 'cancelled' in
+// one transaction — mirror of decide_leave_request. SQL block 88.
+async function cancelLeave(id) {
+  const r = state.leaveRequests.find(x=>x.id===id);
+  if (!r) return;
+  const e = getEmployee(r.employeeId);
+  if (!confirm(`Cancel ${e ? e.firstName+"'s" : 'this'} approved ${r.type} leave (${r.days} day${r.days===1?'':'s'})? The days go back to their balance.`)) return;
+  const { data, error } = await sb.rpc('cancel_leave_request', { p_id: id });
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  if (data) Object.assign(r, mapLeaveFromDb(data));
+  // Refresh the employee row so the in-memory balance matches the DB
+  const { data: empRow, error: empErr } = await sb.from('employees').select('*').eq('id', r.employeeId).single();
+  if (!empErr && empRow) {
+    const emp = getEmployee(r.employeeId);
+    if (emp) {
+      Object.assign(emp, mapEmployeeFromDb(empRow));
+      state.leaveBalances[r.employeeId] = { annual: emp.leave_annual, sick: emp.leave_sick, personal: emp.leave_personal };
+    }
+  }
+  render();
+  toast('Leave cancelled — days returned to balance', 'success');
 }
 
 /* ---- Leave travel workflow (non-Saudi: ticket + exit visa) — SQL block 67 ---- */
