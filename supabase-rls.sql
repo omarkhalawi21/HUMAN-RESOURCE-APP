@@ -4879,6 +4879,63 @@ CREATE POLICY "b2b_delete_admin"
 ALTER TABLE public.b2b_invoices ADD COLUMN IF NOT EXISTS shipping numeric(14,2) NOT NULL DEFAULT 0;
 
 -- =============================================================
+-- 88. CANCEL APPROVED LEAVE — employee changed their mind.
+--     Approval decrements the balance inside decide_leave_request(),
+--     so a reversal must give the days back AND flip the status in
+--     one transaction. Mirrors that function: SECURITY DEFINER so
+--     admin/hr/operations can restore the balance without direct
+--     UPDATE rights on employees. Only 'approved' requests cancel;
+--     status has no CHECK constraint so 'cancelled' needs no DDL.
+--     The status guard also makes double-clicks harmless: the second
+--     call finds no approved row and raises instead of re-crediting.
+-- =============================================================
+CREATE OR REPLACE FUNCTION public.cancel_leave_request(
+  p_id uuid
+)
+RETURNS public.leave_requests
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_req public.leave_requests;
+  v_bal_field text;
+  v_caller_id uuid;
+BEGIN
+  IF NOT public.has_role(ARRAY['admin','hr','operations']) THEN
+    RAISE EXCEPTION 'Not authorized to cancel leave requests';
+  END IF;
+
+  SELECT id INTO v_caller_id
+  FROM public.employees
+  WHERE user_id = auth.uid()
+  LIMIT 1;
+
+  UPDATE public.leave_requests
+     SET status = 'cancelled',
+         decided_by = v_caller_id,
+         decided_at = now()
+   WHERE id = p_id
+     AND status = 'approved'
+  RETURNING * INTO v_req;
+
+  IF v_req.id IS NULL THEN
+    RAISE EXCEPTION 'Leave request % is not an approved request', p_id;
+  END IF;
+
+  v_bal_field := 'leave_' || v_req.leave_type;
+  EXECUTE format(
+    'UPDATE public.employees SET %I = COALESCE(%I,0) + $1 WHERE id = $2',
+    v_bal_field, v_bal_field
+  ) USING v_req.days, v_req.employee_id;
+
+  RETURN v_req;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.cancel_leave_request(uuid) TO authenticated;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
