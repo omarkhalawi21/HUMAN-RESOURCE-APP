@@ -920,6 +920,31 @@ function logoURL() {
   catch(e) { return 'logo.png'; }
 }
 
+/* Logo as a self-contained data: URL, cached after the first call.
+   Print windows are opened from a blob: URL (see openPrintWindow), and a
+   blob: document does NOT reliably resolve a same-origin https logo — on
+   iOS Safari it fails and the printed PDF keeps a broken-image icon
+   (owner's INV-000008, 2026-07-21). The inline onerror can't save it
+   either, because saved/printed output doesn't run JS. Embedding the
+   bytes is the only version that always renders. Returns '' on failure,
+   and the caller omits the <img> rather than printing a broken box. */
+let _logoDataUrl = null;
+async function logoDataURL() {
+  if (_logoDataUrl !== null) return _logoDataUrl;
+  try {
+    const res = await fetch(logoURL());
+    if (!res.ok) throw new Error('logo HTTP ' + res.status);
+    const blob = await res.blob();
+    _logoDataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload  = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  } catch (e) { console.error('Logo embed failed:', e); _logoDataUrl = ''; }
+  return _logoDataUrl;
+}
+
 /* -------------------- COMPANY LETTERHEAD --------------------
    Letterhead values live on the companies row (legal_name,
    registration_number, address_line1..3). Editable via Settings.
@@ -22944,12 +22969,13 @@ async function deleteB2bInvoice(id){
   render();
   toast(`${b2bNo(v)} deleted`, 'success');
 }
-function printB2bInvoice(id){
+async function printB2bInvoice(id){
   const v = (state.b2bInvoices || []).find(x => x.id === id);
   if (!v) return;
   const s = state.settings || {};
   const c = b2bCalc(v.items, v.shipping);
   const qrUrl = zatcaQrDataUrl(v);
+  const logo  = await logoDataURL();
   const rows = c.lines.map((l, i) => `
     <tr>
       <td class="c">${i + 1}</td>
@@ -22982,47 +23008,64 @@ function printB2bInvoice(id){
       @page { size: A4; margin: 0; }
       *{color:#000;box-sizing:border-box;}
       html,body{margin:0;}
-      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:16mm 14mm;font-size:13px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .wrap{max-width:182mm;margin:0 auto;}
-      .top{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:16px;}
-      h1{font-size:22px;margin:0 0 12px;}
-      .co{text-align:right;font-size:12px;line-height:1.55;}
-      .field{margin-bottom:8px;}
-      .bill{border:1.5px solid #000;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:16px;}
-      .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;}
-      table{width:100%;border-collapse:collapse;margin-top:4px;}
-      th,td{padding:7px 8px;border-bottom:1px solid #000;font-size:12px;text-align:left;}
-      th{font-size:10px;text-transform:uppercase;border-bottom:2px solid #000;border-top:2px solid #000;}
+      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:15mm 13mm;font-size:12.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+      .wrap{max-width:184mm;margin:0 auto;}
+      .lbl{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;}
+      /* Masthead: logo + title centred over the full width, so the sheet
+         reads as one document instead of two columns drifting apart. */
+      .head{text-align:center;border-bottom:2px solid #000;padding-bottom:11px;margin-bottom:14px;}
+      .head img{width:62px;height:62px;object-fit:contain;display:block;margin:0 auto 7px;}
+      h1{font-size:21px;margin:0;}
+      /* Seller and customer as equal side-by-side cards — same height, same
+         weight, instead of a lopsided full-width Bill-to box. */
+      .parties{display:flex;gap:11px;margin-bottom:11px;}
+      .party{flex:1 1 0;border:1.5px solid #000;border-radius:8px;padding:9px 11px;font-size:11.5px;line-height:1.5;}
+      .party .nm{font-weight:700;font-size:12.5px;margin:3px 0 2px;}
+      /* Invoice number / date / due date as one banded strip. */
+      .meta{display:flex;border:1.5px solid #000;border-radius:8px;overflow:hidden;margin-bottom:14px;}
+      .meta > div{flex:1 1 0;text-align:center;padding:7px 8px;border-right:1px solid #000;}
+      .meta > div:last-child{border-right:none;}
+      .meta .val{font-weight:700;font-size:13px;margin-top:2px;}
+      table{width:100%;border-collapse:collapse;}
+      th,td{padding:7px 8px;border-bottom:1px solid #000;font-size:11.5px;text-align:left;}
+      th{font-size:9.5px;text-transform:uppercase;border-bottom:2px solid #000;border-top:2px solid #000;vertical-align:bottom;}
       .r{text-align:right;}.c{text-align:center;}
-      .bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-top:18px;}
-      .qr{display:flex;align-items:center;gap:12px;}
-      .qr img{width:110px;height:110px;}
-      .qr .cap{font-size:10px;max-width:200px;}
-      .totals{width:340px;font-size:13px;}
-      .totals div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #000;}
-      .totals .grand{font-weight:700;font-size:15px;border-top:2px solid #000;border-bottom:none;padding-top:8px;}
-      .notes{margin-top:14px;font-size:12px;}
+      /* QR top-aligned with the totals block so the two sit on one line
+         instead of the QR hanging below it. */
+      .bottom{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-top:16px;}
+      .qr img{width:104px;height:104px;display:block;}
+      .totals{width:330px;margin-left:auto;font-size:12.5px;}
+      .totals div{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:5px 0;border-bottom:1px solid #000;}
+      /* Amount never wraps — the bilingual grand-total label is long enough
+         to push "SAR 6,336.50" onto a second line otherwise. */
+      .totals div > :last-child{white-space:nowrap;}
+      .totals .grand{font-weight:700;font-size:14.5px;border-top:2px solid #000;border-bottom:none;padding-top:8px;}
+      .notes{margin-top:14px;font-size:11.5px;border:1px solid #000;border-radius:8px;padding:8px 11px;}
+      .foot{margin-top:20px;border-top:1px solid #000;padding-top:7px;text-align:center;font-size:9.5px;}
     </style></head><body><div class="wrap">
-    <div class="top">
-      <div>
-        <h1>Tax Invoice فاتورة ضريبية</h1>
-        <div class="field"><div class="lbl">Invoice number رقم الفاتورة</div><div style="font-weight:700;font-size:15px;">${escapeHTML(b2bNo(v))}</div></div>
-        <div class="field"><div class="lbl">Date التاريخ</div><div>${escapeHTML(fmtDate(v.invoiceDate))}</div></div>
-        <div class="field"><div class="lbl">Due date تاريخ الاستحقاق</div><div>${escapeHTML(v.dueTerms)}</div></div>
-      </div>
-      <div class="co">
-        <img src="${logoURL()}" alt="" style="width:60px;height:60px;object-fit:contain;margin:0 0 6px auto;display:block;" onerror="this.style.display='none'">
-        <div style="font-weight:700;font-size:14px;">${escapeHTML(s.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
+    <div class="head">
+      ${logo ? `<img src="${logo}" alt="">` : ''}
+      <h1>Tax Invoice فاتورة ضريبية</h1>
+    </div>
+    <div class="parties">
+      <div class="party">
+        <div class="lbl">Seller البائع</div>
+        <div class="nm">${escapeHTML(s.legalName || LETTERHEAD_DEFAULTS.legalName)}</div>
         ${b2bSellerAddress().map(l => `<div>${escapeHTML(l)}</div>`).join('')}
         <div style="margin-top:4px;"><span class="lbl">C.R.</span> <b>${escapeHTML(s.regNumber || LETTERHEAD_DEFAULTS.regNumber)}</b></div>
         <div><span class="lbl">VAT:</span> <b>${escapeHTML(s.vatNumber || LETTERHEAD_DEFAULTS.vatNumber)}</b></div>
       </div>
+      <div class="party">
+        <div class="lbl">Bill to العميل</div>
+        <div class="nm">${escapeHTML(v.customerName)}</div>
+        ${v.customerAddress ? `<div>${escapeHTML(v.customerAddress)}</div>` : ''}
+        ${v.customerVat ? `<div style="margin-top:4px;"><span class="lbl">VAT:</span> <b>${escapeHTML(v.customerVat)}</b></div>` : ''}
+      </div>
     </div>
-    <div class="bill">
-      <div class="lbl">Bill to العميل</div>
-      <div style="font-weight:700;">${escapeHTML(v.customerName)}</div>
-      ${v.customerAddress ? `<div>${escapeHTML(v.customerAddress)}</div>` : ''}
-      ${v.customerVat ? `<div><span class="lbl">VAT:</span> ${escapeHTML(v.customerVat)}</div>` : ''}
+    <div class="meta">
+      <div><div class="lbl">Invoice number رقم الفاتورة</div><div class="val">${escapeHTML(b2bNo(v))}</div></div>
+      <div><div class="lbl">Date التاريخ</div><div class="val">${escapeHTML(fmtDate(v.invoiceDate))}</div></div>
+      <div><div class="lbl">Due date تاريخ الاستحقاق</div><div class="val">${escapeHTML(v.dueTerms)}</div></div>
     </div>
     <table>
       <thead><tr>
@@ -23040,6 +23083,7 @@ function printB2bInvoice(id){
       </div>
     </div>
     ${v.notes ? `<div class="notes"><b>Notes:</b> ${escapeHTML(v.notes)}</div>` : ''}
+    <div class="foot">Thank you for your business — شكراً لتعاملكم معنا</div>
     </div></body></html>`;
   openPrintWindow(html);
 }
