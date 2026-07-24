@@ -3082,16 +3082,14 @@ function renderShell(routeContent) {
     { key:'deductions',   icon:'cash',      label:'Deductions',      show:canManagePeople(), group:'main', parent:'payroll' },
     /* People management */
     { key:'applications', icon:'idcard',    label:'Interview',       show:hasRole('admin','operations'), group:'people' },
-    { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people' },
-    { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people' },
-    { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people' },
-    { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people' },
-    { key:'agreements',   icon:'file',      label:'Agreements',      show:true,  group:'people' },
+    { key:'warnings',     icon:'warning',   label:t('warnings'),     show:true,  group:'people', parent:'requests' },
+    { key:'advances',     icon:'cash',      label:t('advances'),     show:true,  group:'people', parent:'requests' },
+    { key:'certificates', icon:'award',     label:t('certificates'), show:true,  group:'people', parent:'records' },
+    { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people', parent:'records' },
+    { key:'agreements',   icon:'file',      label:'Agreements',      show:true,  group:'people', parent:'records' },
     /* Company resources */
-    { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company' },
-    { key:'resources',    icon:'shield',    label:'Resources',       show:hasRole('admin','barista','head_barista','roaster'),  group:'company' },
-    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company' },
-    { key:'b2b_invoices', icon:'receipt',   label:'B2B Invoices',    show:hasRole('admin','accounting','operations'), group:'company' },
+    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company', parent:'finance' },
+    { key:'b2b_invoices', icon:'receipt',   label:'B2B Invoices',    show:hasRole('admin','accounting','operations'), group:'company', parent:'finance' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'inventory_hub',icon:'report',    label:'Inventory hub',   show:hasRole('admin','operations','head_barista','barista'), group:'company', parent:'inventory' },
@@ -3107,6 +3105,8 @@ function renderShell(routeContent) {
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
     { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company', parent:'reports' },
     { key:'spend_report', icon:'report',    label:'Spend report',    show:hasRole('admin','accounting'), group:'company', parent:'reports' },
+    { key:'archive',      icon:'archive',   label:t('archive'),      show:hasRole('admin','operations'),  group:'company', parent:'files' },
+    { key:'resources',    icon:'shield',    label:'Resources',       show:hasRole('admin','barista','head_barista','roaster'),  group:'company', parent:'files' },
     { key:'settings',     icon:'settings',  label:t('settings'),     show:isAdmin(), group:'company' },
     { key:'help',         icon:'file',      label:'User Guide',      show:true,  group:'company' },
   ];
@@ -3134,34 +3134,54 @@ function renderShell(routeContent) {
           const subgroupMeta = {
             team:        { label: state.settings.lang==='ar' ? 'الفريق'   : 'Team',        icon: 'users' },
             payroll:     { label: state.settings.lang==='ar' ? 'الرواتب'  : 'Payroll',     icon: 'wallet' },
+            requests:    { label: state.settings.lang==='ar' ? 'الطلبات'  : 'Requests',    icon: 'warning' },
+            records:     { label: state.settings.lang==='ar' ? 'السجلات'  : 'Records',     icon: 'idcard' },
+            finance:     { label: state.settings.lang==='ar' ? 'المالية'  : 'Finance',     icon: 'receipt' },
             inventory:   { label: state.settings.lang==='ar' ? 'المخزون'  : 'Inventory',   icon: 'box' },
             maintenance: { label: state.settings.lang==='ar' ? 'الصيانة'  : 'Maintenance', icon: 'wrench' },
             bakery:      { label: state.settings.lang==='ar' ? 'المخبز'   : 'Bakery',      icon: 'box' },
             reports:     { label: state.settings.lang==='ar' ? 'التقارير' : 'Reports',     icon: 'report' },
+            files:       { label: state.settings.lang==='ar' ? 'الملفات'  : 'Files',       icon: 'archive' },
           };
-          const renderItem = n => {
-            // Inline alert-count chips on certain nav items
-            let chip = '';
-            if (n.key === 'warnings' && admin) {
-              const open = (state.warnings||[]).length;
-              if (open) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600 font-semibold">${open}</span>`;
-            } else if (n.key === 'advances' && admin) {
-              const pend = (state.advances||[]).filter(a=>a.status==='pending').length;
-              if (pend) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">${pend}</span>`;
-            } else if (n.key === 'documents' && admin) {
-              const exp = state.employees.reduce((s,e)=>{
+          // Alert-count for a nav key: { n, cls, rank } or null. `rank` picks
+          // the most-urgent colour when several are rolled up onto a collapsed
+          // parent (rose > amber > emerald). All chips are admin-only.
+          const chipData = key => {
+            if (!admin) return null;
+            if (key === 'warnings') {
+              const n = (state.warnings||[]).length;
+              return n ? { n, cls:'bg-rose-50 text-rose-600', rank:3 } : null;
+            }
+            if (key === 'advances') {
+              const n = (state.advances||[]).filter(a=>a.status==='pending').length;
+              return n ? { n, cls:'bg-amber-50 text-amber-700', rank:2 } : null;
+            }
+            if (key === 'documents') {
+              const n = state.employees.reduce((s,e)=>{
                 const x = getEmpExtras(e.id);
                 const i = daysUntil(x.iqama?.expiry); const b = daysUntil(x.baladiya?.expiry);
                 if ((i!==null && i<=30) || (b!==null && b<=30)) s++;
                 return s;
               },0);
-              if (exp) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold">${exp}</span>`;
-            } else if (n.key === 'applications' && admin) {
-              // Count of unreviewed applications. Encourages HR to triage
-              // new submissions promptly.
-              const newCt = (state.applications||[]).filter(a => a.status === 'new').length;
-              if (newCt) chip = `<span class="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold">${newCt}</span>`;
+              return n ? { n, cls:'bg-amber-50 text-amber-700', rank:2 } : null;
             }
+            if (key === 'applications') {
+              const n = (state.applications||[]).filter(a => a.status === 'new').length;
+              return n ? { n, cls:'bg-emerald-50 text-emerald-700', rank:1 } : null;
+            }
+            return null;
+          };
+          const chipHTML = (c, extra='') => c
+            ? `<span class="${extra} text-[10px] px-1.5 py-0.5 rounded-full ${c.cls} font-semibold">${c.n}</span>` : '';
+          // Sum of children's chips for a collapsed parent — total count, most
+          // urgent colour — so grouping an alert-bearing item never hides it.
+          const rollupChip = items => {
+            let total = 0, best = null;
+            items.forEach(it => { const c = chipData(it.key); if (c) { total += c.n; if (!best || c.rank > best.rank) best = c; } });
+            return best ? { n: total, cls: best.cls } : null;
+          };
+          const renderItem = n => {
+            const chip = chipHTML(chipData(n.key), 'ml-auto');
             // Children render without their icon — the parent row carries it,
             // and the indent + smaller padding tells you it's a sub-item.
             const inSubgroup = !!n.parent;
@@ -3198,10 +3218,14 @@ function renderShell(routeContent) {
               const activeInside = entry.items.some(it => it.key === route);
               const isOpen = activeInside || isSidebarSubgroupOpen(entry.key);
               const chev = isOpen ? '▾' : '▸';
+              // When collapsed, roll the children's alert chips up onto the
+              // parent so a hidden Warnings/Documents count still shows. When
+              // open, the children display their own chips, so skip it here.
+              const roll = isOpen ? null : rollupChip(entry.items);
               html += `<button type="button" onclick="toggleSidebarSubgroup('${entry.key}')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-slate-600 hover:bg-slate-50 text-start">
                 <span class="icon w-5 h-5 text-slate-400">${ICONS[meta.icon]}</span>
                 <span>${escapeHTML(meta.label)}</span>
-                <span class="ml-auto text-slate-400 text-xs">${chev}</span>
+                ${roll ? chipHTML(roll, 'ml-auto') + `<span class="ms-2 text-slate-400 text-xs">${chev}</span>` : `<span class="ml-auto text-slate-400 text-xs">${chev}</span>`}
               </button>`;
               if (isOpen) html += `<div class="space-y-1">${entry.items.map(renderItem).join('')}</div>`;
             });
