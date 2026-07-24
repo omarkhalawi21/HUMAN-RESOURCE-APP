@@ -18330,6 +18330,7 @@ async function adjustInventoryQuantity(id, delta) {
 
 const MOVEMENT_TYPES = {
   adjust:    { label: 'Adjustment' },
+  count:     { label: 'Shelf count' },
   roast:     { label: 'Roasted' },
   transfer:  { label: 'Transfer' },
   pickup:    { label: 'Cafe pickup' },
@@ -18337,6 +18338,27 @@ const MOVEMENT_TYPES = {
   sale:      { label: 'Sold / Used' },
   other:     { label: 'Other' },
 };
+
+// True if `item` already has a 'count'-type movement dated today — i.e. the
+// morning shelf count has been done for it. Used to show the daily-count
+// status on the shelf tab and to label the count modal. Reads the same
+// state.inventoryMovements the ledger uses (most-recent 2000, ample here).
+function countedTodayForItem(itemId) {
+  const today = todayISO();
+  return (state.inventoryMovements || []).some(m =>
+    m.itemId === itemId && m.type === 'count' && (m.occurredAt || '').slice(0,10) === today);
+}
+// Most recent shelf-count date for an item, or '' if never counted.
+function lastShelfCountDate(itemId) {
+  let best = '';
+  (state.inventoryMovements || []).forEach(m => {
+    if (m.itemId === itemId && m.type === 'count') {
+      const d = (m.occurredAt || '').slice(0,10);
+      if (d > best) best = d;
+    }
+  });
+  return best;
+}
 
 // Roaster yield bands — the healthy roast loses 8–22% of green weight.
 // Below the low band means over-roast (too much loss); above the high band
@@ -19286,6 +19308,79 @@ function renderRoasterBatchesSection() {
     </div>`;
 }
 
+// Daily shelf count — the morning stock-take. Lists every roasted-bean SKU
+// (beans_roast) grouped by branch with the current on-hand and an input
+// pre-filled to that number. On save, each SKU whose counted figure differs
+// is written as a 'count' movement (delta = counted - current), which both
+// corrects the live quantity AND leaves a dated audit row in the item's
+// history — that ledger IS the daily tracking record (no separate table).
+// Unchanged rows write nothing, so re-counting is idempotent.
+function openShelfCountModal() {
+  const shelf = (state.inventory || [])
+    .filter(i => i.category === 'beans_roast')
+    .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (shelf.length === 0) { toast('No roasted beans on the shelf to count yet.', 'error'); return; }
+
+  // Same branch ordering as the shelf tab.
+  const groups = {};
+  shelf.forEach(it => { const b = (it.branch||'').trim() || 'Unassigned'; (groups[b] = groups[b]||[]).push(it); });
+  const orderedBranches = [
+    ...SUGGESTED_BRANCHES.filter(b => groups[b]),
+    ...Object.keys(groups).filter(b => !SUGGESTED_BRANCHES.includes(b) && b !== 'Unassigned').sort(),
+    ...(groups['Unassigned'] ? ['Unassigned'] : []),
+  ];
+
+  const today = todayISO();
+  const rowHTML = (it) => {
+    const cur = Number(it.quantity) || 0;
+    const done = countedTodayForItem(it.id);
+    return `
+      <div class="flex items-center gap-3 px-4 py-2.5">
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'—')}${done?` <span class="text-[10px] uppercase tracking-wider font-semibold text-emerald-600 ml-1">counted</span>`:''}</div>
+          <div class="text-xs text-slate-500">on hand ${cur.toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(it.unit||'kg')}</div>
+        </div>
+        <input id="sc_${it.id}" type="number" min="0" step="0.01" inputmode="decimal"
+               class="input w-28 text-right tabular-nums" value="${cur}"
+               aria-label="Counted quantity for ${escapeHTML(it.name||'item')}">
+      </div>`;
+  };
+
+  const form = `
+    <div class="space-y-4">
+      <p class="text-sm text-slate-500">Enter what's actually on the shelf right now for each roasted bean. Each number is saved to the bean's history so you can track the shelf day by day. Leave a number unchanged to skip it.</p>
+      <div class="space-y-4">
+        ${orderedBranches.map(b => `
+          <div class="rounded-xl border border-slate-200 overflow-hidden">
+            <div class="px-4 py-2 bg-slate-50 border-b border-slate-100 font-display text-sm font-semibold text-slate-900">${escapeHTML(b)}</div>
+            <div class="divide-y divide-slate-100">${groups[b].map(rowHTML).join('')}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  openModal(`Count the shelf — ${fmtDate(today)}`, form, async () => {
+    let changed = 0, failed = 0;
+    for (const it of shelf) {
+      const el = document.getElementById('sc_' + it.id);
+      if (!el || el.value === '') continue;
+      const counted = parseFloat(el.value);
+      if (isNaN(counted) || counted < 0) continue;
+      const delta = counted - (Number(it.quantity) || 0);
+      if (delta === 0) continue;
+      const m = await logInventoryMovement(it.id, delta, {
+        type: 'count', occurredAt: today, branch: it.branch || null,
+        notes: 'Daily shelf count',
+      });
+      if (m) changed++; else failed++;
+    }
+    render();
+    if (failed) toast(`${changed} bean${changed===1?'':'s'} counted, ${failed} failed`, changed ? 'success' : 'error');
+    else if (changed) toast(`Shelf counted — ${changed} bean${changed===1?'':'s'} updated`, 'success');
+    else toast('No changes — shelf already matched', 'info');
+    return true;
+  }, { saveLabel: 'Save count' });
+}
+
 function renderRoaster() {
   const all = (state.inventory || []);
   const green = all.filter(i => i.category === 'beans_raw');
@@ -19319,6 +19414,7 @@ function renderRoaster() {
         </div>
         <div class="flex gap-2 flex-wrap">
           <button onclick="printWeeklyInventoryReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Weekly report</button>
+          <button onclick="openShelfCountModal()" class="btn btn-ghost">${icon('check','w-4 h-4')} Count shelf</button>
           <button onclick="openPickupModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log pickup</button>
           <button onclick="openTransferModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log transfer</button>
           <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
@@ -19417,10 +19513,17 @@ function renderRoaster() {
             ${orderedBranches.map(b => {
               const list = groups[b];
               const total = list.reduce((s,i) => s + (Number(i.quantity)||0), 0);
+              // Daily-count status for this branch: green once every SKU here
+              // has a shelf-count movement dated today, amber until then.
+              const countedN = list.filter(i => countedTodayForItem(i.id)).length;
+              const allCounted = countedN === list.length;
+              const countBadge = allCounted
+                ? `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Counted today</span>`
+                : `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">${countedN?`${countedN}/${list.length} counted`:'Not counted today'}</span>`;
               return `
                 <div class="bg-white rounded-2xl shadow-card overflow-hidden">
-                  <div class="px-5 py-3 flex items-center justify-between bg-slate-50/60 border-b border-slate-100">
-                    <div class="font-display text-base font-semibold text-slate-900">${escapeHTML(b)}</div>
+                  <div class="px-5 py-3 flex items-center justify-between gap-3 bg-slate-50/60 border-b border-slate-100">
+                    <div class="flex items-center gap-2 flex-wrap"><span class="font-display text-base font-semibold text-slate-900">${escapeHTML(b)}</span>${countBadge}</div>
                     <div class="text-xs text-slate-600 font-semibold tabular-nums">${Number(total).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(list[0]?.unit||'units')} &middot; ${list.length} SKU${list.length===1?'':'s'}</div>
                   </div>
                   <div class="divide-y divide-slate-100">
