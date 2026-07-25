@@ -11770,10 +11770,14 @@ function renderMyWork() {
   // from state, so each row disappears the moment its status changes
   // (leave approved, advance decided, doc renewed). We exclude task- and
   // cl- items: tasks already have the table below, checklists their own
-  // section. Empty for non-managers (those notif types are admin/hr-gated),
-  // so the card simply doesn't render for floor staff.
+  // section. ADMIN-ONLY on My Work (owner request 2026-07-25): other roles'
+  // My Work stays focused on their own tasks + lists. isAdmin() respects the
+  // "view as role" preview, and the notification bell still surfaces these
+  // items for whoever they belong to, so nobody loses the reminder entirely.
   let actionSection = '';
-  const allAction = buildNotifications().filter(n => !/^(task-|cl-|leavedone-|advdone-)/.test(n.key));
+  const allAction = isAdmin()
+    ? buildNotifications().filter(n => !/^(task-|cl-|leavedone-|advdone-)/.test(n.key))
+    : [];
   const hiddenKeys = myWorkHiddenSet();
   const actionItems = allAction.filter(n => !hiddenKeys.has(n.key));
   const hiddenItems = allAction.filter(n =>  hiddenKeys.has(n.key));
