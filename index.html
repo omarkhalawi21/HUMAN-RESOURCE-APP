@@ -881,6 +881,17 @@ function expiryStatus(dateStr) {
   if (d <= 60)                return { label: `${d}d left`,         cls: 'badge-blue',  days: d };
   return                            { label: `${d}d left`,         cls: 'badge-green', days: d };
 }
+
+// How many days before expiry each document starts generating reminders
+// (My Work "Needs your action" + the bell + the sidebar Records badge). The
+// IQAMA gets a short 5-day heads-up; the Baladiya health card gets ~2 months
+// because its renewal takes longer. An already-expired doc (negative days)
+// always reminds. Keyed by the labels used at the notification sites
+// ('IQAMA' / 'Baladiya'); anything unlisted falls back to 30 days.
+const DOC_REMINDER_WINDOW = { IQAMA: 5, Baladiya: 60 };
+function docNeedsReminder(docLabel, days) {
+  return days !== null && days <= (DOC_REMINDER_WINDOW[docLabel] ?? 30);
+}
 const DAY_NAMES_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_NAMES_AR = ['أحد','إثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
 function dayNames() { return state.settings.lang === 'ar' ? DAY_NAMES_AR : DAY_NAMES_EN; }
@@ -3166,7 +3177,7 @@ function renderShell(routeContent) {
               const n = state.employees.reduce((s,e)=>{
                 const x = getEmpExtras(e.id);
                 const i = daysUntil(x.iqama?.expiry); const b = daysUntil(x.baladiya?.expiry);
-                if ((i!==null && i<=30) || (b!==null && b<=30)) s++;
+                if (docNeedsReminder('IQAMA', i) || docNeedsReminder('Baladiya', b)) s++;
                 return s;
               },0);
               return n ? { n, cls:'bg-amber-50 text-amber-700', rank:2 } : null;
@@ -3389,7 +3400,7 @@ function buildNotifications() {
       [['IQAMA', x.iqama&&x.iqama.expiry], ['Baladiya', x.baladiya&&x.baladiya.expiry]].forEach(([lbl,exp])=>{
         if(!exp) return;
         const d=daysUntil(exp);
-        if(d!==null && d<=30) out.push({ key:'doc-'+e.id+'-'+lbl+'-'+exp, icon:'idcard', tone:d<0?'red':'amber',
+        if(docNeedsReminder(lbl, d)) out.push({ key:'doc-'+e.id+'-'+lbl+'-'+exp, icon:'idcard', tone:d<0?'red':'amber',
           title:`${lbl} ${d<0?'expired':'expiring soon'}`, detail:`${(e.firstName+' '+(e.lastName||'')).trim()} · ${fmtDate(exp)}`, href:'#/documents' });
       });
     });
@@ -4879,7 +4890,7 @@ function openEmployeeModal(id) {
 
     <div id="emp-pane-docs" style="display:none">
       <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 mb-4">
-        ${icon('warning','w-4 h-4 inline')} Track resident ID (IQAMA) and health card (Baladiya) numbers and expiry dates. The system will alert you when documents are expiring within 30 days.
+        ${icon('warning','w-4 h-4 inline')} Track resident ID (IQAMA) and health card (Baladiya) numbers and expiry dates. The system reminds you 5 days before an IQAMA expires and 2 months before a Baladiya card expires.
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div class="col-span-2"><div class="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 mt-1">${escapeHTML(t('iqama'))} — Resident ID</div></div>
@@ -9346,7 +9357,7 @@ function renderHelp() {
             <li><strong>Copy Mon's hours to all working days</strong> &mdash; quickest setup</li>
           </ul>
         </li>
-        <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system warns 30 days before either expires.</li>
+        <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system reminds you 5 days before an IQAMA expires and 2 months before a Baladiya health card expires.</li>
         <li>Save. Or skip this step entirely &mdash; the employee can sign themselves up at the live URL (filling in their own name, phone, position, branch). Either way, after they sign up they land in <strong>Pending approval</strong> &mdash; you must explicitly approve them before they can use the system (see next section). After approval, fill in their salary and schedule.</li>
       </ol>
 
@@ -9399,7 +9410,7 @@ function renderHelp() {
       </div>
 
       <h2 id="guide-renew">Renewing IQAMA / Baladiya</h2>
-      <p>When <strong>Documents</strong> shows an amber badge, someone's documents are expiring within 30 days.</p>
+      <p>When <strong>Records</strong> (or <strong>Documents</strong> inside it) shows an amber badge, someone's IQAMA is within 5 days of expiring, or their Baladiya card is within 2 months.</p>
       <ol>
         <li><strong>Documents &rarr; Renew</strong> on the row.</li>
         <li>Modal pre-fills the new expiry: <strong>+3 months</strong> for IQAMA, <strong>+1 year</strong> for Baladiya from today.</li>
