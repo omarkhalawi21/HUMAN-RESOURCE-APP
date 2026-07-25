@@ -346,6 +346,7 @@ const I18N = {
     actions: "Actions",
     save: "Save",
     cancel: "Cancel",
+    close: "Close",
     edit: "Edit",
     delete: "Delete",
     approve: "Approve",
@@ -568,6 +569,7 @@ const I18N = {
     actions: "إجراءات",
     save: "حفظ",
     cancel: "إلغاء",
+    close: "إغلاق",
     edit: "تعديل",
     delete: "حذف",
     approve: "موافقة",
@@ -1347,6 +1349,14 @@ function taskToDb(t) {
     priority: t.priority||'normal', status: t.status||'todo',
     due_date: t.dueDate||null, completed_at: t.completedAt||null,
     created_by: t.createdBy||null, updated_at: new Date().toISOString(),
+  };
+}
+function mapTaskEventFromDb(r) {
+  return {
+    id: r.id, taskId: r.task_id, actorId: r.actor_id||null,
+    kind: r.kind||'comment', body: r.body||'',
+    fromStatus: r.from_status||null, toStatus: r.to_status||null,
+    createdAt: r.created_at,
   };
 }
 function mapChecklistFromDb(r) {
@@ -11655,14 +11665,178 @@ function openTaskModal(id) {
 async function changeTaskStatus(id, status) {
   const t = (state.tasks||[]).find(x => x.id===id);
   if (!t || !TASK_STATUSES[status]) return;
+  const prevStatus = t.status;
+  if (prevStatus === status) return;
   const completedAt = status === 'done' ? (t.completedAt || new Date().toISOString()) : null;
   const { data, error } = await sb.from('tasks')
     .update({ status, completed_at: completedAt, updated_at: new Date().toISOString() })
     .eq('id', id).select().single();
   if (error) { toast(humanizeError(error), 'error'); render(); return; }
   Object.assign(t, mapTaskFromDb(data));
+  // Log the transition to the timeline (best-effort; a failed insert must
+  // not undo the status change the user already made).
+  await logTaskEvent(id, 'status', { fromStatus: prevStatus, toStatus: status });
   render();
+  refreshTaskDetailBody(id);
   toast(`Marked ${TASK_STATUSES[status].label}`, 'success');
+}
+
+/* -------------------- TASK ACTIVITY (comments + status timeline) --------------------
+   Events are an unbounded per-task series, so they are NOT bulk-loaded — the
+   detail modal fetches a task's events on open (state.taskEventsCache[taskId]).
+   `_taskDetailId` tracks which task's modal is open so mutations can refresh
+   just the modal body in place instead of re-opening it. */
+let _taskDetailId = null;
+function taskCanCollaborate(t) {
+  return !!t && (hasRole('admin','operations') || t.assignedTo === (currentEmployee()?.id));
+}
+function taskEmpName(id) {
+  if (!id) return 'System';
+  const e = (state.employees||[]).find(x => x.id === id);
+  return e ? (e.firstName + ' ' + (e.lastName||'')).trim() : 'Someone';
+}
+// Compact "2d 3h" / "4h 10m" / "8m" / "just now" from a millisecond span.
+function humanDuration(ms) {
+  const s = Math.max(0, Math.round(ms/1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s/60), h = Math.floor(m/60), d = Math.floor(h/24);
+  if (d >= 1) return `${d}d${h%24?' '+(h%24)+'h':''}`;
+  if (h >= 1) return `${h}h${m%60?' '+(m%60)+'m':''}`;
+  return `${m}m`;
+}
+function timeAgo(iso) {
+  if (!iso) return '';
+  return humanDuration(Date.now() - new Date(iso).getTime()) + (Date.now() - new Date(iso).getTime() < 60000 ? '' : ' ago');
+}
+async function logTaskEvent(taskId, kind, opts = {}) {
+  const me = currentEmployee();
+  const row = {
+    task_id: taskId, actor_id: me?.id || null, kind,
+    body: opts.body || null, from_status: opts.fromStatus || null, to_status: opts.toStatus || null,
+  };
+  const { data, error } = await sb.from('task_events').insert(row).select().single();
+  if (error) { console.error('task event insert failed:', error); return null; }
+  const ev = mapTaskEventFromDb(data);
+  if (state.taskEventsCache && state.taskEventsCache[taskId]) state.taskEventsCache[taskId].push(ev);
+  return ev;
+}
+async function loadTaskEvents(taskId) {
+  state.taskEventsCache = state.taskEventsCache || {};
+  const { data, error } = await sb.from('task_events').select('*')
+    .eq('task_id', taskId).order('created_at', { ascending: true });
+  // Cache [] on error too, so the modal renders instead of hanging.
+  state.taskEventsCache[taskId] = error ? [] : (data||[]).map(mapTaskEventFromDb);
+  if (error) console.error('load task events failed:', error);
+  return state.taskEventsCache[taskId];
+}
+
+async function openTaskDetail(taskId) {
+  const tk = (state.tasks||[]).find(x => x.id === taskId);
+  if (!tk) return;
+  await loadTaskEvents(taskId);
+  _taskDetailId = taskId;
+  openModal(escapeHTML(tk.title || 'Task'), `<div id="task-detail-body">${taskDetailBodyHTML(taskId)}</div>`,
+    () => true, { saveLabel: t('close') });
+}
+function refreshTaskDetailBody(taskId) {
+  if (_taskDetailId !== taskId) return;
+  const el = document.getElementById('task-detail-body');
+  if (el) el.innerHTML = taskDetailBodyHTML(taskId);
+}
+function taskDetailBodyHTML(taskId) {
+  const tk = (state.tasks||[]).find(x => x.id === taskId);
+  if (!tk) return '';
+  const events = (state.taskEventsCache?.[taskId]) || [];
+  const canEdit = taskCanCollaborate(tk);
+  const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
+
+  // Duration read-out: total open time, or turnaround if completed.
+  const createdMs = tk.createdAt ? new Date(tk.createdAt).getTime() : null;
+  let durationLine = '';
+  if (createdMs) {
+    if (tk.status === 'done' && tk.completedAt) {
+      durationLine = `<span class="text-emerald-700 font-semibold">Completed in ${humanDuration(new Date(tk.completedAt).getTime()-createdMs)}</span>`;
+    } else {
+      durationLine = `<span class="text-slate-600">Open for ${humanDuration(Date.now()-createdMs)}</span>`;
+    }
+  }
+
+  // Meta bar
+  const statusControl = canEdit
+    ? `<select onchange="changeTaskStatus('${tk.id}', this.value)" class="input !py-1.5 !w-auto text-sm">
+        ${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${tk.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}
+      </select>`
+    : `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${(TASK_STATUSES[tk.status]||TASK_STATUSES.todo).pill}">${escapeHTML((TASK_STATUSES[tk.status]||TASK_STATUSES.todo).label)}</span>`;
+
+  const meta = `
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm mb-4">
+      <div class="flex items-center gap-2"><span class="text-slate-400 text-xs uppercase tracking-wider">Status</span> ${statusControl}</div>
+      <div><span class="text-slate-400 text-xs uppercase tracking-wider">Priority</span> <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></div>
+      <div><span class="text-slate-400 text-xs uppercase tracking-wider">Assignee</span> <span class="text-slate-700">${escapeHTML(taskEmpName(tk.assignedTo))}</span></div>
+      ${tk.dueDate?`<div><span class="text-slate-400 text-xs uppercase tracking-wider">Due</span> <span class="${taskOverdue(tk)?'text-rose-600 font-medium':'text-slate-700'}">${escapeHTML(fmtDate(tk.dueDate))}</span></div>`:''}
+      ${tk.department?`<div><span class="text-slate-400 text-xs uppercase tracking-wider">Dept</span> <span class="text-slate-700">${escapeHTML(tk.department)}</span></div>`:''}
+    </div>`;
+
+  const desc = tk.description
+    ? `<div class="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 mb-4 whitespace-pre-wrap">${escapeHTML(tk.description)}</div>` : '';
+
+  // Timeline: synthesize a "created" entry, then the stored events, ascending.
+  const timeline = [];
+  timeline.push({ kind:'created', actorId: tk.createdBy, createdAt: tk.createdAt });
+  events.forEach(e => { if (e.kind !== 'created') timeline.push(e); });
+  timeline.sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
+
+  const rows = timeline.map((e, i) => {
+    const prev = timeline[i-1];
+    const gap = (prev && e.createdAt && prev.createdAt)
+      ? `<span class="text-[11px] text-slate-400"> · ${humanDuration(new Date(e.createdAt)-new Date(prev.createdAt))} later</span>` : '';
+    let dot = 'bg-slate-300', line = '';
+    if (e.kind === 'created') {
+      line = `<span class="font-medium text-slate-700">${escapeHTML(taskEmpName(e.actorId))}</span> created this task`;
+      dot = 'bg-brand-400';
+    } else if (e.kind === 'status') {
+      const to = TASK_STATUSES[e.toStatus]?.label || e.toStatus;
+      const from = TASK_STATUSES[e.fromStatus]?.label || e.fromStatus;
+      dot = e.toStatus==='done' ? 'bg-emerald-500' : e.toStatus==='blocked' ? 'bg-rose-500' : 'bg-blue-500';
+      line = `<span class="font-medium text-slate-700">${escapeHTML(taskEmpName(e.actorId))}</span> moved <span class="text-slate-500">${escapeHTML(from||'—')}</span> → <span class="font-medium text-slate-700">${escapeHTML(to)}</span>`;
+    } else {
+      dot = 'bg-brand-500';
+      line = `<span class="font-medium text-slate-700">${escapeHTML(taskEmpName(e.actorId))}</span>: <span class="text-slate-700 whitespace-pre-wrap">${escapeHTML(e.body||'')}</span>`;
+    }
+    return `<div class="flex gap-3">
+        <div class="flex flex-col items-center">
+          <span class="w-2.5 h-2.5 rounded-full ${dot} mt-1.5 shrink-0"></span>
+          ${i<timeline.length-1?'<span class="w-px flex-1 bg-slate-200 my-1"></span>':''}
+        </div>
+        <div class="pb-4 min-w-0 flex-1">
+          <div class="text-sm">${line}</div>
+          <div class="text-[11px] text-slate-400">${escapeHTML(fmtDate(e.createdAt))} · ${escapeHTML(timeAgo(e.createdAt))}${gap}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const commentBox = canEdit ? `
+    <form class="mt-2 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('textarea'); addTaskComment('${tk.id}', i.value); i.value='';">
+      <textarea class="input flex-1 text-sm" rows="2" maxlength="1000" placeholder="Add a note or comment…"></textarea>
+      <button type="submit" class="btn btn-primary btn-sm self-end">${icon('plus','w-4 h-4')} ${escapeHTML(t('add'))}</button>
+    </form>` : '';
+
+  return `
+    ${meta}
+    ${desc}
+    <div class="flex items-center gap-2 mb-3">
+      <h4 class="font-display text-base font-semibold text-slate-900">Activity</h4>
+      ${durationLine ? `<span class="text-xs">· ${durationLine}</span>` : ''}
+    </div>
+    <div>${rows}</div>
+    ${commentBox}`;
+}
+async function addTaskComment(taskId, body) {
+  const text = (body||'').trim();
+  if (!text) return;
+  const ev = await logTaskEvent(taskId, 'comment', { body: text });
+  if (!ev) { toast('Could not post comment', 'error'); return; }
+  refreshTaskDetailBody(taskId);
 }
 async function deleteTask(id) {
   if (!hasRole('admin','operations')) return;
@@ -11800,7 +11974,8 @@ function myWorkBoardHTML(mine) {
       const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
       const over = taskOverdue(tk);
       return `<div draggable="true" ondragstart="myWorkDragStart(event,'${tk.id}')" ondragend="myWorkDragEnd(event)"
-          class="bg-white rounded-xl border ${over?'border-rose-200':'border-slate-200'} p-3 mb-2 shadow-sm" style="cursor:grab">
+          onclick="openTaskDetail('${tk.id}')" title="Open details"
+          class="bg-white rounded-xl border ${over?'border-rose-200':'border-slate-200'} p-3 mb-2 shadow-sm hover:shadow-pop transition-all" style="cursor:grab">
         <div class="text-sm font-medium text-slate-900">${escapeHTML(tk.title)}</div>
         ${tk.description ? `<div class="text-xs text-slate-500 mt-1 truncate">${escapeHTML(tk.description)}</div>` : ''}
         <div class="flex items-center gap-2 mt-2 flex-wrap">
@@ -12117,7 +12292,7 @@ function renderMyWork() {
       <td>
         <div class="font-medium text-slate-900 flex items-center gap-2 flex-wrap">
           ${isOver?`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3 h-3')} ${escapeHTML(task_overdue_label)}</span>`:''}
-          <span>${escapeHTML(tk.title)}</span>
+          <button type="button" onclick="openTaskDetail('${tk.id}')" class="text-start hover:text-brand-700 hover:underline">${escapeHTML(tk.title)}</button>
         </div>
         ${tk.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(tk.description)}</div>` : ''}
       </td>
@@ -21113,6 +21288,7 @@ function closeModal() {
   document.getElementById('modal-root')?.remove();
   modalOnSave = null;
   // Reset transient form state so it can't bleed into the next modal.
+  _taskDetailId = null;
   if (typeof _pendingPhoto !== 'undefined')  _pendingPhoto = null;
   if (typeof _archiveFile !== 'undefined')   _archiveFile = null;
   if (typeof _travelFile !== 'undefined')    _travelFile = null;

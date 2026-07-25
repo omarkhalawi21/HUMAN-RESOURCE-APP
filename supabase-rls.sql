@@ -4970,6 +4970,72 @@ CREATE POLICY "receipts_delete_admin_acct_maint"
   USING (public.has_role(ARRAY['admin','accounting','maintenance']));
 
 -- =============================================================
+-- 90. TASK ACTIVITY — comments + status-change timeline
+--    One append-only row per event on a task: a 'comment' (note),
+--    a 'status' change (from -> to), or the initial 'created'.
+--    Powers the task detail modal's timeline and the "how long did
+--    it take" duration read-out. Visibility mirrors tasks: any
+--    authenticated user can read (tasks_select_all is USING true);
+--    a comment/status event can be added by admin/operations or the
+--    task's own assignee; an event is deletable by its author or
+--    admin/operations.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.task_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  task_id     uuid NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+  actor_id    uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  kind        text NOT NULL CHECK (kind IN ('comment','status','created')),
+  body        text,
+  from_status text,
+  to_status   text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS task_events_task_idx ON public.task_events(task_id, created_at);
+
+ALTER TABLE public.task_events ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='task_events'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "task_events_select_all"
+  ON public.task_events FOR SELECT TO authenticated
+  USING (true);
+CREATE POLICY "task_events_insert_ops_or_assignee"
+  ON public.task_events FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.tasks t
+               JOIN public.employees e ON e.id = t.assigned_to
+               WHERE t.id = task_events.task_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "task_events_update_author_or_ops"
+  ON public.task_events FOR UPDATE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e
+               WHERE e.id = task_events.actor_id AND e.user_id = auth.uid())
+  )
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e
+               WHERE e.id = task_events.actor_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "task_events_delete_author_or_ops"
+  ON public.task_events FOR DELETE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e
+               WHERE e.id = task_events.actor_id AND e.user_id = auth.uid())
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
