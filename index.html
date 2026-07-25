@@ -11784,8 +11784,9 @@ function myWorkDrop(e, status) {
 }
 
 // Kanban board for the caller's tasks (`mine`): one column per TASK_STATUS,
-// cards draggable between columns. Done is capped so a long history doesn't
-// balloon the column; the List view still shows the full recent-done section.
+// cards draggable between columns. The Done column is capped at the 20 most
+// recent so a long history doesn't balloon it — this is the only place
+// completed tasks surface on My Work (the List view no longer lists them).
 function myWorkBoardHTML(mine) {
   const prioRank = { urgent:0, high:1, normal:2, low:3 };
   const cols = Object.entries(TASK_STATUSES).map(([key, meta]) => {
@@ -11830,8 +11831,6 @@ function renderMyWork() {
   const prioRank = { urgent:0, high:1, normal:2, low:3 };
   const active = mine.filter(t => t.status!=='done' && !taskOverdue(t))
     .sort((a,b)=> (prioRank[a.priority]??2)-(prioRank[b.priority]??2) || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
-  const done = mine.filter(t => t.status==='done')
-    .sort((a,b)=>(b.completedAt||b.updatedAt||'').localeCompare(a.completedAt||a.updatedAt||'')).slice(0,10);
 
   const header = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
@@ -12159,9 +12158,8 @@ function renderMyWork() {
   </div>`;
   const tasksBody = taskView === 'board'
     ? myWorkBoardHTML(mine)
-    : ( section(t('section_overdue'),       overdue, 'text-rose-700')
-      + section(t('section_to_do'),         active,  null)
-      + section(t('section_recently_done'), done,    'text-slate-500') );
+    : ( section(t('section_overdue'), overdue, 'text-rose-700')
+      + section(t('section_to_do'),   active,  null) );
 
   return header
     + actionSection
