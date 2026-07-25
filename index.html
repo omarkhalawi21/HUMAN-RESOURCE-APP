@@ -12388,9 +12388,12 @@ function renderMyWork() {
       .filter(l => l.ownerId === me.id)
       .slice()
       .sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.createdAt||'').localeCompare(b.createdAt||''));
-    const tHead = `<div class="flex items-center justify-between gap-2 mb-2 mt-2">
-      <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('my_lists'))}</h3>
-      <button onclick="promptNewTodoList()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('new_list'))}</button>
+    const tHead = `<div class="flex items-center justify-between gap-2 mb-3 mt-2">
+      <div class="flex items-center gap-2">
+        <h3 class="font-display text-base font-semibold text-slate-900">My boards</h3>
+        <span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 flex items-center gap-1">${icon('eyeOff','w-3 h-3')} Private to you</span>
+      </div>
+      <button onclick="promptNewTodoList()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} New board</button>
     </div>`;
     if (myLists.length === 0) {
       todoSection = `<div class="mb-6">${tHead}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-500 text-sm">${escapeHTML(t('no_lists_cta'))}</div></div>`;
@@ -12412,54 +12415,46 @@ function renderMyWork() {
       // No per-item delete: users either check items off (done items
       // collapse via todoShowDone) or delete the whole list. Keeps the
       // row dense and mirrors how the checklist UI handles "remove".
-      const itemRow = (listId, it, ch) => `<button type="button" onclick="toggleTodoItem('${listId}','${it.id}')" class="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50">
-        <span class="w-5 h-5 rounded border ${ch?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${ch?icon('check','w-3.5 h-3.5'):''}</span>
-        <span class="flex-1 text-sm ${ch?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(it.text||'')}</span>
-      </button>`;
-      const cards = myLists.map(l => {
-        // Use todoEffectiveItems() — recurring lists virtual-reset
-        // themselves at period boundaries even before the DB catches
-        // up. The async syncRecurringTodoResets() (fired below) brings
-        // persistence in sync so a refresh shows the same state.
+      // Each personal list renders as a private Trello column of cards.
+      const itemCard = (listId, it, ch) => `<div onclick="toggleTodoItem('${listId}','${it.id}')" class="bg-white rounded-xl border border-slate-200 shadow-sm p-2.5 mb-2 flex items-start gap-2 hover:shadow-pop transition-all" style="cursor:pointer">
+        <span class="w-4 h-4 rounded border ${ch?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0 mt-0.5">${ch?icon('check','w-3 h-3'):''}</span>
+        <span class="text-sm ${ch?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.text||'')}</span>
+      </div>`;
+      const columns = myLists.map((l, idx) => {
+        // todoEffectiveItems() virtual-resets recurring lists at period edges.
         const items = todoEffectiveItems(l);
-        const doneCount = items.filter(it=>it.done).length;
         const total = items.length;
+        const doneCount = items.filter(it=>it.done).length;
         const pct = total ? Math.round(doneCount/total*100) : 0;
-        const allDone = total>0 && doneCount===total;
         const pending = items.filter(it=>!it.done);
         const done = items.filter(it=>it.done);
         const shown = todoShowDone.has(l.id);
         const recurrenceLbl = todoRecurrenceLabel(l.recurrence);
-        return `<div data-list-id="${l.id}" class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
-          <div class="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
-            <div class="flex items-center gap-2 min-w-0">
-              ${canDrag ? `<button type="button" onpointerdown="todoDragStart(event,'${l.id}')" aria-label="${escapeHTML(td_drag)}" title="${escapeHTML(td_drag)}" class="text-slate-300 hover:text-brand-700 shrink-0 p-1" style="touch-action:none;cursor:grab;margin-left:-2px">${icon('grip','w-4 h-4')}</button>` : ''}
-              <h4 class="font-semibold text-slate-900 truncate">${escapeHTML(l.name)}</h4>
-              ${recurrenceLbl ? `<span class="badge badge-blue !text-[10px] !px-1.5 !py-0.5" title="Items will uncheck themselves at the start of the next ${l.recurrence==='daily'?'day':l.recurrence==='weekly'?'week (Monday)':'month (1st)'}">${icon('refresh','w-3 h-3 inline')} ${escapeHTML(recurrenceLbl)}</span>` : ''}
-              ${allDone?`<span class="badge badge-green">${escapeHTML(td_done)}</span>`:''}
-            </div>
-            <div class="flex items-center gap-3 text-xs">
-              <span class="text-slate-500 tabular-nums">${doneCount}/${total} · ${pct}%</span>
-              <button onclick="promptRenameTodoList('${l.id}')" class="text-slate-500 hover:text-brand-700 hover:underline">${escapeHTML(td_rename)}</button>
-              <button onclick="deleteTodoList('${l.id}')" class="text-rose-500 hover:underline">${escapeHTML(td_delete)}</button>
+        const color = LIST_COLORS[idx % LIST_COLORS.length];
+        return `<div data-list-id="${l.id}" class="shrink-0 w-72 bg-slate-50 rounded-2xl p-2 flex flex-col" style="max-height:72vh">
+          <div class="flex items-center gap-2 px-2 py-2">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${color}"></span>
+            <span class="font-semibold text-sm text-slate-800 truncate">${escapeHTML(l.name)}</span>
+            ${recurrenceLbl ? `<span class="text-[10px] text-slate-400" title="Resets each ${l.recurrence==='daily'?'day':l.recurrence==='weekly'?'week':'month'}">${icon('refresh','w-3 h-3 inline')}</span>` : ''}
+            <span class="text-xs text-slate-400">${doneCount}/${total}</span>
+            <div class="ms-auto flex items-center gap-1">
+              <button onclick="promptRenameTodoList('${l.id}')" title="${escapeHTML(td_rename)}" class="text-slate-400 hover:text-brand-600 p-1 rounded hover:bg-slate-200">${icon('edit','w-3.5 h-3.5')}</button>
+              <button onclick="deleteTodoList('${l.id}')" title="${escapeHTML(td_delete)}" class="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-slate-200">${icon('trash','w-3.5 h-3.5')}</button>
             </div>
           </div>
-          <div class="h-1.5 bg-slate-100"><div class="h-full ${allDone?'bg-emerald-500':'bg-brand-500'}" style="width:${pct}%"></div></div>
-          <div class="divide-y divide-slate-50">
-            ${pending.length
-              ? pending.map(it=>itemRow(l.id,it,false)).join('')
-              : `<div class="p-4 text-sm ${total===0?'text-slate-400':'text-emerald-600'}">${escapeHTML(total===0?td_no_items_add:td_all_done_pend)}</div>`}
-            ${done.length
-              ? `<button type="button" onclick="todoToggleDone('${l.id}')" class="w-full text-left px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2">${icon('check','w-3.5 h-3.5')} ${done.length} ${escapeHTML(td_done)} · ${shown?escapeHTML(td_hide):escapeHTML(td_show)}</button>${shown ? done.map(it=>itemRow(l.id,it,true)).join('') : ''}`
-              : ''}
+          <div class="h-1 mx-2 mb-2 rounded-full bg-slate-200 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div></div>
+          <div class="overflow-y-auto px-1 flex-1">
+            ${pending.map(it=>itemCard(l.id,it,false)).join('')}
+            ${total===0 ? `<div class="text-xs text-slate-400 text-center py-6">${escapeHTML(td_no_items_add)}</div>` : (!pending.length ? `<div class="text-xs text-emerald-600 text-center py-4">${escapeHTML(td_all_done_pend)}</div>` : '')}
+            ${done.length ? `<button type="button" onclick="todoToggleDone('${l.id}')" class="w-full text-left px-1 py-1.5 text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1">${icon('check','w-3.5 h-3.5')} ${done.length} ${escapeHTML(td_done)} · ${shown?escapeHTML(td_hide):escapeHTML(td_show)}</button>${shown ? done.map(it=>itemCard(l.id,it,true)).join('') : ''}` : ''}
           </div>
-          <form class="p-3 border-t border-slate-100 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('input'); addTodoItem('${l.id}', i.value); i.value='';">
-            <input class="input flex-1" placeholder="${escapeHTML(td_add_task_ph)}" maxlength="500" />
-            <button type="submit" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(td_add)}</button>
+          <form class="p-1.5 flex gap-1" onsubmit="event.preventDefault(); const i=this.querySelector('input'); addTodoItem('${l.id}', i.value); i.value='';">
+            <input class="input flex-1 !py-1.5 text-sm" placeholder="${escapeHTML(td_add_task_ph)}" maxlength="500" />
+            <button type="submit" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')}</button>
           </form>
         </div>`;
       }).join('');
-      todoSection = `<div class="mb-6">${tHead}<div id="todo-lists-dnd">${cards}</div></div>`;
+      todoSection = `<div class="mb-6">${tHead}<div id="todo-lists-dnd" class="flex gap-3 overflow-x-auto pb-3">${columns}</div></div>`;
     }
   }
 
@@ -12518,23 +12513,12 @@ function renderMyWork() {
       </div>
     </div>` : '';
 
-  // List / Board toggle for the assigned-tasks area. List = the status-grouped
-  // tables (default); Board = the Kanban. Toggle only shows when there are
-  // tasks (the mine.length===0 early return handles the empty case above).
-  const taskView = getMyWorkTaskView();
-  const viewToggle = `<div class="flex items-center gap-1 mb-4">
-    <button type="button" onclick="setMyWorkTaskView('list')" class="tab ${taskView==='list'?'active':''}">${icon('check','w-4 h-4 inline')} ${escapeHTML(t('view_list'))}</button>
-    <button type="button" onclick="setMyWorkTaskView('board')" class="tab ${taskView==='board'?'active':''}">${icon('grip','w-4 h-4 inline')} ${escapeHTML(t('view_board'))}</button>
-  </div>`;
-  const tasksBody = taskView === 'board'
-    ? myWorkBoardHTML(mine)
-    : ( section(t('section_overdue'), overdue, 'text-rose-700')
-      + section(t('section_to_do'),   active,  null) );
-
+  // Assigned tasks render as a Kanban board (status columns) — the old
+  // List/Board toggle was removed per owner request. The personal lists render
+  // below as private Trello-style boards (owner-only, unchanged RLS).
   return header
     + actionSection
-    + viewToggle
-    + tasksBody
+    + myWorkBoardHTML(mine)
     + clSection
     + todoSection;
 }
