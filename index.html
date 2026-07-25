@@ -18,7 +18,7 @@
 <link rel="apple-touch-icon" href="logo.png" />
 <meta name="apple-mobile-web-app-title" content="Hassad" />
 <meta name="application-name" content="Hassad" />
-<meta name="theme-color" content="#7a3b14" />
+<meta name="theme-color" content="#a8172e" />
 <!-- Self-hosted Tailwind, pre-built via `npm run build`. Source: tailwind.input.css + tailwind.config.js. -->
 <link rel="stylesheet" href="tailwind.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
@@ -40,67 +40,67 @@
   body {
     font-family: 'Inter', 'Cairo', system-ui, sans-serif;
     color: #2a1f15;
-    background-color: #fbf7f1;
+    background-color: #fbfbfc;
     /* Uncoated-paper grain over a faint warm vignette — gives the cream
        surface a tactile, roastery brand-book feel instead of a dead fill. */
     background-image:
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.038'/%3E%3C/svg%3E"),
-      radial-gradient(ellipse 130% 90% at 50% -10%, #fdf9f2 0%, #fbf7f1 46%, #f6efe2 100%);
+      radial-gradient(ellipse 130% 90% at 50% -10%, #fffdfd 0%, #fbfbfc 46%, #f5f6f8 100%);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
   }
   [dir="rtl"] body { font-family: 'Cairo', 'Inter', system-ui, sans-serif; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: #e1d4be; border-radius: 8px; border: 2px solid #fbf7f1; }
-  ::-webkit-scrollbar-thumb:hover { background: #c8b390; }
-  .nav-item.active { background: #fbf6ef; color: #6e4220; font-weight: 600; }
-  .nav-item.active .icon { color: #8a5728; }
+  ::-webkit-scrollbar-thumb { background: #e2e2e6; border-radius: 8px; border: 2px solid #fbfbfc; }
+  ::-webkit-scrollbar-thumb:hover { background: #cbced4; }
+  .nav-item.active { background: #fff1f2; color: #a8172e; font-weight: 600; }
+  .nav-item.active .icon { color: #c81e3a; }
   .stat-up   { color: #047857; background: #ecfdf5; }
   .stat-down { color: #b91c1c; background: #fef2f2; }
   .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .badge-green  { background: #ecfdf5; color: #047857; }
   .badge-amber  { background: #fffbeb; color: #b45309; }
   .badge-red    { background: #fef2f2; color: #b91c1c; }
-  .badge-blue   { background: #fbf6ef; color: #6e4220; }
-  .badge-slate  { background: #f5f0e6; color: #6b5a3f; }
+  .badge-blue   { background: #fff1f2; color: #a8172e; }
+  .badge-slate  { background: #f1f5f9; color: #64748b; }
   .badge-purple { background: #fdf2f8; color: #c44a4a; }
   .fade-in { animation: fade .2s ease-out; }
   @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   .pulse-ring {
-    box-shadow: 0 0 0 0 rgba(168,112,53,0.5);
+    box-shadow: 0 0 0 0 rgba(223,50,71,0.5);
     animation: pulse-ring 2s infinite;
   }
   @keyframes pulse-ring {
-    0%   { box-shadow: 0 0 0 0 rgba(168,112,53,0.4); }
-    70%  { box-shadow: 0 0 0 18px rgba(168,112,53,0); }
-    100% { box-shadow: 0 0 0 0 rgba(168,112,53,0); }
+    0%   { box-shadow: 0 0 0 0 rgba(223,50,71,0.4); }
+    70%  { box-shadow: 0 0 0 18px rgba(223,50,71,0); }
+    100% { box-shadow: 0 0 0 0 rgba(223,50,71,0); }
   }
   .dropdown { display: none; }
   .dropdown.open { display: block; }
-  .modal-backdrop { background: rgba(42,31,21,0.5); backdrop-filter: blur(2px); }
-  .skeleton { background: linear-gradient(90deg,#f4e8d4 0%,#fbf7f1 50%,#f4e8d4 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+  .modal-backdrop { background: rgba(15,23,42,0.5); backdrop-filter: blur(2px); }
+  .skeleton { background: linear-gradient(90deg,#ffe4e6 0%,#fbfbfc 50%,#ffe4e6 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
   @keyframes skel { from {background-position: 200% 0;} to {background-position: -200% 0;} }
-  .hover-row:hover { background: #fbf6ef; }
-  .input { width: 100%; border: 1px solid #e8dcc4; border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; transition: border .15s, box-shadow .15s; background: white; color: #2a1f15; }
-  .input:focus { border-color: #a87035; box-shadow: 0 0 0 3px rgba(168,112,53,0.18); }
+  .hover-row:hover { background: #fff1f2; }
+  .input { width: 100%; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; transition: border .15s, box-shadow .15s; background: white; color: #2a1f15; }
+  .input:focus { border-color: #df3247; box-shadow: 0 0 0 3px rgba(223,50,71,0.18); }
   /* Compact pill-style dropdown for filter rows */
   .pill {
     width: auto; min-width: 0;
-    border: 1px solid #e8dcc4; border-radius: 999px;
+    border: 1px solid #e5e7eb; border-radius: 999px;
     padding: 5px 28px 5px 12px; font-size: 12px; font-weight: 500;
-    background: white; color: #4a3922;
+    background: white; color: #475569;
     cursor: pointer; outline: none;
     appearance: none; -webkit-appearance: none; -moz-appearance: none;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5a3f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
     background-repeat: no-repeat; background-position: right 10px center; background-size: 10px;
     transition: all .15s;
   }
-  .pill:hover { border-color: #c8b390; background-color: #fbf6ef; }
-  .pill:focus { border-color: #a87035; box-shadow: 0 0 0 3px rgba(168,112,53,0.18); }
-  .pill.active { background: #6e4220; color: white; border-color: #6e4220; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); }
+  .pill:hover { border-color: #cbced4; background-color: #fff1f2; }
+  .pill:focus { border-color: #df3247; box-shadow: 0 0 0 3px rgba(223,50,71,0.18); }
+  .pill.active { background: #a8172e; color: white; border-color: #a8172e; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>"); }
   /* Compact pill-style search */
   .pill-search { border-radius: 999px; padding: 5px 12px 5px 32px; font-size: 12px; background-position: 10px center; }
-  .label { font-size: 12px; font-weight: 600; color: #6b5a3f; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
+  .label { font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.04em; }
   /* Add `label-required` (alongside `.label`) on form labels whose
      input has the `required` attribute. Renders a red asterisk after
      the label text so users see the required hint *before* hitting
@@ -108,19 +108,19 @@
      the native "Please fill out this field" tooltip. */
   .label-required::after { content: ' *'; color: #b91c1c; font-weight: 700; }
   .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; transition: all .15s; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
-  .btn-primary { background: #6e4220; color: white; }
-  .btn-primary:hover { background: #58351c; }
+  .btn-primary { background: #df3247; color: white; }
+  .btn-primary:hover { background: #c81e3a; }
   .btn-accent { background: #c44a4a; color: white; }
   .btn-accent:hover { background: #a93838; }
-  .btn-ghost { background: white; color: #4a3922; border-color: #e8dcc4; }
-  .btn-ghost:hover { background: #fbf6ef; }
+  .btn-ghost { background: white; color: #475569; border-color: #e5e7eb; }
+  .btn-ghost:hover { background: #fff1f2; }
   .btn-danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
   .btn-danger:hover { background: #fee2e2; }
   .btn-success { background: #047857; color: white; }
   .btn-success:hover { background: #036647; }
   .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
   .clock-tile {
-    background: linear-gradient(135deg, #422813 0%, #6e4220 45%, #a87035 100%);
+    background: linear-gradient(135deg, #6b0f20 0%, #a8172e 45%, #df3247 100%);
     color: white;
     position: relative;
     overflow: hidden;
@@ -129,34 +129,34 @@
     content: '';
     position: absolute; top: -30px; right: -30px;
     width: 140px; height: 140px;
-    background: radial-gradient(circle, rgba(196,74,74,0.35), transparent 70%);
+    background: radial-gradient(circle, rgba(223,50,71,0.35), transparent 70%);
     pointer-events: none;
   }
   table.data { width: 100%; border-collapse: separate; border-spacing: 0; }
-  table.data th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b5a3f; text-align: start; padding: 14px 16px; background: #fbf6ef; border-bottom: 1px solid #e8dcc4; }
-  table.data td { padding: 14px 16px; border-bottom: 1px solid #f4e8d4; font-size: 14px; color: #2a1f15; }
+  table.data th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; text-align: start; padding: 14px 16px; background: #fff1f2; border-bottom: 1px solid #e5e7eb; }
+  table.data td { padding: 14px 16px; border-bottom: 1px solid #ffe4e6; font-size: 14px; color: #2a1f15; }
   table.data tbody tr:last-child td { border-bottom: none; }
   .avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; font-weight: 600; color: white; flex-shrink: 0; overflow: hidden; }
   .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .toast {
     position: fixed; top: 20px; right: 20px; z-index: 100;
     background: #2a1f15; color: white; padding: 12px 18px; border-radius: 10px;
-    font-size: 14px; font-weight: 500; box-shadow: 0 10px 30px rgba(42,31,21,0.25);
+    font-size: 14px; font-weight: 500; box-shadow: 0 10px 30px rgba(15,23,42,0.25);
     animation: slideIn .25s ease-out;
   }
   [dir="rtl"] .toast { right: auto; left: 20px; animation: slideInL .25s ease-out; }
   @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes slideInL { from { transform: translateX(-20px); opacity: 0; } to { transform: none; opacity: 1; } }
-  .tab { padding: 10px 16px; border: 0; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #6b5a3f; cursor: pointer; transition: all .15s; background: transparent; font-family: inherit; }
-  .tab.active { color: #6e4220; border-bottom-color: #a87035; }
+  .tab { padding: 10px 16px; border: 0; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; color: #64748b; cursor: pointer; transition: all .15s; background: transparent; font-family: inherit; }
+  .tab.active { color: #a8172e; border-bottom-color: #df3247; }
   .tab:hover:not(.active) { color: #2a1f15; }
-  .tab:focus-visible { outline: 2px solid #a87035; outline-offset: 2px; border-radius: 4px; }
-  .progress-bar { height: 8px; background: #f4e8d4; border-radius: 999px; overflow: hidden; }
-  .progress-fill { height: 100%; background: linear-gradient(90deg,#a87035,#6e4220); transition: width .3s; }
+  .tab:focus-visible { outline: 2px solid #df3247; outline-offset: 2px; border-radius: 4px; }
+  .progress-bar { height: 8px; background: #ffe4e6; border-radius: 999px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg,#df3247,#a8172e); transition: width .3s; }
 
   /* Mobile responsive: hamburger sidebar */
   .sidebar-backdrop {
-    display: none; position: fixed; inset: 0; background: rgba(42,31,21,0.5);
+    display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.5);
     backdrop-filter: blur(2px); z-index: 30;
   }
   body.sidebar-open .sidebar-backdrop { display: block; }
@@ -175,7 +175,7 @@
     body { background: white; }
     .no-print, aside, header { display: none !important; }
     main { padding: 0 !important; }
-    .payslip-print { box-shadow: none !important; border: 1px solid #e8dcc4; }
+    .payslip-print { box-shadow: none !important; border: 1px solid #e5e7eb; }
   }
 
   /* RTL adjustments */
@@ -192,26 +192,26 @@
      tailwind.css loads before this block, so these same-specificity rules
      win and re-tone every card app-wide without a Tailwind rebuild. The
      shipped shadows used cool slate (rgba(15,23,42)) which read grey-blue
-     on a warm palette; these are espresso-tinted (brand-900 #422813) with
+     on a warm palette; these are espresso-tinted (brand-900 #6b0f20) with
      a hairline ring so cards sit crisply on the textured paper. */
   .shadow-card {
     box-shadow:
-      0 0 0 1px rgba(66,40,19,0.045),
-      0 1px 2px rgba(66,40,19,0.05),
-      0 4px 12px -3px rgba(66,40,19,0.07) !important;
+      0 0 0 1px rgba(15,23,42,0.045),
+      0 1px 2px rgba(15,23,42,0.05),
+      0 4px 12px -3px rgba(15,23,42,0.07) !important;
   }
   .shadow-pop, .hover\:shadow-pop:hover {
     box-shadow:
-      0 0 0 1px rgba(66,40,19,0.055),
-      0 4px 10px -3px rgba(66,40,19,0.10),
-      0 18px 38px -10px rgba(66,40,19,0.18) !important;
+      0 0 0 1px rgba(15,23,42,0.055),
+      0 4px 10px -3px rgba(15,23,42,0.10),
+      0 18px 38px -10px rgba(15,23,42,0.18) !important;
   }
   /* Editorial top-rule + warm icon tile for dashboard stat cards. */
   .stat-card { position: relative; }
   .stat-card::before {
     content: ''; position: absolute; inset: 0 0 auto 0; height: 2px;
     border-radius: 16px 16px 0 0;
-    background: linear-gradient(90deg, #a87035 0%, #6e4220 55%, transparent 100%);
+    background: linear-gradient(90deg, #df3247 0%, #a8172e 55%, transparent 100%);
     opacity: 0.7;
   }
   .stat-numeral { font-variant-numeric: tabular-nums lining-nums; letter-spacing: -0.01em; }
@@ -1155,7 +1155,7 @@ function mapEmployeeFromDb(r) {
     // emp.isAdmin — the CLAUDE.md warns about this; new code reading
     // emp.isAdmin would silently bypass the "view as role" preview.
     systemRole: sysRole,
-    avatarColor: r.avatar_color || '#a87035',
+    avatarColor: r.avatar_color || '#df3247',
     photo: r.photo,
     leave_annual: r.leave_annual, leave_sick: r.leave_sick, leave_personal: r.leave_personal,
     consentAt:      r.consent_at,
@@ -1980,7 +1980,7 @@ async function loadBranchDeviceData() {
   const devBranch = dcDefaultBranch();
   const { data: roster, error: rErr } = await sb.rpc('branch_roster', { p_branch: devBranch });
   state.deviceRoster = rErr ? null : (roster || []).map(r => ({
-    id: r.id, firstName: r.first_name || '', lastName: r.last_name || '', avatarColor: r.avatar_color || '#a87035'
+    id: r.id, firstName: r.first_name || '', lastName: r.last_name || '', avatarColor: r.avatar_color || '#df3247'
   }));
 }
 
@@ -2823,12 +2823,12 @@ function renderLogin() {
     ? 'منصة محمصة حصاد — لتنظيم فريقك بأناقة.'
     : 'The platform for Hassad Coffee Roasters — your team, beautifully organized.';
   return `
-  <div class="min-h-screen w-full flex flex-col md:flex-row relative overflow-hidden bg-[#fbf7f1]">
+  <div class="min-h-screen w-full flex flex-col md:flex-row relative overflow-hidden bg-[#fbfbfc]">
 
     <!-- LEFT: editorial photo panel -->
     <div class="relative md:w-1/2 h-64 md:h-screen overflow-hidden">
       <div class="absolute inset-0" style="background-image: url('bg-coffee.jpg'); background-size: cover; background-position: center; transform: scale(1.04);"></div>
-      <div class="absolute inset-0" style="background: linear-gradient(165deg, rgba(42,31,21,0.35) 0%, rgba(42,31,21,0.55) 60%, rgba(42,31,21,0.85) 100%);"></div>
+      <div class="absolute inset-0" style="background: linear-gradient(165deg, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0.55) 60%, rgba(15,23,42,0.85) 100%);"></div>
       <!-- decorative grain/noise -->
       <div class="absolute inset-0 opacity-[0.08] mix-blend-overlay" style="background-image: radial-gradient(circle at 20% 30%, white 1px, transparent 1px), radial-gradient(circle at 80% 70%, white 1px, transparent 1px); background-size: 24px 24px, 32px 32px;"></div>
 
@@ -2865,7 +2865,7 @@ function renderLogin() {
 
     <!-- RIGHT: form panel -->
     <div class="md:w-1/2 flex items-center justify-center p-6 md:p-10 relative">
-      <div class="absolute inset-0 -z-10" style="background: radial-gradient(circle at 30% 20%, #f4e8d4 0%, #fbf7f1 50%, #fbf7f1 100%);"></div>
+      <div class="absolute inset-0 -z-10" style="background: radial-gradient(circle at 30% 20%, #ffe4e6 0%, #fbfbfc 50%, #fbfbfc 100%);"></div>
       <div class="w-full max-w-sm fade-in">
         <div class="mb-8">
           <div class="text-xs uppercase tracking-[0.2em] text-brand-700 mb-2">${escapeHTML(t('login_welcome'))}</div>
@@ -3618,7 +3618,7 @@ function renderDashboard() {
     <!-- Greeting + clock-in widget -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
       <div class="lg:col-span-2 bg-white rounded-2xl shadow-card p-6 md:p-8 relative overflow-hidden">
-        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #d6b475 0%, transparent 70%);"></div>
+        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fda4af 0%, transparent 70%);"></div>
         <div class="absolute bottom-0 right-0 w-32 h-32 rounded-full opacity-10" style="background: radial-gradient(circle, #c44a4a 0%, transparent 70%);"></div>
         <div class="relative flex items-start justify-between gap-4 flex-wrap">
           <div>
@@ -3831,7 +3831,7 @@ function renderDashboard() {
               ${last7Filtered.map(d => `
                 <div class="flex-1 flex flex-col items-center gap-1.5 ${d.date===filterDate?'opacity-100':'opacity-90'}">
                   <div class="text-xs font-semibold text-slate-700">${d.count}</div>
-                  <div class="w-full rounded-t-md ${d.date===filterDate?'ring-2 ring-brand-300':''}" style="height:${(d.count/maxC2)*100}%;background:linear-gradient(180deg,#c2914a,#6e4220);min-height:4px"></div>
+                  <div class="w-full rounded-t-md ${d.date===filterDate?'ring-2 ring-brand-300':''}" style="height:${(d.count/maxC2)*100}%;background:linear-gradient(180deg,#fb7185,#a8172e);min-height:4px"></div>
                   <div class="text-[10px] text-slate-500 ${d.date===filterDate?'font-bold text-brand-700':''}">${escapeHTML(d.label)}</div>
                 </div>
               `).join('')}
@@ -3982,7 +3982,7 @@ function renderDashboard() {
         if (!branchGroups[s]) sortedBranches.push([s, { total:0, present:0, late:0, absent:0, onLeave:0 }]);
       });
       const totalAll = state.employees.length;
-      const colors = ['#6e4220','#a87035','#c2914a','#d6b475','#475569','#7c3aed','#059669'];
+      const colors = ['#a8172e','#df3247','#fb7185','#fda4af','#475569','#7c3aed','#059669'];
       return `
       <div class="bg-white rounded-2xl shadow-card p-6 mt-5">
         <div class="flex items-center justify-between mb-5 flex-wrap gap-2">
@@ -4142,7 +4142,7 @@ function statCard(label, value, caption, dir, ico) {
   return `
     <div class="stat-card bg-white rounded-2xl shadow-card p-5 pt-6 hover:shadow-pop transition-all duration-200 hover:-translate-y-0.5">
       <div class="flex items-center justify-between mb-4">
-        <div class="w-11 h-11 rounded-xl flex items-center justify-center text-brand-700 ring-1 ring-brand-100" style="background:linear-gradient(135deg,#fbf6ef 0%,#f4e8d4 100%)">${icon(ico,'w-5 h-5')}</div>
+        <div class="w-11 h-11 rounded-xl flex items-center justify-center text-brand-700 ring-1 ring-brand-100" style="background:linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)">${icon(ico,'w-5 h-5')}</div>
         <span class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${dir==='up'?'stat-up':'stat-down'}">${escapeHTML(caption)}</span>
       </div>
       <div class="text-[10px] text-brand-700/70 uppercase tracking-[0.16em] font-semibold">${escapeHTML(label)}</div>
@@ -4494,7 +4494,7 @@ function renderEmployeeProfile(empId) {
     ` : ''}
 
     <div class="bg-white rounded-2xl shadow-card overflow-hidden mb-5 relative ${e.status==='terminated' ? 'opacity-90' : ''}">
-      <div class="h-28 relative" style="background:linear-gradient(135deg,#6e4220 0%,#a87035 60%,#c2914a 100%); ${e.status==='terminated' ? 'filter:grayscale(0.6);' : ''}">
+      <div class="h-28 relative" style="background:linear-gradient(135deg,#a8172e 0%,#df3247 60%,#fb7185 100%); ${e.status==='terminated' ? 'filter:grayscale(0.6);' : ''}">
         <div class="absolute -bottom-12 left-6 md:left-8">
           <div class="rounded-full ring-4 ring-white">${avatarHTML(e, 96)}</div>
         </div>
@@ -4779,7 +4779,7 @@ function openEmployeeModal(id) {
   }).join('');
   const form = `
     <div class="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100">
-      <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${safeAvatarColor(editing?.avatarColor || '#a87035')}">
+      <div id="m-photo-preview" class="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-2xl shrink-0" style="background:${safeAvatarColor(editing?.avatarColor || '#df3247')}">
         ${editing?.photo ? `<img src="${escapeHTML(editing.photo)}" class="w-full h-full object-cover" alt="">` : escapeHTML((editing?.firstName?.[0]||'?')+(editing?.lastName?.[0]||''))}
       </div>
       <div class="flex-1">
@@ -5100,7 +5100,7 @@ function clearPendingPhoto() {
   toast('Photo will be removed on save');
 }
 function pickColor() {
-  const palette = ['#6e4220','#a87035','#c44a4a','#7c3aed','#059669','#db2777','#ea580c','#0891b2','#9333ea','#475569'];
+  const palette = ['#a8172e','#df3247','#c44a4a','#7c3aed','#059669','#db2777','#ea580c','#0891b2','#9333ea','#475569'];
   return palette[Math.floor(Math.random()*palette.length)];
 }
 
@@ -5755,7 +5755,7 @@ function renderLeave() {
 
   const balanceCards = `
     <div class="grid grid-cols-2 gap-4 mb-6">
-      ${balanceCard('Annual',   balances.annual,   21, '#6e4220')}
+      ${balanceCard('Annual',   balances.annual,   21, '#a8172e')}
       ${balanceCard('Sick',     balances.sick,     10, '#059669')}
     </div>
   `;
@@ -7223,7 +7223,7 @@ function renderAnalytics() {
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('receipt','w-3.5 h-3.5')} Receipts (cost)</div>
         <div class="font-display text-2xl font-semibold text-slate-900 mt-2">${fmtMoney(recCurTotal)}</div>
         <div class="text-xs ${deltaColor(recCurTotal, recPrevTotal, true)} mt-1">${pctDelta(recCurTotal, recPrevTotal)} vs ${escapeHTML(period.prevLabel)}</div>
-        ${sparkline(receiptsSpark, '#a87035')}
+        ${sparkline(receiptsSpark, '#df3247')}
       </div>
       <div class="bg-white rounded-2xl shadow-card p-5">
         <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1.5">${icon('wallet','w-3.5 h-3.5')} Payroll</div>
@@ -7283,7 +7283,7 @@ function renderAnalytics() {
                   <span class="font-medium text-slate-700">${escapeHTML(cat)}</span>
                   <span class="text-slate-900 font-semibold tabular-nums">${fmtMoney(total)}</span>
                 </div>
-                <div class="progress-bar mt-1.5"><div class="progress-fill" style="width:${(total/catMax)*100}%; background:#a87035"></div></div>
+                <div class="progress-bar mt-1.5"><div class="progress-fill" style="width:${(total/catMax)*100}%; background:#df3247"></div></div>
               </div>
             `).join('')}
         </div>
@@ -7348,7 +7348,7 @@ function renderAnalytics() {
                   <span>Trend</span>
                   <span class="text-slate-400">avg ${avg.toFixed(1)}%</span>
                 </div>
-                ${sparkline(recent.map(p => p.yield), '#a87035')}
+                ${sparkline(recent.map(p => p.yield), '#df3247')}
                 <div class="flex justify-between text-[10px] text-slate-400 tabular-nums mt-1">
                   <span>${escapeHTML(fmtDate((recent[0].at||'').slice(0,10)))}</span>
                   <span>${escapeHTML(fmtDate((current.at||'').slice(0,10)))}</span>
@@ -7703,7 +7703,7 @@ function renderSpendReport() {
       <div class="bg-white border border-slate-200 rounded-xl p-5">
         <h3 class="font-display text-base font-semibold text-slate-900">Last 12 months</h3>
         <div class="text-xs text-slate-500 mt-1">Monthly spend trend across all categories</div>
-        ${trendSpark(sparkValues, '#a87035')}
+        ${trendSpark(sparkValues, '#df3247')}
         <div class="flex justify-between text-[10px] text-slate-400 mt-2 px-1">
           ${sparkLabels.map(l => `<span>${escapeHTML(l)}</span>`).join('')}
         </div>
@@ -7978,7 +7978,7 @@ function renderAccount() {
     <div class="max-w-3xl mx-auto space-y-5">
       <!-- Profile card -->
       <div class="bg-white rounded-2xl shadow-card p-6 md:p-8 relative overflow-hidden">
-        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #d6b475 0%, transparent 70%);"></div>
+        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fda4af 0%, transparent 70%);"></div>
         <div class="relative flex items-center gap-5 flex-wrap">
           ${avatarHTML(me, 88)}
           <div class="flex-1 min-w-0">
@@ -8664,7 +8664,7 @@ function renderApplyForm() {
   // and the field is hidden via inline CSS rather than `type=hidden` so
   // crawlers see a normal input.
   return `
-  <div class="min-h-screen w-full" style="background:#fbf7f1">
+  <div class="min-h-screen w-full" style="background:#fbfbfc">
     <div class="max-w-3xl mx-auto p-4 md:p-8">
 
       <div class="flex items-center justify-between mb-6">
@@ -9040,7 +9040,7 @@ function renderApplications() {
   const applyUrl = window.location.origin + window.location.pathname + '#/apply';
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('idcard','w-3.5 h-3.5')} Recruitment</div>
@@ -9308,7 +9308,7 @@ function renderHelp() {
   // classes used elsewhere. Plain readable typography.
   const guideStyles = `
     <style>
-      .guide-prose h2 { font-family:'Fraunces', Georgia, serif; font-size:24px; font-weight:600; color:#0f172a; margin:36px 0 12px; padding-bottom:8px; border-bottom:1px solid #e8dcc4; scroll-margin-top:80px; }
+      .guide-prose h2 { font-family:'Fraunces', Georgia, serif; font-size:24px; font-weight:600; color:#0f172a; margin:36px 0 12px; padding-bottom:8px; border-bottom:1px solid #e5e7eb; scroll-margin-top:80px; }
       .guide-prose h3 { font-size:14px; font-weight:700; color:#0f172a; text-transform:uppercase; letter-spacing:0.06em; margin:22px 0 8px; }
       .guide-prose p  { color:#374151; line-height:1.7; margin:10px 0; font-size:14px; }
       .guide-prose ul, .guide-prose ol { color:#374151; line-height:1.75; padding-inline-start:1.4em; font-size:14px; }
@@ -9316,10 +9316,10 @@ function renderHelp() {
       .guide-prose ol { list-style:decimal; }
       .guide-prose li { margin:4px 0; }
       .guide-prose strong { color:#0f172a; }
-      .guide-prose code  { background:#fbf6ef; color:#6e4220; padding:1px 6px; border-radius:4px; font-size:13px; font-family:ui-monospace, "SF Mono", Menlo, monospace; }
-      .guide-prose .callout { background:#fbf6ef; border:1px solid #e8dcc4; border-radius:10px; padding:14px 18px; margin:14px 0; font-size:13px; color:#5d4626; }
+      .guide-prose code  { background:#fff1f2; color:#a8172e; padding:1px 6px; border-radius:4px; font-size:13px; font-family:ui-monospace, "SF Mono", Menlo, monospace; }
+      .guide-prose .callout { background:#fff1f2; border:1px solid #e5e7eb; border-radius:10px; padding:14px 18px; margin:14px 0; font-size:13px; color:#5d4626; }
       .guide-prose .callout strong { color:#42351c; }
-      .guide-prose a { color:#6e4220; text-decoration:underline; }
+      .guide-prose a { color:#a8172e; text-decoration:underline; }
     </style>
   `;
 
@@ -10114,7 +10114,7 @@ function reassignWarning(id) {
 // Consent Form). Adds an Arabic-page block with RTL text direction
 // and a page break before it so each language fits its own A4 sheet.
 const LEGAL_DOC_CSS = `
-  .legal-section h2 { font-size:18px; font-weight:700; color:#0f172a; margin:24px 0 8px; padding-bottom:4px; border-bottom:1px solid #e8dcc4; }
+  .legal-section h2 { font-size:18px; font-weight:700; color:#0f172a; margin:24px 0 8px; padding-bottom:4px; border-bottom:1px solid #e5e7eb; }
   .legal-section h3 { font-size:14px; font-weight:700; color:#0f172a; margin:18px 0 6px; }
   .legal-section p  { font-size:13px; line-height:1.65; color:#1a1a1a; margin:8px 0; }
   .legal-section ul, .legal-section ol { font-size:13px; line-height:1.7; color:#1a1a1a; padding-inline-start:1.4em; margin:8px 0; }
@@ -10122,7 +10122,7 @@ const LEGAL_DOC_CSS = `
   .legal-section table { width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; }
   .legal-section table td, .legal-section table th { border:1px solid #d1d5db; padding:8px 10px; vertical-align:top; }
   .legal-section table th { background:#fafafa; font-weight:700; text-align:left; color:#0f172a; }
-  .legal-section .callout { background:#fbf6ef; border:1px solid #e8dcc4; border-radius:8px; padding:12px 16px; font-size:12px; color:#5d4626; margin:12px 0; }
+  .legal-section .callout { background:#fff1f2; border:1px solid #e5e7eb; border-radius:8px; padding:12px 16px; font-size:12px; color:#5d4626; margin:12px 0; }
   .legal-section strong { color:#0f172a; font-weight:700; }
   .blank-line { display:inline-block; border-bottom:1px solid #1a1a1a; min-width:280px; height:14px; vertical-align:bottom; }
   .checkbox-row { border:1px solid #d1d5db; padding:10px 14px; margin:8px 0; font-size:13px; line-height:1.5; }
@@ -10621,7 +10621,7 @@ function renderAgreements() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('file','w-3.5 h-3.5')} Documents to sign</div>
@@ -10807,7 +10807,7 @@ function renderAdvances() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Advances &amp; Loans</div>
@@ -12909,7 +12909,7 @@ function renderCertificates() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #d6b475 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fda4af 0%, transparent 70%);"></div>
       <div class="relative grid grid-cols-1 md:grid-cols-3 gap-5 items-center">
         <div class="md:col-span-2">
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('award','w-3.5 h-3.5')} Recognition</div>
@@ -12957,7 +12957,7 @@ function renderCertificates() {
           const typeLabel = typeLabels[c.type] || 'Certificate';
           return `
             <div class="bg-white rounded-2xl shadow-card overflow-hidden hover:shadow-pop transition-all hover:-translate-y-0.5">
-              <div class="p-5 border-b-2 border-brand-100" style="background:linear-gradient(135deg,#fbf6ef 0%,#f4e8d4 100%)">
+              <div class="p-5 border-b-2 border-brand-100" style="background:linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)">
                 <div class="flex items-start justify-between">
                   <div>
                     <div class="text-[10px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${escapeHTML(typeLabel)}</div>
@@ -13080,8 +13080,8 @@ function printCertificate(id) {
       position:relative; padding: 56px 70px;
       box-sizing:border-box;
     }
-    .frame-outer { position:absolute; inset:22px; border:2px solid #6e4220; pointer-events:none; }
-    .frame-inner { position:absolute; inset:32px; border:1px solid #c2914a; pointer-events:none; }
+    .frame-outer { position:absolute; inset:22px; border:2px solid #a8172e; pointer-events:none; }
+    .frame-inner { position:absolute; inset:32px; border:1px solid #fb7185; pointer-events:none; }
     .corner { position:absolute; width:48px; height:48px; border:3px solid #c44a4a; pointer-events:none; }
     .c-tl { top:38px; left:38px; border-right:none; border-bottom:none; }
     .c-tr { top:38px; right:38px; border-left:none; border-bottom:none; }
@@ -13089,17 +13089,17 @@ function printCertificate(id) {
     .c-br { bottom:38px; right:38px; border-left:none; border-top:none; }
     .header-row { display:flex; align-items:center; justify-content:center; gap:18px; margin-top:14px; }
     .header-row img { width:84px; height:84px; object-fit:contain; }
-    .header-row .company { font-family:Cinzel,serif; font-size:14px; letter-spacing:0.32em; color:#6e4220; text-transform:uppercase; }
+    .header-row .company { font-family:Cinzel,serif; font-size:14px; letter-spacing:0.32em; color:#a8172e; text-transform:uppercase; }
     .header-row .company .tag { display:block; font-size:9px; color:#9ca3af; letter-spacing:0.3em; margin-top:4px; font-family:Inter,sans-serif; }
     .header { text-align:center; margin-top:18px; }
-    .badge { display:inline-block; padding:6px 22px; border:1.5px solid #6e4220; color:#6e4220; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.4em; text-transform:uppercase; background:#fff; }
-    h1 { font-family:Cinzel,serif; font-size:48px; color:#6e4220; margin:14px 0 6px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
-    .sub { font-family:'Cormorant Garamond',serif; font-size:20px; color:#8a5728; font-style:italic; margin-bottom:14px; }
+    .badge { display:inline-block; padding:6px 22px; border:1.5px solid #a8172e; color:#a8172e; font-family:Cinzel,serif; font-size:11px; letter-spacing:0.4em; text-transform:uppercase; background:#fff; }
+    h1 { font-family:Cinzel,serif; font-size:48px; color:#a8172e; margin:14px 0 6px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
+    .sub { font-family:'Cormorant Garamond',serif; font-size:20px; color:#c81e3a; font-style:italic; margin-bottom:14px; }
     .presented { text-align:center; margin:18px 0 12px; font-size:14px; color:#6b7280; letter-spacing:0.22em; text-transform:uppercase; font-family:Cinzel,serif; }
     .name { text-align:center; font-family:'Dancing Script',cursive; font-size:72px; color:#1f2937; margin:0 0 4px; line-height:1; }
-    .name-rule { width:300px; height:1px; background:#a87035; margin:0 auto 14px; }
+    .name-rule { width:300px; height:1px; background:#df3247; margin:0 auto 14px; }
     .body { text-align:center; max-width:680px; margin:0 auto; font-size:17px; color:#1f2937; line-height:1.6; }
-    .period { text-align:center; margin-top:18px; font-family:Cinzel,serif; font-size:12px; color:#8a5728; letter-spacing:0.3em; text-transform:uppercase; }
+    .period { text-align:center; margin-top:18px; font-family:Cinzel,serif; font-size:12px; color:#c81e3a; letter-spacing:0.3em; text-transform:uppercase; }
     .signs { display:grid; grid-template-columns:1fr auto 1fr; gap:30px; align-items:end; margin-top:36px; padding:0 50px; }
     .sign { text-align:center; }
     .sign-line { border-top:1.5px solid #1f2937; padding-top:6px; font-size:12px; color:#6b7280; font-family:Inter,sans-serif; }
@@ -13332,7 +13332,7 @@ function renderArchive() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('archive','w-3.5 h-3.5')} Company Library</div>
@@ -13422,7 +13422,7 @@ function renderResources() {
   const canUpload = hasRole('admin','hr');
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #a87035 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #df3247 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('shield','w-3.5 h-3.5')} ${escapeHTML(t('team_library'))}</div>
@@ -13909,7 +13909,7 @@ function renderReceipts() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('receipt','w-3.5 h-3.5')} Accounting</div>
@@ -14118,7 +14118,7 @@ function renderAccountingDashboard() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('receipt','w-3.5 h-3.5')} Accounting</div>
@@ -14271,7 +14271,7 @@ function renderOperationsDashboard() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative">
         <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('building','w-3.5 h-3.5')} Operations</div>
         <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
@@ -14673,7 +14673,7 @@ function renderMaintenance() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('wrench','w-3.5 h-3.5')} Maintenance</div>
@@ -15129,7 +15129,7 @@ function renderMaintenanceDashboard() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('wrench','w-3.5 h-3.5')} Maintenance</div>
@@ -15275,7 +15275,7 @@ function renderBakeryDashboard() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative">
         <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Bakery</div>
         <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName||'')}</h2>
@@ -15458,7 +15458,7 @@ function renderDailyCount() {
   }
 
   const navBar = `
-    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbfbfc]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
       <button onclick="dcStep(-1)" class="btn btn-ghost ${step===0?'invisible':''}">${icon('chevron-left','w-4 h-4')} Back</button>
       <div class="text-xs text-slate-500">${step>=totalSteps ? 'Review &amp; save' : escapeHTML(DC_STEPS[step].label)}</div>
       ${step >= totalSteps
@@ -16246,7 +16246,7 @@ function renderWeeklyCount() {
     </div>`).join('');
 
   const navBar = `
-    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbfbfc]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
       <div class="text-xs text-slate-500">${escapeHTML(branch)} · week of ${escapeHTML(fmtDate(week))}</div>
       <button onclick="saveWeeklyCounts()" class="btn btn-primary">${icon('check','w-4 h-4')} Save week</button>
     </div>`;
@@ -16670,7 +16670,7 @@ function renderExpiryCheck() {
     </div>`;
   const body = `<div class="space-y-2.5">${items.map(it => ecItemCard(it)).join('')}</div>`;
   const navBar = `
-    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbfbfc]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
       <div class="text-xs text-slate-500">${escapeHTML(branch)} · week of ${escapeHTML(fmtDate(week))}</div>
       <button onclick="saveExpiryChecks()" class="btn btn-primary">${icon('check','w-4 h-4')} Save checklist</button>
     </div>`;
@@ -16979,7 +16979,7 @@ function renderBakeryTransfers() {
       </label>
     </div>`;
   const navBar = `
-    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbfbfc]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
       <div class="text-xs text-slate-500">${escapeHTML(fmtDate(date))}</div>
       <button onclick="saveBakeryTransfers()" class="btn btn-primary">${icon('check','w-4 h-4')} Save day</button>
     </div>`;
@@ -17279,7 +17279,7 @@ function renderBakeryStock() {
       </div>
     </div>`).join('')}</div>`;
   const navBar = `
-    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbfbfc]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
       <div class="text-xs text-slate-500">${escapeHTML(fmtDate(date))}</div>
       <button onclick="saveBakeryStock()" class="btn btn-primary">${icon('check','w-4 h-4')} Save day</button>
     </div>`;
@@ -17542,7 +17542,7 @@ function renderBakeryPurchases() {
     </tr>`;
   }).join('');
   const navBar = `
-    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbf7f1]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
+    <div class="sticky bottom-0 mt-6 -mx-4 px-4 py-3 bg-[#fbfbfc]/85 backdrop-blur border-t border-brand-100 flex items-center justify-between gap-3">
       <div class="text-xs text-slate-500">${escapeHTML(ym)}</div>
       <button onclick="saveBakeryPurchases()" class="btn btn-primary">${icon('check','w-4 h-4')} Save month</button>
     </div>`;
@@ -18172,7 +18172,7 @@ function renderInventory() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('box','w-3.5 h-3.5')} Inventory</div>
@@ -19541,7 +19541,7 @@ function renderRoaster() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Roaster</div>
@@ -19719,7 +19719,7 @@ function renderRoasterDashboard() {
 
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Roaster</div>
@@ -19842,7 +19842,7 @@ function renderHeadBaristaDashboard() {
   return `
     <!-- Hero -->
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
       <div class="relative flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('award','w-3.5 h-3.5')} Head Barista</div>
@@ -20051,7 +20051,7 @@ function renderBaristaDashboard() {
     <!-- Hero + clock -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
       <div class="md:col-span-2 bg-white rounded-2xl shadow-card p-6 relative overflow-hidden">
-        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #c2914a 0%, transparent 70%);"></div>
+        <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #fb7185 0%, transparent 70%);"></div>
         <div class="relative">
           <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">${escapeHTML(roleName)}</div>
           <h2 class="font-display text-3xl md:text-4xl font-semibold text-slate-900 mt-2 leading-tight">${escapeHTML(t('welcome_back'))}, ${escapeHTML(me.firstName)}.</h2>
@@ -20697,7 +20697,7 @@ async function previewReceipt(id) {
     const cur = r.currency || state.settings.currency || 'SAR';
     const safeDate = r.receiptDate ? fmtDate(r.receiptDate) : '';
     const photoLink = url
-      ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener" style="color:#a87035;text-decoration:none;font-size:13px">${(r.mime||'').startsWith('image/') ? 'View photo' : 'Open original file'} &rarr;</a>`
+      ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener" style="color:#df3247;text-decoration:none;font-size:13px">${(r.mime||'').startsWith('image/') ? 'View photo' : 'Open original file'} &rarr;</a>`
       : `<span style="color:#94a3b8;font-size:13px">No file attached</span>`;
     w.document.write(`<!doctype html><html><head><title>${escapeHTML(r.vendor||'Receipt')} &mdash; OCR text</title><style>
       body{margin:0;background:#f8fafc;font-family:system-ui,-apple-system,sans-serif;color:#1e293b;padding:32px 16px}
@@ -20736,7 +20736,7 @@ function renderStructuredReceiptHTML(r, url) {
   const safeDate = r.receiptDate ? fmtDate(r.receiptDate) : (d.date ? escapeHTML(d.date) : '');
   const safeTime = d.time ? escapeHTML(d.time) : '';
   const photoLink = url
-    ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener" style="color:#a87035;text-decoration:none;font-size:13px;white-space:nowrap">${(r.mime||'').startsWith('image/') ? 'View photo' : 'Open file'} &rarr;</a>`
+    ? `<a href="${escapeHTML(url)}" target="_blank" rel="noopener" style="color:#df3247;text-decoration:none;font-size:13px;white-space:nowrap">${(r.mime||'').startsWith('image/') ? 'View photo' : 'Open file'} &rarr;</a>`
     : '';
   const field = (label, value) => value
     ? `<div class="f"><div class="fl">${escapeHTML(label)}</div><div class="fv">${escapeHTML(String(value))}</div></div>`
@@ -21157,7 +21157,7 @@ function renderPendingApprovalGate() {
   const me = currentEmployee();
   const ex = me ? getEmpExtras(me.id) : null;
   return `
-  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbfbfc">
     <div class="w-full max-w-lg bg-white rounded-2xl shadow-pop p-8 md:p-10 text-center">
       <div class="w-14 h-14 mx-auto rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mb-5">
         ${icon('clock','w-7 h-7')}
@@ -21227,7 +21227,7 @@ async function rejectPendingEmployee(empId) {
 // land here and can only log out.
 function renderNotAuthorizedGate() {
   return `
-  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbfbfc">
     <div class="w-full max-w-lg bg-white rounded-2xl shadow-pop p-8 md:p-10 text-center">
       <div class="w-14 h-14 mx-auto rounded-full bg-amber-50 text-amber-700 flex items-center justify-center mb-5">
         ${icon('shield','w-7 h-7')}
@@ -21251,7 +21251,7 @@ function renderTerminatedGate() {
   const me = currentEmployee();
   const tb = me?.terminatedBy ? getEmployee(me.terminatedBy) : null;
   return `
-  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbfbfc">
     <div class="w-full max-w-lg bg-white rounded-2xl shadow-pop p-8 md:p-10 text-center">
       <div class="w-14 h-14 mx-auto rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mb-5">
         ${icon('warning','w-7 h-7')}
@@ -21286,7 +21286,7 @@ function renderConsentGate() {
   const me = currentEmployee();
   const isAr = state.settings.lang === 'ar';
   return `
-  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbf7f1">
+  <div class="min-h-screen flex items-center justify-center p-4 md:p-8" style="background:#fbfbfc">
     <div class="w-full max-w-2xl bg-white rounded-2xl shadow-pop p-8 md:p-10">
       <div class="flex items-center gap-3 mb-2">
         <div class="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden border border-slate-100">
@@ -21413,7 +21413,7 @@ let deviceState       = { staffId:'', staffName:'', view:'board', shift:'morning
 const INV_SHIFTS = ['morning','evening'];
 function invShiftLabel(s){ return s==='evening' ? 'Evening' : 'Morning'; }
 const INV_MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const INV_CHART_COLORS = ['#a87035','#c8986a','#7a4f25','#e0c3a0','#5c3a1a','#b5835a','#d8b892','#8a5a2b','#4a2f15'];
+const INV_CHART_COLORS = ['#df3247','#c8986a','#7a4f25','#e0c3a0','#5c3a1a','#b5835a','#d8b892','#8a5a2b','#4a2f15'];
 
 function mapInventoryShiftFromDb(r){
   return {
@@ -21934,7 +21934,7 @@ function initInvCharts(){
   if (ctxC){
     _invCharts.cons = new Chart(ctxC, {
       type:'line',
-      data:{ labels:d.days.map(x=>x.label), datasets:[{ label:'Units consumed', data:d.days.map(x=>Math.round(x.consumed*100)/100), borderColor:'#a87035', backgroundColor:'rgba(168,112,53,0.12)', fill:true, tension:0.35, pointRadius:2, borderWidth:2 }] },
+      data:{ labels:d.days.map(x=>x.label), datasets:[{ label:'Units consumed', data:d.days.map(x=>Math.round(x.consumed*100)/100), borderColor:'#df3247', backgroundColor:'rgba(223,50,71,0.12)', fill:true, tension:0.35, pointRadius:2, borderWidth:2 }] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ font:{ size:10 } } }, x:{ ticks:{ font:{ size:10 }, maxRotation:0, autoSkip:true } } } }
     });
   }
@@ -22573,7 +22573,7 @@ function invPrintProductMix(branch, shift){
     return sect(cat.label, its.map(it=>`<tr><td>${escapeHTML(it.name)}</td><td class="r">${itemSold[it.id]!=null?itemSold[it.id]:''}</td></tr>`).join(''));
   }).join('');
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Product Mix</title>
-    <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:24px;}h1{font-size:20px;margin:0 0 2px;}.sub{color:#64748b;font-size:12px;margin-bottom:8px;}h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#a87035;margin:16px 0 4px;}table{width:100%;border-collapse:collapse;}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:13px;}.r{text-align:right;width:90px;}th{font-size:10px;text-transform:uppercase;color:#94a3b8;}</style></head>
+    <style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1e293b;padding:24px;}h1{font-size:20px;margin:0 0 2px;}.sub{color:#64748b;font-size:12px;margin-bottom:8px;}h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#df3247;margin:16px 0 4px;}table{width:100%;border-collapse:collapse;}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:13px;}.r{text-align:right;width:90px;}th{font-size:10px;text-transform:uppercase;color:#94a3b8;}</style></head>
     <body><h1>Product Mix — ${escapeHTML(branch)}</h1><div class="sub">${invShiftLabel(shift)} shift · ${escapeHTML(invDayLabel(today))} · quantities sold per Foodics</div>
     ${drinkSecs}${itemSecs}</body></html>`;
   openPrintWindow(html);
@@ -22866,7 +22866,7 @@ function renderDeviceStaffPicker(branch){
     const initials = ((e.firstName||'?')[0]||'?').toUpperCase() + ((e.lastName||'')[0]||'').toUpperCase();
     return `<button data-staff-name="${escapeHTML(name.toLowerCase())}" onclick="devicePickStaff('${e.id}')"
       class="flex flex-col items-center gap-2 p-4 bg-white rounded-2xl shadow-card hover:ring-2 hover:ring-brand-400 transition">
-      <span class="w-14 h-14 rounded-full flex items-center justify-center text-white font-semibold text-lg" style="background:${escapeHTML(e.avatarColor||'#a87035')}">${escapeHTML(initials)}</span>
+      <span class="w-14 h-14 rounded-full flex items-center justify-center text-white font-semibold text-lg" style="background:${escapeHTML(e.avatarColor||'#df3247')}">${escapeHTML(initials)}</span>
       <span class="text-sm font-medium text-slate-800 text-center leading-tight">${escapeHTML(name)}</span>
     </button>`;
   }).join('');
@@ -23342,14 +23342,14 @@ function render() {
     const app = document.getElementById('app');
     if (!app) return;
     app.innerHTML = `
-      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fbf7f1;padding:24px">
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fbfbfc;padding:24px">
         <div style="max-width:28rem;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.06)">
           <div style="font-size:40px;line-height:1">⚠️</div>
           <h1 style="margin-top:12px;font-size:18px;font-weight:700;color:#1e293b">Something went wrong</h1>
           <p style="margin-top:8px;font-size:13px;color:#64748b">The page hit an error while drawing. Your data is safe — this is a display problem, not a data problem. Reloading usually fixes it.</p>
           <p style="margin-top:8px;font-size:11px;color:#94a3b8;font-family:monospace;word-break:break-word">${msg}</p>
           <div style="margin-top:20px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-            <button onclick="location.reload()" style="background:#7a3b14;color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Reload the app</button>
+            <button onclick="location.reload()" style="background:#a8172e;color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Reload the app</button>
             <button onclick="location.hash='#/dashboard';location.reload()" style="background:#f1f5f9;color:#334155;border:none;border-radius:10px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer">Go to dashboard</button>
           </div>
           <p style="margin-top:16px;font-size:11px;color:#94a3b8">If it keeps happening, send a screenshot of this page to the admin.</p>
@@ -23469,7 +23469,7 @@ async function bootstrap() {
 
   // Show a quick splash
   $('#app').innerHTML = `
-    <div class="min-h-screen flex items-center justify-center" style="background:#fbf7f1">
+    <div class="min-h-screen flex items-center justify-center" style="background:#fbfbfc">
       <div class="text-center">
         <div class="w-14 h-14 rounded-full border-4 border-brand-200 border-t-brand-700 animate-spin mx-auto"></div>
         <div class="mt-4 text-sm text-slate-500 font-display">Loading…</div>
