@@ -761,7 +761,8 @@ function emptyState() {
     warnings: [],       // [{ id, employeeId, severity, type, date, reason, notes, issuedBy, issuedAt, fileData }]
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
     deductions: [],     // [{ id, employeeId, amount, reason, details, incidentDate, period, status, appliedAt, createdBy, createdAt }] — admin-registered payroll deductions
-    tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, createdBy, createdAt, updatedAt }] — Work Management board
+    tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, groupId, createdBy, createdAt, updatedAt }] — Work Management board
+    taskGroups: [],     // [{ id, name, color, sortOrder, createdBy, createdAt }] — monday-style lists (block 91)
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
     todoLists: [],      // personal lists for office staff: [{ id, ownerId, name, items:[{id,text,done,doneAt,createdAt}], sortOrder, createdAt, updatedAt }] — RLS scopes to owner
@@ -1339,6 +1340,7 @@ function mapTaskFromDb(r) {
     department: r.department||'', assignedTo: r.assigned_to||null,
     priority: r.priority||'normal', status: r.status||'todo',
     dueDate: r.due_date||null, completedAt: r.completed_at||null,
+    groupId: r.group_id||null,
     createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -1348,8 +1350,18 @@ function taskToDb(t) {
     department: t.department||null, assigned_to: t.assignedTo||null,
     priority: t.priority||'normal', status: t.status||'todo',
     due_date: t.dueDate||null, completed_at: t.completedAt||null,
+    group_id: t.groupId||null,
     created_by: t.createdBy||null, updated_at: new Date().toISOString(),
   };
+}
+function mapTaskGroupFromDb(r) {
+  return {
+    id: r.id, name: r.name||'', color: r.color||'#0f6fde',
+    sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at,
+  };
+}
+function taskGroupToDb(g) {
+  return { name: g.name||null, color: g.color||'#0f6fde', sort_order: Number(g.sortOrder)||0, created_by: g.createdBy||null };
 }
 function mapTaskEventFromDb(r) {
   return {
@@ -2018,7 +2030,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2142,6 +2154,7 @@ async function loadAll() {
       // B2B tax invoices: low-volume but grows forever — same capped-bulk
       // pattern as roast_batches. Older invoices stay queryable in the DB.
       sb.from('b2b_invoices').select('*').order('invoice_no', { ascending: false }).limit(500),
+      sb.from('task_groups').select('*').order('sort_order', { ascending: true }),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2205,6 +2218,7 @@ async function loadAll() {
     state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
     state.roastBatches       = (roastBatchesR?.data || []).map(mapRoastBatchFromDb);
     state.b2bInvoices        = (b2bInvoicesR?.data || []).map(mapB2bInvoiceFromDb);
+    state.taskGroups         = (taskGroupsR?.data || []).map(mapTaskGroupFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -11079,12 +11093,31 @@ const TASK_PRIORITIES = {
   high:   { label:'High',   pill:'bg-amber-50 text-amber-700' },
   urgent: { label:'Urgent', pill:'bg-rose-50 text-rose-700' },
 };
+// monday.com-style statuses: keys unchanged (no data migration) but relabelled
+// + given a solid fill colour so the board reads at a glance. `solid` powers
+// the filled status control + the timeline bar; `pct` drives that bar's fill.
 const TASK_STATUSES = {
-  todo:        { label:'To do',       pill:'bg-slate-100 text-slate-600' },
-  in_progress: { label:'In progress', pill:'bg-blue-50 text-blue-700' },
-  blocked:     { label:'Blocked',     pill:'bg-rose-50 text-rose-700' },
-  done:        { label:'Done',        pill:'bg-emerald-50 text-emerald-700' },
+  todo:        { label:'Not started',   pill:'bg-slate-100 text-slate-600',   solid:'#c4c8d4', dark:true,  pct:5 },
+  in_progress: { label:'Working on it',  pill:'bg-amber-50 text-amber-700',    solid:'#fdab3d', dark:false, pct:55 },
+  blocked:     { label:'Stuck',          pill:'bg-rose-50 text-rose-700',      solid:'#e2445c', dark:false, pct:55 },
+  done:        { label:'Done',           pill:'bg-emerald-50 text-emerald-700', solid:'#00c875', dark:false, pct:100 },
 };
+// A filled, colour-coded status dropdown (monday look). Native <select> keeps
+// it fully functional; the inline colour is the status's solid fill.
+function taskStatusControl(tk, onchange) {
+  const s = TASK_STATUSES[tk.status] || TASK_STATUSES.todo;
+  const txt = s.dark ? '#3a3f4c' : '#ffffff';
+  const opts = Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${tk.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
+  return `<select onchange="${onchange}" class="text-xs font-semibold rounded-lg px-2 py-1 cursor-pointer" style="background:${s.solid};color:${txt};border:none;outline:none">${opts}</select>`;
+}
+// The colourful "Timeline" progress bar — status-derived, so it reads like the
+// monday board without needing a start/end date range on every task.
+function taskTimelineBar(tk) {
+  const s = TASK_STATUSES[tk.status] || TASK_STATUSES.todo;
+  return `<div class="h-2 rounded-full bg-slate-100 overflow-hidden" style="min-width:90px"><div class="h-full rounded-full" style="width:${s.pct}%;background:${s.solid}"></div></div>`;
+}
+// Palette offered when creating/recolouring a list.
+const LIST_COLORS = ['#0f6fde','#00c875','#fdab3d','#e2445c','#a25ddc','#579bfc','#037f4c','#ff642e','#9d99b9','#333333'];
 let workFilter = { tab:'open', dept:'all', q:'' };
 let workMgmtTab = 'tasks';            // 'tasks' | 'checklists'
 let checklistView = { dept:'all', date:'', branch:'' };
@@ -11484,6 +11517,73 @@ function renderWorkManagement() {
   </div>`;
   return tabbar + (tab === 'checklists' ? renderWorkChecklists() : tab === 'compliance' ? renderWorkCompliance() : renderWorkTasks());
 }
+/* -------------------- TASK LISTS (monday.com-style groups) --------------------
+   Lists are named, coloured sections of the Work Management board. Admin/ops
+   create them; tasks carry group_id. Drop a row on a list to reassign it. */
+function taskListColorPicker(selected) {
+  return LIST_COLORS.map(c =>
+    `<button type="button" onclick="_tgColor='${c}'; document.querySelectorAll('.tg-sw').forEach(x=>x.style.outline='');this.style.outline='2px solid #0f172a';this.style.outlineOffset='2px'"
+       class="tg-sw w-7 h-7 rounded-full" style="background:${c};${selected===c?'outline:2px solid #0f172a;outline-offset:2px':''}" aria-label="colour"></button>`
+  ).join('');
+}
+let _tgColor = LIST_COLORS[0];
+function openTaskListModal(id) {
+  const editing = id ? (state.taskGroups||[]).find(g => g.id === id) : null;
+  _tgColor = editing ? editing.color : LIST_COLORS[0];
+  const form = `
+    <div class="space-y-4">
+      <div><label class="label label-required">List name</label>
+        <input id="tg-name" class="input" value="${escapeHTML(editing?.name||'')}" placeholder="e.g. This week, Next week, Marketing…" maxlength="60"></div>
+      <div><label class="label">Colour</label><div class="flex gap-2 flex-wrap">${taskListColorPicker(_tgColor)}</div></div>
+    </div>`;
+  openModal(editing ? 'Edit list' : 'New list', form, async () => {
+    const name = $('#tg-name').value.trim();
+    if (!name) { toast('Give the list a name', 'error'); return false; }
+    if (editing) {
+      const { data, error } = await sb.from('task_groups').update({ name, color: _tgColor }).eq('id', editing.id).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      Object.assign(editing, mapTaskGroupFromDb(data));
+    } else {
+      const nextOrder = (state.taskGroups||[]).reduce((m,g)=>Math.max(m,g.sortOrder),0) + 1;
+      const row = taskGroupToDb({ name, color: _tgColor, sortOrder: nextOrder, createdBy: currentEmployee()?.id || null });
+      const { data, error } = await sb.from('task_groups').insert(row).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      (state.taskGroups = state.taskGroups || []).push(mapTaskGroupFromDb(data));
+    }
+    render();
+    toast('List saved', 'success');
+    return true;
+  }, { saveLabel: t('save') });
+}
+async function deleteTaskList(id) {
+  const g = (state.taskGroups||[]).find(x => x.id === id);
+  if (!g) return;
+  const n = (state.tasks||[]).filter(t => t.groupId === id).length;
+  if (!confirm(`Delete the list "${g.name}"?${n?`\n\nIts ${n} task${n===1?'':'s'} will become ungrouped (not deleted).`:''}`)) return;
+  const { error } = await sb.from('task_groups').delete().eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  state.taskGroups = state.taskGroups.filter(x => x.id !== id);
+  (state.tasks||[]).forEach(t => { if (t.groupId === id) t.groupId = null; });
+  render();
+  toast('List deleted', 'success');
+}
+async function moveTaskToGroup(taskId, groupId) {
+  const t = (state.tasks||[]).find(x => x.id === taskId);
+  if (!t || t.groupId === (groupId||null)) return;
+  const { data, error } = await sb.from('tasks').update({ group_id: groupId || null, updated_at: new Date().toISOString() }).eq('id', taskId).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  Object.assign(t, mapTaskFromDb(data));
+  render();
+}
+// Drag a task row onto a list section.
+let _tgDragTask = null;
+function tgDragStart(e, id) { _tgDragTask = id; try { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed='move'; } catch(_){} if (e.currentTarget?.style) e.currentTarget.style.opacity='0.5'; }
+function tgDragEnd(e) { if (e.currentTarget?.style) e.currentTarget.style.opacity=''; _tgDragTask = null; }
+function tgOver(e) { e.preventDefault(); try { e.dataTransfer.dropEffect='move'; } catch(_){} }
+function tgEnter(e) { e.currentTarget.style.background = '#f6f7fb'; }
+function tgLeave(e) { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.style.background=''; }
+function tgDrop(e, groupId) { e.preventDefault(); e.currentTarget.style.background=''; const id=_tgDragTask||(e.dataTransfer?e.dataTransfer.getData('text/plain'):''); _tgDragTask=null; if (id) moveTaskToGroup(id, groupId||null); }
+
 function renderWorkTasks() {
   const canEdit = hasRole('admin','operations');
   if (!canEdit) return renderRoleDashboard();
@@ -11493,18 +11593,21 @@ function renderWorkTasks() {
   const dueToday = open.filter(t => t.dueDate === todayISO());
   const filtered = all.filter(workTaskMatches);
   // Group filtered tasks by department (blank => "Unassigned dept").
-  const byDept = {};
+  // Group filtered tasks by LIST (task group). Ungrouped tasks (no list, or a
+  // list that was deleted) collect in a trailing "Ungrouped" section.
+  const lists = (state.taskGroups||[]).slice().sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.name||'').localeCompare(b.name||''));
+  const listById = {}; lists.forEach(g => listById[g.id] = g);
+  const byGroup = {}; const ungrouped = [];
   filtered.forEach(t => {
-    const k = (t.department||'').trim() || 'No department';
-    (byDept[k] = byDept[k] || []).push(t);
+    if (t.groupId && listById[t.groupId]) (byGroup[t.groupId] = byGroup[t.groupId] || []).push(t);
+    else ungrouped.push(t);
   });
-  const deptOrder = Object.keys(byDept).sort((a,b)=>a.localeCompare(b));
   const prioRank = { urgent:0, high:1, normal:2, low:3 };
-  deptOrder.forEach(k => byDept[k].sort((a,b)=>
+  const sortTasks = arr => arr.sort((a,b)=>
     (taskOverdue(b)?1:0)-(taskOverdue(a)?1:0) ||
     (prioRank[a.priority]??2)-(prioRank[b.priority]??2) ||
-    (a.dueDate||'9999').localeCompare(b.dueDate||'9999')
-  ));
+    (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+  Object.values(byGroup).forEach(sortTasks); sortTasks(ungrouped);
 
   const header = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
@@ -11515,7 +11618,10 @@ function renderWorkTasks() {
           <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Work Management</h2>
           <p class="text-slate-500 mt-1 text-sm max-w-xl">Assign and track work across departments. Operations &amp; admin create tasks; the assignee can move their own task forward. Checklists and reminders arrive in a later phase.</p>
         </div>
-        <button onclick="openTaskModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New task</button>
+        <div class="flex gap-2">
+          <button onclick="openTaskListModal()" class="btn btn-ghost">${icon('plus','w-4 h-4')} New list</button>
+          <button onclick="openTaskModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New task</button>
+        </div>
       </div>
     </div>
 
@@ -11538,62 +11644,73 @@ function renderWorkTasks() {
       <input class="input !w-auto !py-1.5 text-sm" style="min-width:180px" placeholder="Search tasks…" value="${escapeHTML(workFilter.q)}" oninput="workFilter.q=this.value; clearTimeout(window._wfT); window._wfT=setTimeout(render,250);">
     </div>`;
 
-  if (filtered.length === 0) {
+  if (filtered.length === 0 && lists.length === 0) {
     return header + `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
-        <div class="font-display text-lg font-semibold text-slate-900">No tasks ${workFilter.tab!=='all'?`(${workFilter.tab})`:''}</div>
-        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Create a task and assign it to someone — it shows here grouped by department, and due/overdue tasks surface on the dashboard.</div>
-        <button onclick="openTaskModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} New task</button>
+        <div class="font-display text-lg font-semibold text-slate-900">No tasks yet</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Create a <b>list</b> (like “This week” or “Marketing”) to organise the board, then add tasks into it. Drag a task between lists any time.</div>
+        <div class="flex gap-2 justify-center mt-4">
+          <button onclick="openTaskListModal()" class="btn btn-ghost">${icon('plus','w-4 h-4')} New list</button>
+          <button onclick="openTaskModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New task</button>
+        </div>
       </div>`;
   }
 
-  const statusOpts = t => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${t.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
-  const board = deptOrder.map(dept => `
-    <div class="mb-6">
-      <div class="flex items-center gap-2 mb-2">
-        <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(dept)}</h3>
-        <span class="text-xs text-slate-400">${byDept[dept].length}</span>
-      </div>
-      <div class="bg-white rounded-2xl shadow-card overflow-hidden">
-        <div class="overflow-x-auto">
-          <table class="data">
-            <thead><tr><th>Task</th><th>Assignee</th><th>Priority</th><th>Due</th><th>Status</th><th class="!text-end">Actions</th></tr></thead>
-            <tbody>
-              ${(()=>{ const overdueLbl = t('overdue'); return byDept[dept].map(tk => {
-                const e = getEmployee(tk.assignedTo);
-                const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
-                const isOver = taskOverdue(tk);
-                return `
-                <tr class="hover-row ${isOver?'bg-rose-50/40':''}">
-                  <td>
-                    <div class="font-medium text-slate-900 flex items-center gap-2 flex-wrap">
-                      ${isOver?`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3 h-3')} ${escapeHTML(overdueLbl)}</span>`:''}
-                      <span>${escapeHTML(tk.title)}</span>
-                    </div>
-                    ${tk.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(tk.description)}</div>` : ''}
-                  </td>
-                  <td>${e ? `<div class="flex items-center gap-2">${avatarHTML(e,24)}<span class="text-sm text-slate-700">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></div>` : '<span class="text-xs text-slate-400">Unassigned</span>'}</td>
-                  <td><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></td>
-                  <td class="text-sm whitespace-nowrap">${taskDueLabel(tk)}</td>
-                  <td><select class="input !py-1 !px-2 text-xs !w-auto" onchange="changeTaskStatus('${tk.id}', this.value)">${statusOpts(tk)}</select></td>
-                  <td class="!text-end whitespace-nowrap">
-                    <button onclick="openTaskModal('${tk.id}')" aria-label="Edit task" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-                    <button onclick="deleteTask('${tk.id}')" aria-label="Delete task" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
-                  </td>
-                </tr>`;
-              }).join(''); })()}
-            </tbody>
-          </table>
+  // One monday-style row (draggable between lists).
+  const overdueLbl = t('overdue');
+  const taskRowHTML = tk => {
+    const e = getEmployee(tk.assignedTo);
+    const isOver = taskOverdue(tk);
+    return `
+      <tr class="hover-row ${isOver?'bg-rose-50/40':''}" draggable="true" ondragstart="tgDragStart(event,'${tk.id}')" ondragend="tgDragEnd(event)" style="cursor:grab">
+        <td>
+          <button type="button" onclick="openTaskDetail('${tk.id}')" class="font-medium text-slate-900 text-start hover:text-brand-700 hover:underline flex items-center gap-2 flex-wrap">
+            ${isOver?`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3 h-3')} ${escapeHTML(overdueLbl)}</span>`:''}
+            <span>${escapeHTML(tk.title)}</span>
+          </button>
+          ${tk.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(tk.description)}</div>` : ''}
+        </td>
+        <td>${e ? `<div class="flex items-center gap-2">${avatarHTML(e,24)}<span class="text-sm text-slate-700">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></div>` : '<span class="text-xs text-slate-400">Unassigned</span>'}</td>
+        <td>${taskStatusControl(tk, `changeTaskStatus('${tk.id}', this.value)`)}</td>
+        <td>${taskTimelineBar(tk)}</td>
+        <td class="text-sm whitespace-nowrap">${taskDueLabel(tk)}</td>
+        <td class="!text-end whitespace-nowrap">
+          <button onclick="openTaskModal('${tk.id}')" aria-label="Edit task" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+          <button onclick="deleteTask('${tk.id}')" aria-label="Delete task" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+        </td>
+      </tr>`;
+  };
+  const sectionHTML = (opts) => {
+    const { id, name, color, rows, actions } = opts;
+    const body = rows.length
+      ? `<table class="data"><thead><tr><th>Task</th><th>Owner</th><th>Status</th><th>Timeline</th><th>Due</th><th class="!text-end">Actions</th></tr></thead><tbody>${rows.map(taskRowHTML).join('')}</tbody></table>`
+      : `<div class="p-5 text-sm text-slate-400 text-center">No tasks in this list yet — drag one here, or add a task.</div>`;
+    return `
+      <div class="mb-6 bg-white rounded-2xl shadow-card overflow-hidden" ondragover="tgOver(event)" ondragenter="tgEnter(event)" ondragleave="tgLeave(event)" ondrop="tgDrop(event,'${id||''}')">
+        <div class="flex items-center gap-2 px-4 py-3 border-b border-slate-100" style="border-inline-start:4px solid ${color}">
+          <span class="font-display text-base font-semibold" style="color:${color}">${escapeHTML(name)}</span>
+          <span class="text-xs text-slate-400">${rows.length}</span>
+          <div class="ms-auto flex items-center gap-1">${actions||''}</div>
         </div>
-      </div>
-    </div>`).join('');
+        <div class="overflow-x-auto">${body}</div>
+      </div>`;
+  };
+  const listActions = g => `
+    <button onclick="openTaskModal(null,'${g.id}')" title="Add task to this list" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
+    <button onclick="openTaskListModal('${g.id}')" title="Edit list" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+    <button onclick="deleteTaskList('${g.id}')" title="Delete list" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`;
+  const board =
+    lists.map(g => sectionHTML({ id:g.id, name:g.name, color:g.color, rows:(byGroup[g.id]||[]), actions:listActions(g) })).join('')
+    + (ungrouped.length ? sectionHTML({ id:'', name:'Ungrouped', color:'#94a3b8', rows:ungrouped, actions:'' }) : '');
 
   return header + board;
 }
-function openTaskModal(id) {
+function openTaskModal(id, prefillGroupId) {
   if (!hasRole('admin','operations')) return;
   const editing = id ? (state.tasks||[]).find(t => t.id===id) : null;
+  const defaultGroup = editing ? (editing.groupId||'') : (prefillGroupId||'');
+  const groups = (state.taskGroups||[]).slice().sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.name||'').localeCompare(b.name||''));
   const emps = (state.employees||[]).filter(isActiveEmployee).slice()
     .sort((a,b)=> ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
   const form = `
@@ -11623,7 +11740,11 @@ function openTaskModal(id) {
           <label class="label">Status</label>
           <select id="tk-status" class="input">${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${(editing?.status||'todo')===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select>
         </div>
-        <div class="col-span-2">
+        <div>
+          <label class="label">List</label>
+          <select id="tk-group" class="input"><option value="">— Ungrouped —</option>${groups.map(g=>`<option value="${g.id}" ${defaultGroup===g.id?'selected':''}>${escapeHTML(g.name)}</option>`).join('')}</select>
+        </div>
+        <div>
           <label class="label">Due date (optional)</label>
           <input id="tk-due" type="date" class="input" value="${escapeHTML(editing?.dueDate||'')}">
         </div>
@@ -11644,6 +11765,7 @@ function openTaskModal(id) {
       status,
       dueDate: $('#tk-due').value || null,
       completedAt: status === 'done' ? (editing?.completedAt || new Date().toISOString()) : null,
+      groupId: $('#tk-group').value || null,
       createdBy: editing?.createdBy || me?.id,
     };
     const dbRow = taskToDb(data);
