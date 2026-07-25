@@ -11855,7 +11855,12 @@ function renderMyWork() {
       </div>`;
     }
     // Non-admin/ops office roles at HEADOFFICE: clSection stays ''.
-  } else if (canTickChecklists()) {
+  } else if (hasRole('head_barista','barista')) {
+    // Only floor staff (baristas + head baristas) run the daily checklists on
+    // their personal My Work. Admin/operations managers don't tick these — they
+    // get the branch compliance rollup at HEADOFFICE and Work Management →
+    // Compliance for oversight (and canTickChecklists still lets them tick
+    // there if needed). Owner request 2026-07-25.
     const ctoday = todayISO();
     const cym = ctoday.slice(0,7);
     const ckey = dcCacheKey(myBranch, cym);
