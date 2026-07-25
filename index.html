@@ -762,7 +762,8 @@ function emptyState() {
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
     deductions: [],     // [{ id, employeeId, amount, reason, details, incidentDate, period, status, appliedAt, createdBy, createdAt }] — admin-registered payroll deductions
     tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, groupId, createdBy, createdAt, updatedAt }] — Work Management board
-    taskGroups: [],     // [{ id, name, color, sortOrder, createdBy, createdAt }] — monday-style lists (block 91)
+    taskGroups: [],     // [{ id, name, color, boardId, sortOrder, createdBy, createdAt }] — lists within a board (block 91/92)
+    taskBoards: [],     // [{ id, name, color, sortOrder, createdBy, createdAt }] — Trello-style boards (block 92)
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
     todoLists: [],      // personal lists for office staff: [{ id, ownerId, name, items:[{id,text,done,doneAt,createdAt}], sortOrder, createdAt, updatedAt }] — RLS scopes to owner
@@ -1356,12 +1357,21 @@ function taskToDb(t) {
 }
 function mapTaskGroupFromDb(r) {
   return {
-    id: r.id, name: r.name||'', color: r.color||'#0f6fde',
+    id: r.id, name: r.name||'', color: r.color||'#0f6fde', boardId: r.board_id||null,
     sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at,
   };
 }
 function taskGroupToDb(g) {
-  return { name: g.name||null, color: g.color||'#0f6fde', sort_order: Number(g.sortOrder)||0, created_by: g.createdBy||null };
+  return { name: g.name||null, color: g.color||'#0f6fde', board_id: g.boardId||null, sort_order: Number(g.sortOrder)||0, created_by: g.createdBy||null };
+}
+function mapTaskBoardFromDb(r) {
+  return {
+    id: r.id, name: r.name||'', color: r.color||'#0f6fde',
+    sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at,
+  };
+}
+function taskBoardToDb(b) {
+  return { name: b.name||null, color: b.color||'#0f6fde', sort_order: Number(b.sortOrder)||0, created_by: b.createdBy||null };
 }
 function mapTaskEventFromDb(r) {
   return {
@@ -2030,7 +2040,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2155,6 +2165,7 @@ async function loadAll() {
       // pattern as roast_batches. Older invoices stay queryable in the DB.
       sb.from('b2b_invoices').select('*').order('invoice_no', { ascending: false }).limit(500),
       sb.from('task_groups').select('*').order('sort_order', { ascending: true }),
+      sb.from('task_boards').select('*').order('sort_order', { ascending: true }),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2219,6 +2230,7 @@ async function loadAll() {
     state.roastBatches       = (roastBatchesR?.data || []).map(mapRoastBatchFromDb);
     state.b2bInvoices        = (b2bInvoicesR?.data || []).map(mapB2bInvoiceFromDb);
     state.taskGroups         = (taskGroupsR?.data || []).map(mapTaskGroupFromDb);
+    state.taskBoards         = (taskBoardsR?.data || []).map(mapTaskBoardFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -11517,14 +11529,67 @@ function renderWorkManagement() {
   </div>`;
   return tabbar + (tab === 'checklists' ? renderWorkChecklists() : tab === 'compliance' ? renderWorkCompliance() : renderWorkTasks());
 }
-/* -------------------- TASK LISTS (monday.com-style groups) --------------------
-   Lists are named, coloured sections of the Work Management board. Admin/ops
-   create them; tasks carry group_id. Drop a row on a list to reassign it. */
-function taskListColorPicker(selected) {
+/* -------------------- TASK BOARDS & LISTS (Trello model) --------------------
+   A board (task_boards) is named + coloured; it holds lists (task_groups, one
+   column each); a list holds tasks (cards). Admin/ops manage boards + lists.
+   currentBoardId tracks which board's columns are on screen. */
+// Swatch picker that writes the chosen colour into module var `varName`.
+function colorPicker(selected, varName) {
   return LIST_COLORS.map(c =>
-    `<button type="button" onclick="_tgColor='${c}'; document.querySelectorAll('.tg-sw').forEach(x=>x.style.outline='');this.style.outline='2px solid #0f172a';this.style.outlineOffset='2px'"
+    `<button type="button" onclick="${varName}='${c}'; document.querySelectorAll('.tg-sw').forEach(x=>x.style.outline='');this.style.outline='2px solid #0f172a';this.style.outlineOffset='2px'"
        class="tg-sw w-7 h-7 rounded-full" style="background:${c};${selected===c?'outline:2px solid #0f172a;outline-offset:2px':''}" aria-label="colour"></button>`
   ).join('');
+}
+let currentBoardId = null;
+function boardsSorted() { return (state.taskBoards||[]).slice().sort((a,b)=>(a.sortOrder-b.sortOrder)||(a.name||'').localeCompare(b.name||'')); }
+function activeBoard() { const bs = boardsSorted(); return bs.find(b=>b.id===currentBoardId) || bs[0] || null; }
+function setCurrentBoard(id) { currentBoardId = id; render(); }
+let _boardColor = LIST_COLORS[0];
+function openBoardModal(id) {
+  const editing = id ? (state.taskBoards||[]).find(b => b.id === id) : null;
+  _boardColor = editing ? editing.color : LIST_COLORS[0];
+  const form = `
+    <div class="space-y-4">
+      <div><label class="label label-required">Board name</label>
+        <input id="tb-name" class="input" value="${escapeHTML(editing?.name||'')}" placeholder="e.g. Project Management, Marketing Q3…" maxlength="60"></div>
+      <div><label class="label">Colour</label><div class="flex gap-2 flex-wrap">${colorPicker(_boardColor,'_boardColor')}</div></div>
+    </div>`;
+  openModal(editing ? 'Edit board' : 'New board', form, async () => {
+    const name = $('#tb-name').value.trim();
+    if (!name) { toast('Give the board a name', 'error'); return false; }
+    if (editing) {
+      const { data, error } = await sb.from('task_boards').update({ name, color: _boardColor }).eq('id', editing.id).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      Object.assign(editing, mapTaskBoardFromDb(data));
+    } else {
+      const nextOrder = (state.taskBoards||[]).reduce((m,b)=>Math.max(m,b.sortOrder),0) + 1;
+      const row = taskBoardToDb({ name, color: _boardColor, sortOrder: nextOrder, createdBy: currentEmployee()?.id || null });
+      const { data, error } = await sb.from('task_boards').insert(row).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      const b = mapTaskBoardFromDb(data);
+      (state.taskBoards = state.taskBoards || []).push(b);
+      currentBoardId = b.id;
+    }
+    render();
+    toast('Board saved', 'success');
+    return true;
+  }, { saveLabel: t('save') });
+}
+async function deleteBoard(id) {
+  const b = (state.taskBoards||[]).find(x => x.id === id);
+  if (!b) return;
+  const lists = (state.taskGroups||[]).filter(g => g.boardId === id);
+  const nTasks = (state.tasks||[]).filter(t => lists.some(l=>l.id===t.groupId)).length;
+  if (!confirm(`Delete the board "${b.name}"?\n\nIts ${lists.length} list${lists.length===1?'':'s'} will be removed${nTasks?` and its ${nTasks} task${nTasks===1?'':'s'} become ungrouped (not deleted)`:''}.`)) return;
+  const { error } = await sb.from('task_boards').delete().eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  const listIds = new Set(lists.map(l=>l.id));
+  state.taskBoards = state.taskBoards.filter(x => x.id !== id);
+  state.taskGroups = state.taskGroups.filter(g => g.boardId !== id);
+  (state.tasks||[]).forEach(t => { if (listIds.has(t.groupId)) t.groupId = null; });
+  if (currentBoardId === id) currentBoardId = null;
+  render();
+  toast('Board deleted', 'success');
 }
 let _tgColor = LIST_COLORS[0];
 function openTaskListModal(id) {
@@ -11534,7 +11599,7 @@ function openTaskListModal(id) {
     <div class="space-y-4">
       <div><label class="label label-required">List name</label>
         <input id="tg-name" class="input" value="${escapeHTML(editing?.name||'')}" placeholder="e.g. This week, Next week, Marketing…" maxlength="60"></div>
-      <div><label class="label">Colour</label><div class="flex gap-2 flex-wrap">${taskListColorPicker(_tgColor)}</div></div>
+      <div><label class="label">Colour</label><div class="flex gap-2 flex-wrap">${colorPicker(_tgColor,'_tgColor')}</div></div>
     </div>`;
   openModal(editing ? 'Edit list' : 'New list', form, async () => {
     const name = $('#tg-name').value.trim();
@@ -11544,8 +11609,10 @@ function openTaskListModal(id) {
       if (error) { toast(humanizeError(error), 'error'); return false; }
       Object.assign(editing, mapTaskGroupFromDb(data));
     } else {
-      const nextOrder = (state.taskGroups||[]).reduce((m,g)=>Math.max(m,g.sortOrder),0) + 1;
-      const row = taskGroupToDb({ name, color: _tgColor, sortOrder: nextOrder, createdBy: currentEmployee()?.id || null });
+      const board = activeBoard();
+      if (!board) { toast('Create a board first', 'error'); return false; }
+      const nextOrder = (state.taskGroups||[]).filter(g=>g.boardId===board.id).reduce((m,g)=>Math.max(m,g.sortOrder),0) + 1;
+      const row = taskGroupToDb({ name, color: _tgColor, boardId: board.id, sortOrder: nextOrder, createdBy: currentEmployee()?.id || null });
       const { data, error } = await sb.from('task_groups').insert(row).select().single();
       if (error) { toast(humanizeError(error), 'error'); return false; }
       (state.taskGroups = state.taskGroups || []).push(mapTaskGroupFromDb(data));
@@ -11592,15 +11659,51 @@ function renderWorkTasks() {
   const overdue = all.filter(taskOverdue);
   const dueToday = open.filter(t => t.dueDate === todayISO());
   const filtered = all.filter(workTaskMatches);
-  // Group filtered tasks by department (blank => "Unassigned dept").
-  // Group filtered tasks by LIST (task group). Ungrouped tasks (no list, or a
-  // list that was deleted) collect in a trailing "Ungrouped" section.
-  const lists = (state.taskGroups||[]).slice().sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.name||'').localeCompare(b.name||''));
-  const listById = {}; lists.forEach(g => listById[g.id] = g);
+  const boards = boardsSorted();
+  const active = activeBoard();
+
+  const titleCard = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
+      <div class="relative">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('check','w-3.5 h-3.5')} Operations</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Work Management</h2>
+        <p class="text-slate-500 mt-1 text-sm max-w-xl">Create a board, add lists (columns) to it, then drop task cards into the lists. Drag a card between lists to move it along.</p>
+      </div>
+    </div>`;
+
+  // No boards yet → prompt to create the first one.
+  if (boards.length === 0) {
+    return titleCard + `
+      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">Create your first board</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">A board holds lists (like “Upcoming”, “In Progress”, “Done”). Name your board, then add lists and drop task cards into them.</div>
+        <button onclick="openBoardModal()" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} New board</button>
+      </div>`;
+  }
+
+  // Board tabs — switch which board's columns are on screen.
+  const boardTabs = `
+    <div class="flex items-center gap-2 flex-wrap mb-4">
+      ${boards.map(b => {
+        const on = b.id === active.id;
+        return `<button onclick="setCurrentBoard('${b.id}')" class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${on?'text-white':'text-slate-600 bg-white border border-slate-200 hover:border-slate-300'}" style="${on?`background:${b.color}`:''}">
+          <span class="w-2 h-2 rounded-full" style="background:${on?'#ffffff':b.color}"></span>${escapeHTML(b.name)}</button>`;
+      }).join('')}
+      <button onclick="openBoardModal()" class="px-3 py-1.5 rounded-lg text-sm text-slate-500 hover:text-brand-700 border border-dashed border-slate-300">+ Board</button>
+    </div>`;
+
+  // Board-scoped lists (columns) + their cards. Truly ungrouped tasks (no list
+  // at all) get a trailing column so they can be dragged in; tasks that belong
+  // to another board's lists are hidden from this board.
+  const boardLists = (state.taskGroups||[]).filter(g => g.boardId === active.id)
+    .sort((a,b)=>(a.sortOrder-b.sortOrder)||(a.name||'').localeCompare(b.name||''));
+  const listById = {}; boardLists.forEach(g => listById[g.id] = g);
   const byGroup = {}; const ungrouped = [];
-  filtered.forEach(t => {
-    if (t.groupId && listById[t.groupId]) (byGroup[t.groupId] = byGroup[t.groupId] || []).push(t);
-    else ungrouped.push(t);
+  filtered.forEach(tk => {
+    if (tk.groupId && listById[tk.groupId]) (byGroup[tk.groupId]=byGroup[tk.groupId]||[]).push(tk);
+    else if (!tk.groupId) ungrouped.push(tk);
   });
   const prioRank = { urgent:0, high:1, normal:2, low:3 };
   const sortTasks = arr => arr.sort((a,b)=>
@@ -11609,102 +11712,72 @@ function renderWorkTasks() {
     (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
   Object.values(byGroup).forEach(sortTasks); sortTasks(ungrouped);
 
-  const header = `
-    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
-      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
-      <div class="relative flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('check','w-3.5 h-3.5')} Operations</div>
-          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Work Management</h2>
-          <p class="text-slate-500 mt-1 text-sm max-w-xl">Assign and track work across departments. Operations &amp; admin create tasks; the assignee can move their own task forward. Checklists and reminders arrive in a later phase.</p>
-        </div>
-        <div class="flex gap-2">
-          <button onclick="openTaskListModal()" class="btn btn-ghost">${icon('plus','w-4 h-4')} New list</button>
-          <button onclick="openTaskModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New task</button>
-        </div>
+  const boardToolbar = `
+    <div class="flex items-center gap-2 flex-wrap mb-4">
+      <span class="w-3 h-3 rounded-full" style="background:${active.color}"></span>
+      <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(active.name)}</h3>
+      <button onclick="openBoardModal('${active.id}')" title="Rename / recolour board" class="text-slate-400 hover:text-brand-600 p-1 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
+      <button onclick="deleteBoard('${active.id}')" title="Delete board" class="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
+      <div class="ms-auto flex items-center gap-2">
+        <button onclick="openTaskListModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} New list</button>
+        <button onclick="openTaskModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} New task</button>
       </div>
-    </div>
+    </div>`;
 
-    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-      ${miniStat('Open tasks', open.length, 'check', 'blue')}
-      ${miniStat('Due today', dueToday.length, 'clock', dueToday.length?'amber':'green')}
-      ${miniStat('Overdue', overdue.length, 'warning', overdue.length?'red':'green')}
-    </div>
-
+  const filters = `
     <div class="flex flex-wrap items-center gap-3 mb-4">
       <div class="flex gap-1 border-b border-slate-200">
         <button type="button" class="tab ${workFilter.tab==='open'?'active':''}" onclick="workFilter.tab='open'; render();">Open ${open.length?`<span class="ml-1 badge badge-blue !px-1.5 !py-0">${open.length}</span>`:''}</button>
         <button type="button" class="tab ${workFilter.tab==='done'?'active':''}" onclick="workFilter.tab='done'; render();">Done</button>
         <button type="button" class="tab ${workFilter.tab==='all'?'active':''}" onclick="workFilter.tab='all'; render();">All</button>
       </div>
-      <select class="input !w-auto !py-1.5 text-sm" onchange="workFilter.dept=this.value; render();">
-        <option value="all" ${workFilter.dept==='all'?'selected':''}>All departments</option>
-        ${SUGGESTED_DEPARTMENTS.map(d=>`<option value="${escapeHTML(d)}" ${workFilter.dept===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}
-      </select>
       <input class="input !w-auto !py-1.5 text-sm" style="min-width:180px" placeholder="Search tasks…" value="${escapeHTML(workFilter.q)}" oninput="workFilter.q=this.value; clearTimeout(window._wfT); window._wfT=setTimeout(render,250);">
     </div>`;
 
-  if (filtered.length === 0 && lists.length === 0) {
-    return header + `
-      <div class="bg-white rounded-2xl shadow-card p-12 text-center">
-        <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
-        <div class="font-display text-lg font-semibold text-slate-900">No tasks yet</div>
-        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Create a <b>list</b> (like “This week” or “Marketing”) to organise the board, then add tasks into it. Drag a task between lists any time.</div>
-        <div class="flex gap-2 justify-center mt-4">
-          <button onclick="openTaskListModal()" class="btn btn-ghost">${icon('plus','w-4 h-4')} New list</button>
-          <button onclick="openTaskModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New task</button>
-        </div>
-      </div>`;
-  }
-
-  // One monday-style row (draggable between lists).
-  const overdueLbl = t('overdue');
-  const taskRowHTML = tk => {
+  // A Trello card — draggable between list columns; click opens the detail modal.
+  const cardHTML = tk => {
     const e = getEmployee(tk.assignedTo);
     const isOver = taskOverdue(tk);
-    return `
-      <tr class="hover-row ${isOver?'bg-rose-50/40':''}" draggable="true" ondragstart="tgDragStart(event,'${tk.id}')" ondragend="tgDragEnd(event)" style="cursor:grab">
-        <td>
-          <button type="button" onclick="openTaskDetail('${tk.id}')" class="font-medium text-slate-900 text-start hover:text-brand-700 hover:underline flex items-center gap-2 flex-wrap">
-            ${isOver?`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3 h-3')} ${escapeHTML(overdueLbl)}</span>`:''}
-            <span>${escapeHTML(tk.title)}</span>
-          </button>
-          ${tk.description ? `<div class="text-xs text-slate-500 mt-0.5 truncate max-w-md">${escapeHTML(tk.description)}</div>` : ''}
-        </td>
-        <td>${e ? `<div class="flex items-center gap-2">${avatarHTML(e,24)}<span class="text-sm text-slate-700">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></div>` : '<span class="text-xs text-slate-400">Unassigned</span>'}</td>
-        <td>${taskStatusControl(tk, `changeTaskStatus('${tk.id}', this.value)`)}</td>
-        <td>${taskTimelineBar(tk)}</td>
-        <td class="text-sm whitespace-nowrap">${taskDueLabel(tk)}</td>
-        <td class="!text-end whitespace-nowrap">
-          <button onclick="openTaskModal('${tk.id}')" aria-label="Edit task" title="Edit" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-          <button onclick="deleteTask('${tk.id}')" aria-label="Delete task" title="Delete" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>
-        </td>
-      </tr>`;
+    const s = TASK_STATUSES[tk.status] || TASK_STATUSES.todo;
+    return `<div draggable="true" ondragstart="tgDragStart(event,'${tk.id}')" ondragend="tgDragEnd(event)" onclick="openTaskDetail('${tk.id}')"
+        class="bg-white rounded-xl border ${isOver?'border-rose-200':'border-slate-200'} shadow-sm p-3 mb-2 hover:shadow-pop transition-all" style="cursor:grab">
+      <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        <span class="text-[10px] font-semibold px-2 py-0.5 rounded" style="background:${s.solid};color:${s.dark?'#3a3f4c':'#ffffff'}">${escapeHTML(s.label)}</span>
+        ${isOver?`<span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-100 text-rose-700">Overdue</span>`:''}
+      </div>
+      <div class="text-sm font-medium text-slate-900">${escapeHTML(tk.title)}</div>
+      ${tk.description?`<div class="text-xs text-slate-500 mt-1 truncate">${escapeHTML(tk.description)}</div>`:''}
+      <div class="flex items-center justify-between mt-2 gap-2">
+        ${e?`<span class="flex items-center gap-1.5 min-w-0">${avatarHTML(e,22)}<span class="text-[11px] text-slate-500 truncate">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></span>`:'<span class="text-[11px] text-slate-400">Unassigned</span>'}
+        ${tk.dueDate?`<span class="text-[11px] ${isOver?'text-rose-600 font-medium':'text-slate-500'} shrink-0">${escapeHTML(fmtDate(tk.dueDate))}</span>`:''}
+      </div>
+    </div>`;
   };
-  const sectionHTML = (opts) => {
-    const { id, name, color, rows, actions } = opts;
-    const body = rows.length
-      ? `<table class="data"><thead><tr><th>Task</th><th>Owner</th><th>Status</th><th>Timeline</th><th>Due</th><th class="!text-end">Actions</th></tr></thead><tbody>${rows.map(taskRowHTML).join('')}</tbody></table>`
-      : `<div class="p-5 text-sm text-slate-400 text-center">No tasks in this list yet — drag one here, or add a task.</div>`;
-    return `
-      <div class="mb-6 bg-white rounded-2xl shadow-card overflow-hidden" ondragover="tgOver(event)" ondragenter="tgEnter(event)" ondragleave="tgLeave(event)" ondrop="tgDrop(event,'${id||''}')">
-        <div class="flex items-center gap-2 px-4 py-3 border-b border-slate-100" style="border-inline-start:4px solid ${color}">
-          <span class="font-display text-base font-semibold" style="color:${color}">${escapeHTML(name)}</span>
-          <span class="text-xs text-slate-400">${rows.length}</span>
-          <div class="ms-auto flex items-center gap-1">${actions||''}</div>
-        </div>
-        <div class="overflow-x-auto">${body}</div>
-      </div>`;
+  const columnHTML = (opts) => {
+    const { id, name, color, cards, actions } = opts;
+    return `<div class="shrink-0 w-72 bg-slate-50 rounded-2xl p-2 flex flex-col" style="max-height:72vh"
+        ondragover="tgOver(event)" ondragenter="tgEnter(event)" ondragleave="tgLeave(event)" ondrop="tgDrop(event,'${id||''}')">
+      <div class="flex items-center gap-2 px-2 py-2">
+        <span class="w-2.5 h-2.5 rounded-full" style="background:${color}"></span>
+        <span class="font-semibold text-sm text-slate-800">${escapeHTML(name)}</span>
+        <span class="text-xs text-slate-400">${cards.length}</span>
+        <div class="ms-auto flex items-center gap-1">${actions||''}</div>
+      </div>
+      <div class="overflow-y-auto px-1 flex-1">${cards.map(cardHTML).join('') || '<div class="text-xs text-slate-300 text-center py-8">Drop a card here</div>'}</div>
+    </div>`;
   };
-  const listActions = g => `
-    <button onclick="openTaskModal(null,'${g.id}')" title="Add task to this list" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('plus','w-4 h-4')}</button>
-    <button onclick="openTaskListModal('${g.id}')" title="Edit list" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('edit','w-4 h-4')}</button>
-    <button onclick="deleteTaskList('${g.id}')" title="Delete list" class="text-slate-500 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100">${icon('trash','w-4 h-4')}</button>`;
-  const board =
-    lists.map(g => sectionHTML({ id:g.id, name:g.name, color:g.color, rows:(byGroup[g.id]||[]), actions:listActions(g) })).join('')
-    + (ungrouped.length ? sectionHTML({ id:'', name:'Ungrouped', color:'#94a3b8', rows:ungrouped, actions:'' }) : '');
+  const listColActions = g => `
+    <button onclick="openTaskModal(null,'${g.id}')" title="Add card" class="text-slate-400 hover:text-brand-600 p-1 rounded hover:bg-slate-200">${icon('plus','w-3.5 h-3.5')}</button>
+    <button onclick="openTaskListModal('${g.id}')" title="Edit list" class="text-slate-400 hover:text-brand-600 p-1 rounded hover:bg-slate-200">${icon('edit','w-3.5 h-3.5')}</button>
+    <button onclick="deleteTaskList('${g.id}')" title="Delete list" class="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-slate-200">${icon('trash','w-3.5 h-3.5')}</button>`;
+  const columns = `
+    <div class="flex gap-3 overflow-x-auto pb-3">
+      ${boardLists.map(g => columnHTML({ id:g.id, name:g.name, color:g.color, cards:(byGroup[g.id]||[]), actions:listColActions(g) })).join('')}
+      ${ungrouped.length ? columnHTML({ id:'', name:'Ungrouped', color:'#94a3b8', cards:ungrouped, actions:'' }) : ''}
+      <div class="shrink-0 w-72"><button onclick="openTaskListModal()" class="w-full text-sm text-slate-500 hover:text-brand-700 border-2 border-dashed border-slate-200 rounded-2xl py-3">${icon('plus','w-4 h-4 inline')} Add list</button></div>
+    </div>`;
 
-  return header + board;
+  return titleCard + boardTabs + boardToolbar + filters + columns;
 }
 function openTaskModal(id, prefillGroupId) {
   if (!hasRole('admin','operations')) return;
