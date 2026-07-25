@@ -5036,6 +5036,50 @@ CREATE POLICY "task_events_delete_author_or_ops"
   );
 
 -- =============================================================
+-- 91. TASK LISTS (monday.com-style groups) — named, coloured
+--    sections that organise the Work Management board. A task
+--    belongs to at most one list (tasks.group_id); tasks with a
+--    NULL group_id show under an "Ungrouped" section. Admin /
+--    operations manage lists; everyone authenticated can read.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.task_groups (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  color       text NOT NULL DEFAULT '#0f6fde',
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS group_id uuid REFERENCES public.task_groups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS tasks_group_idx ON public.tasks(group_id);
+
+ALTER TABLE public.task_groups ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='task_groups'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "task_groups_select_all"
+  ON public.task_groups FOR SELECT TO authenticated USING (true);
+CREATE POLICY "task_groups_insert_ops"
+  ON public.task_groups FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "task_groups_update_ops"
+  ON public.task_groups FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']))
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "task_groups_delete_ops"
+  ON public.task_groups FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
