@@ -441,6 +441,9 @@ const I18N = {
     my_work_intro: "Tasks assigned to you. Move a task forward by changing its status — it saves instantly.",
     needs_action: "Needs your action",
     needs_action_sub: "Pending requests waiting on you. Each item clears once you approve, reject, or resolve it.",
+    hide_reminder: "Hide this reminder",
+    unhide: "Unhide",
+    hidden_reminders: "hidden",
     open: "Open",
     overdue: "Overdue",
     done: "Done",
@@ -656,6 +659,9 @@ const I18N = {
     my_work_intro: "المهام الموكلة إليك. غيّر الحالة لتحريك المهمة — يتم الحفظ فورًا.",
     needs_action: "بحاجة إلى إجراء منك",
     needs_action_sub: "طلبات معلّقة بانتظارك. يختفي كل عنصر بمجرد الموافقة عليه أو رفضه أو معالجته.",
+    hide_reminder: "إخفاء هذا التذكير",
+    unhide: "إظهار",
+    hidden_reminders: "مخفي",
     open: "مفتوحة",
     overdue: "متأخرة",
     done: "منجز",
@@ -11700,6 +11706,26 @@ function tasksSnapshotHTML() {
 // the tasks UPDATE policy already allows the assignee. Branch
 // staff also tick their own branch's checklists from here. Still
 // read-only for task create/edit/delete (operations/admin only).
+// My Work "Needs your action" hide state. These rows are derived live from
+// state (not stored), so a dismissal is persisted in localStorage keyed by
+// employee — a shared browser never leaks one person's hidden items to the
+// next. Hiding never deletes the underlying request: a "Show N hidden" toggle
+// brings them back, and an item whose identity changes (e.g. a renewed doc's
+// new expiry date, which changes its notification key) reappears on its own.
+let myWorkShowHidden = false; // session-only: reveal the hidden bucket
+function myWorkHiddenStoreKey() { return 'mywork_hidden_' + (currentEmployee()?.id || 'anon'); }
+function myWorkHiddenSet() {
+  let arr = [];
+  try { arr = JSON.parse(localStorage.getItem(myWorkHiddenStoreKey()) || '[]'); } catch {}
+  return new Set(Array.isArray(arr) ? arr : []);
+}
+function saveMyWorkHidden(set) {
+  try { localStorage.setItem(myWorkHiddenStoreKey(), JSON.stringify([...set])); } catch {}
+}
+function hideMyWorkItem(key)   { const s = myWorkHiddenSet(); s.add(key);    saveMyWorkHidden(s); render(); }
+function unhideMyWorkItem(key) { const s = myWorkHiddenSet(); s.delete(key); saveMyWorkHidden(s); render(); }
+function toggleMyWorkShowHidden() { myWorkShowHidden = !myWorkShowHidden; render(); }
+
 function renderMyWork() {
   const me = currentEmployee();
   if (!me) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">No employee profile linked to your account.</div>`;
@@ -11736,18 +11762,39 @@ function renderMyWork() {
   // section. Empty for non-managers (those notif types are admin/hr-gated),
   // so the card simply doesn't render for floor staff.
   let actionSection = '';
-  const actionItems = buildNotifications().filter(n => !/^(task-|cl-|leavedone-|advdone-)/.test(n.key));
-  if (actionItems.length) {
+  const allAction = buildNotifications().filter(n => !/^(task-|cl-|leavedone-|advdone-)/.test(n.key));
+  const hiddenKeys = myWorkHiddenSet();
+  const actionItems = allAction.filter(n => !hiddenKeys.has(n.key));
+  const hiddenItems = allAction.filter(n =>  hiddenKeys.has(n.key));
+  if (actionItems.length || hiddenItems.length) {
     const aTone = { red:'text-rose-600 bg-rose-50', amber:'text-amber-600 bg-amber-50', blue:'text-blue-600 bg-blue-50' };
-    const aRows = actionItems.map(n => `
-      <button type="button" onclick="location.hash='${n.href||'#/dashboard'}'" class="w-full text-start px-4 py-3 flex items-center gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0">
-        <span class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${aTone[n.tone]||'text-slate-600 bg-slate-100'}">${icon(n.icon,'w-4 h-4')}</span>
-        <span class="min-w-0 flex-1">
-          <span class="block text-sm font-medium text-slate-800">${n.title}</span>
-          <span class="block text-xs text-slate-500 truncate">${n.detail}</span>
-        </span>
-        <span class="text-xs text-brand-700 font-medium shrink-0">${escapeHTML(t('view'))}</span>
-      </button>`).join('');
+    // Notification keys are app-generated (uuids + fixed labels + ISO dates),
+    // but escape for the single-quoted JS string in onclick anyway.
+    const jsKey = k => String(k).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    // A row is a nav button (opens the item) plus a separate Hide/Unhide
+    // button — not nested, so both stay clickable. `hidden` dims the row and
+    // swaps Hide for Unhide.
+    const aRow = (n, hidden=false) => `
+      <div class="w-full flex items-center hover:bg-slate-50 border-b border-slate-50 last:border-0 ${hidden?'opacity-60':''}">
+        <button type="button" onclick="location.hash='${n.href||'#/dashboard'}'" class="min-w-0 flex-1 text-start px-4 py-3 flex items-center gap-3">
+          <span class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${aTone[n.tone]||'text-slate-600 bg-slate-100'}">${icon(n.icon,'w-4 h-4')}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-800">${n.title}</span>
+            <span class="block text-xs text-slate-500 truncate">${n.detail}</span>
+          </span>
+          <span class="text-xs text-brand-700 font-medium shrink-0">${escapeHTML(t('view'))}</span>
+        </button>
+        ${hidden
+          ? `<button type="button" onclick="unhideMyWorkItem('${jsKey(n.key)}')" title="${escapeHTML(t('unhide'))}" aria-label="${escapeHTML(t('unhide'))}" class="shrink-0 ms-2 px-3 py-1 rounded-lg text-xs font-medium text-brand-700 hover:bg-brand-50">${escapeHTML(t('unhide'))}</button>`
+          : `<button type="button" onclick="hideMyWorkItem('${jsKey(n.key)}')" title="${escapeHTML(t('hide_reminder'))}" aria-label="${escapeHTML(t('hide_reminder'))}" class="shrink-0 ms-2 p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100">${icon('eyeOff','w-4 h-4')}</button>`}
+      </div>`;
+    const aRows = actionItems.map(n => aRow(n, false)).join('')
+      || `<div class="px-4 py-4 text-sm text-slate-400">${escapeHTML(t('needs_action_sub'))}</div>`;
+    const hiddenToggle = hiddenItems.length ? `
+      <button type="button" onclick="toggleMyWorkShowHidden()" class="w-full text-start px-4 py-2.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2 border-t border-slate-100">
+        ${icon('eyeOff','w-3.5 h-3.5')} ${hiddenItems.length} ${escapeHTML(t('hidden_reminders'))} · ${myWorkShowHidden?escapeHTML(t('hide')):escapeHTML(t('show'))}
+      </button>
+      ${myWorkShowHidden ? hiddenItems.map(n => aRow(n, true)).join('') : ''}` : '';
     actionSection = `
       <div class="mb-6">
         <div class="flex items-center gap-2 mb-1">
@@ -11755,7 +11802,7 @@ function renderMyWork() {
           <span class="text-xs text-white bg-rose-500 rounded-full px-2 py-0.5 font-semibold tabular-nums">${actionItems.length}</span>
         </div>
         <p class="text-xs text-slate-500 mb-2">${escapeHTML(t('needs_action_sub'))}</p>
-        <div class="bg-white rounded-2xl shadow-card overflow-hidden">${aRows}</div>
+        <div class="bg-white rounded-2xl shadow-card overflow-hidden">${aRows}${hiddenToggle}</div>
       </div>`;
   }
 
