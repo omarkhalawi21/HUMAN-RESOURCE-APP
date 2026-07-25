@@ -3109,7 +3109,7 @@ function renderShell(routeContent) {
     { key:'documents',    icon:'idcard',    label:t('documents'),    show:true,  group:'people', parent:'records' },
     { key:'agreements',   icon:'file',      label:'Agreements',      show:true,  group:'people', parent:'records' },
     /* Company resources */
-    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting'), group:'company', parent:'finance' },
+    { key:'receipts',     icon:'receipt',   label:t('receipts'),     show:hasRole('admin','accounting','maintenance'), group:'company', parent:'finance' },
     { key:'b2b_invoices', icon:'receipt',   label:'B2B Invoices',    show:hasRole('admin','accounting','operations'), group:'company', parent:'finance' },
     { key:'inventory',    icon:'box',       label:t('inventory'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
     { key:'suppliers',    icon:'building',  label:t('suppliers'),    show:hasRole('admin','head_barista','roaster'), group:'company', parent:'inventory' },
@@ -23417,7 +23417,7 @@ function renderMain() {
     case 'agreements':   content = renderAgreements(); break;
     case 'archive':      content = hasRole('admin','operations') ? renderArchive() : renderRoleDashboard(); break;
     case 'resources':    content = hasRole('admin','barista','head_barista','roaster') ? renderResources() : renderRoleDashboard(); break;
-    case 'receipts':     content = hasRole('admin','accounting') ? renderReceipts() : renderRoleDashboard(); break;
+    case 'receipts':     content = hasRole('admin','accounting','maintenance') ? renderReceipts() : renderRoleDashboard(); break;
     case 'b2b_invoices': content = hasRole('admin','accounting','operations') ? renderB2bInvoices() : renderRoleDashboard(); break;
     case 'inventory':    content = hasRole('admin','head_barista','roaster') ? renderInventory() : renderRoleDashboard(); break;
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
