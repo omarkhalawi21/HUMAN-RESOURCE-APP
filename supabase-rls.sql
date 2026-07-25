@@ -5080,6 +5080,59 @@ CREATE POLICY "task_groups_delete_ops"
   USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
+-- 92. TASK BOARDS — the container above lists (Trello/monday model)
+--    You create a board, name it, then create lists (task_groups)
+--    inside it; tasks (cards) live in a list. Adds task_groups.board_id
+--    (CASCADE: deleting a board removes its lists) and seeds a default
+--    "Main Board" so any lists made under block 91 (board-less) adopt it.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.task_boards (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  color       text NOT NULL DEFAULT '#0f6fde',
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.task_groups ADD COLUMN IF NOT EXISTS board_id uuid REFERENCES public.task_boards(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS task_groups_board_idx ON public.task_groups(board_id);
+
+-- Seed a default board and adopt any board-less lists into it (idempotent:
+-- only inserts the board once, only backfills lists whose board_id is NULL).
+INSERT INTO public.task_boards (name, color, sort_order)
+SELECT 'Main Board', '#0f6fde', 0
+WHERE NOT EXISTS (SELECT 1 FROM public.task_boards);
+
+UPDATE public.task_groups
+   SET board_id = (SELECT id FROM public.task_boards ORDER BY sort_order, created_at LIMIT 1)
+ WHERE board_id IS NULL;
+
+ALTER TABLE public.task_boards ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='task_boards'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "task_boards_select_all"
+  ON public.task_boards FOR SELECT TO authenticated USING (true);
+CREATE POLICY "task_boards_insert_ops"
+  ON public.task_boards FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "task_boards_update_ops"
+  ON public.task_boards FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations'])) WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "task_boards_delete_ops"
+  ON public.task_boards FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
