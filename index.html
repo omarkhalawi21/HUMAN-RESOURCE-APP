@@ -444,6 +444,8 @@ const I18N = {
     hide_reminder: "Hide this reminder",
     unhide: "Unhide",
     hidden_reminders: "hidden",
+    view_list: "List",
+    view_board: "Board",
     open: "Open",
     overdue: "Overdue",
     done: "Done",
@@ -662,6 +664,8 @@ const I18N = {
     hide_reminder: "إخفاء هذا التذكير",
     unhide: "إظهار",
     hidden_reminders: "مخفي",
+    view_list: "قائمة",
+    view_board: "لوحة",
     open: "مفتوحة",
     overdue: "متأخرة",
     done: "منجز",
@@ -11726,6 +11730,86 @@ function hideMyWorkItem(key)   { const s = myWorkHiddenSet(); s.add(key);    sav
 function unhideMyWorkItem(key) { const s = myWorkHiddenSet(); s.delete(key); saveMyWorkHidden(s); render(); }
 function toggleMyWorkShowHidden() { myWorkShowHidden = !myWorkShowHidden; render(); }
 
+// My Work task view — 'list' (the tables) or 'board' (Kanban by status).
+// Persisted per browser so the choice sticks across sessions.
+let _myWorkTaskView = null;
+function getMyWorkTaskView() {
+  if (_myWorkTaskView === null) {
+    let v = 'list';
+    try { v = localStorage.getItem('mywork_task_view') || 'list'; } catch {}
+    _myWorkTaskView = v === 'board' ? 'board' : 'list';
+  }
+  return _myWorkTaskView;
+}
+function setMyWorkTaskView(v) {
+  _myWorkTaskView = v === 'board' ? 'board' : 'list';
+  try { localStorage.setItem('mywork_task_view', _myWorkTaskView); } catch {}
+  render();
+}
+
+// Kanban drag-and-drop (HTML5 native, desktop). Dropping a card on a column
+// calls changeTaskStatus — the same path the List view's status dropdown uses,
+// so the board and list stay in sync. Touch devices don't fire HTML5 drag
+// events; those users keep using the List view's status dropdown.
+let _mwDragTaskId = null;
+function myWorkDragStart(e, id) {
+  _mwDragTaskId = id;
+  try { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; } catch(_) {}
+  if (e.currentTarget && e.currentTarget.style) e.currentTarget.style.opacity = '0.5';
+}
+function myWorkDragEnd(e) {
+  if (e.currentTarget && e.currentTarget.style) e.currentTarget.style.opacity = '';
+  _mwDragTaskId = null;
+}
+function myWorkDragOver(e) { e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch(_) {} }
+function myWorkColEnter(e) { e.currentTarget.style.background = '#efe9df'; }
+function myWorkColLeave(e) { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.style.background = ''; }
+function myWorkDrop(e, status) {
+  e.preventDefault();
+  e.currentTarget.style.background = '';
+  const id = _mwDragTaskId || (e.dataTransfer ? e.dataTransfer.getData('text/plain') : '');
+  _mwDragTaskId = null;
+  if (id) changeTaskStatus(id, status);
+}
+
+// Kanban board for the caller's tasks (`mine`): one column per TASK_STATUS,
+// cards draggable between columns. Done is capped so a long history doesn't
+// balloon the column; the List view still shows the full recent-done section.
+function myWorkBoardHTML(mine) {
+  const prioRank = { urgent:0, high:1, normal:2, low:3 };
+  const cols = Object.entries(TASK_STATUSES).map(([key, meta]) => {
+    let list = mine.filter(tk => (tk.status||'todo') === key);
+    if (key === 'done') {
+      list = list.slice().sort((a,b)=>(b.completedAt||b.updatedAt||'').localeCompare(a.completedAt||a.updatedAt||'')).slice(0, 20);
+    } else {
+      list = list.slice().sort((a,b)=> (prioRank[a.priority]??2)-(prioRank[b.priority]??2) || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+    }
+    const cards = list.map(tk => {
+      const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
+      const over = taskOverdue(tk);
+      return `<div draggable="true" ondragstart="myWorkDragStart(event,'${tk.id}')" ondragend="myWorkDragEnd(event)"
+          class="bg-white rounded-xl border ${over?'border-rose-200':'border-slate-200'} p-3 mb-2 shadow-sm" style="cursor:grab">
+        <div class="text-sm font-medium text-slate-900">${escapeHTML(tk.title)}</div>
+        ${tk.description ? `<div class="text-xs text-slate-500 mt-1 truncate">${escapeHTML(tk.description)}</div>` : ''}
+        <div class="flex items-center gap-2 mt-2 flex-wrap">
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
+          ${tk.dueDate ? `<span class="text-[11px] ${over?'text-rose-600 font-medium':'text-slate-500'}">${over?'Overdue · ':''}${escapeHTML(fmtDate(tk.dueDate))}</span>` : ''}
+          ${tk.department ? `<span class="text-[11px] text-slate-400">${escapeHTML(tk.department)}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('') || `<div class="text-xs text-slate-300 text-center py-6">—</div>`;
+    return `<div class="flex-1 bg-slate-50 rounded-2xl p-3" style="min-width:240px"
+        ondragover="myWorkDragOver(event)" ondragenter="myWorkColEnter(event)" ondragleave="myWorkColLeave(event)" ondrop="myWorkDrop(event,'${key}')">
+      <div class="flex items-center gap-2 mb-3 px-1">
+        <span class="text-sm font-semibold text-slate-700">${escapeHTML(meta.label)}</span>
+        <span class="text-xs text-slate-400 tabular-nums">${mine.filter(tk=>(tk.status||'todo')===key).length}</span>
+      </div>
+      <div>${cards}</div>
+    </div>`;
+  }).join('');
+  return `<div class="mb-6"><div class="flex gap-3 overflow-x-auto pb-2">${cols}</div></div>`;
+}
+
 function renderMyWork() {
   const me = currentEmployee();
   if (!me) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">No employee profile linked to your account.</div>`;
@@ -12039,11 +12123,24 @@ function renderMyWork() {
       </div>
     </div>` : '';
 
+  // List / Board toggle for the assigned-tasks area. List = the status-grouped
+  // tables (default); Board = the Kanban. Toggle only shows when there are
+  // tasks (the mine.length===0 early return handles the empty case above).
+  const taskView = getMyWorkTaskView();
+  const viewToggle = `<div class="flex items-center gap-1 mb-4">
+    <button type="button" onclick="setMyWorkTaskView('list')" class="tab ${taskView==='list'?'active':''}">${icon('check','w-4 h-4 inline')} ${escapeHTML(t('view_list'))}</button>
+    <button type="button" onclick="setMyWorkTaskView('board')" class="tab ${taskView==='board'?'active':''}">${icon('grip','w-4 h-4 inline')} ${escapeHTML(t('view_board'))}</button>
+  </div>`;
+  const tasksBody = taskView === 'board'
+    ? myWorkBoardHTML(mine)
+    : ( section(t('section_overdue'),       overdue, 'text-rose-700')
+      + section(t('section_to_do'),         active,  null)
+      + section(t('section_recently_done'), done,    'text-slate-500') );
+
   return header
     + actionSection
-    + section(t('section_overdue'),       overdue, 'text-rose-700')
-    + section(t('section_to_do'),         active,  null)
-    + section(t('section_recently_done'), done,    'text-slate-500')
+    + viewToggle
+    + tasksBody
     + clSection
     + todoSection;
 }
