@@ -4936,6 +4936,40 @@ $$;
 GRANT EXECUTE ON FUNCTION public.cancel_leave_request(uuid) TO authenticated;
 
 -- =============================================================
+-- 89. RECEIPTS RLS — add the maintenance role
+--    The maintenance team now handles their own supplier/parts
+--    receipts, so they get the same access as accounting. Admins
+--    and accounting keep full access. Drop-then-recreate all four
+--    policies with the widened role array (idempotent).
+-- =============================================================
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'receipts'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I',
+                   r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "receipts_select_admin_acct_maint"
+  ON public.receipts FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','accounting','maintenance']));
+CREATE POLICY "receipts_insert_admin_acct_maint"
+  ON public.receipts FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','accounting','maintenance']));
+CREATE POLICY "receipts_update_admin_acct_maint"
+  ON public.receipts FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','accounting','maintenance']))
+  WITH CHECK (public.has_role(ARRAY['admin','accounting','maintenance']));
+CREATE POLICY "receipts_delete_admin_acct_maint"
+  ON public.receipts FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','accounting','maintenance']));
+
+-- =============================================================
 -- 90. TASK ACTIVITY — comments + status-change timeline
 --    One append-only row per event on a task: a 'comment' (note),
 --    a 'status' change (from -> to), or the initial 'created'.
@@ -4944,8 +4978,7 @@ GRANT EXECUTE ON FUNCTION public.cancel_leave_request(uuid) TO authenticated;
 --    authenticated user can read (tasks_select_all is USING true);
 --    a comment/status event can be added by admin/operations or the
 --    task's own assignee; an event is deletable by its author or
---    admin/operations. (Block 89 = receipts/maintenance, PR #238 —
---    independent; run either order, both idempotent.)
+--    admin/operations.
 -- =============================================================
 CREATE TABLE IF NOT EXISTS public.task_events (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
