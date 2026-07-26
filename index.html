@@ -13394,6 +13394,9 @@ function canManageMarketing() { return hasRole('admin','operations','marketing')
 let _mktProjectId  = null; // drill-down: selected project
 let _mktBoardId    = null; // drill-down: selected board
 let _mktItemModalId = null; // item whose detail modal is open
+let _mktHomeTab = 'projects'; // Marketing home: 'projects' | 'dashboard'
+let _mktChartData = null;     // data snapshot for the dashboard's Chart.js charts
+const _mktCharts = {};        // live Chart.js instances (destroyed before re-create)
 const MKT_COLORS = ['#6d28d9','#0f6fde','#00c875','#fdab3d','#e2445c','#00a9c7','#ff642e','#9333ea'];
 
 // ---- accessors ----
@@ -13440,12 +13443,77 @@ function renderMarketingHome(){
       ${p.description?`<p class="text-sm text-slate-500 mt-1 line-clamp-2">${escapeHTML(p.description)}</p>`:''}
       <div class="mt-4 flex items-center justify-between text-xs text-slate-500"><span>${boards} board${boards===1?'':'s'}</span><span>${pr.done}/${pr.total} done · ${pr.pct}%</span></div>
       <div class="mt-2">${mktProgressBar(pr.pct,p.color)}</div></button>`; };
+  const tabbar = `<div class="flex items-center gap-1.5 mb-5 bg-slate-100 rounded-xl p-1.5 w-fit">
+      <button onclick="mktSetHomeTab('projects')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${_mktHomeTab!=='dashboard'?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}">Projects</button>
+      <button onclick="mktSetHomeTab('dashboard')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${_mktHomeTab==='dashboard'?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}">Dashboard</button>
+    </div>`;
+  const hero = mktHero('Marketing', 'Plan campaigns, run boards, and track the team work.', `<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`);
+  if(_mktHomeTab==='dashboard') return `${hero}${tabbar}${renderMarketingDashboard()}`;
   return `
-    ${mktHero('Marketing', 'Plan campaigns, run boards, and track the team work.', `<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}
+    ${hero}${tabbar}
     ${projects.length ? `
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${active.map(card).join('')}</div>
       ${archived.length?`<h3 class="text-sm font-semibold text-slate-500 mt-8 mb-3 uppercase tracking-wider">Archived</h3><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${archived.map(card).join('')}</div>`:''}
     ` : mktEmpty('No projects yet','Create your first marketing project to start building boards and tasks.',`<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}`;
+}
+function mktSetHomeTab(tab){ _mktHomeTab = tab; render(); }
+// KPI + charts overview across the whole marketing workspace (Chart.js,
+// already loaded + CSP-cleared; falls back to a note if the lib is absent).
+function renderMarketingDashboard(){
+  const items=(state.marketingItems||[]).filter(i=>!i.parentId);
+  const total=items.length;
+  const by=s=>items.filter(i=>i.status===s).length;
+  const done=by('done'), inProg=by('in_progress'), stuck=by('blocked'), todo=by('todo');
+  const today=todayISO();
+  const overdue=items.filter(i=>i.status!=='done' && i.dueDate && i.dueDate<today).length;
+  const dueSoon=items.filter(i=>{ if(i.status==='done'||!i.dueDate) return false; const d=daysUntil(i.dueDate); return d!=null && d>=0 && d<=7; }).length;
+  const pct=total?Math.round(done/total*100):0;
+  // Completed per week, last 8 weeks (UTC Monday buckets).
+  const weeks=[]; let wk=wcMonday(today); for(let i=0;i<8;i++){ weeks.unshift(wk); wk=wcAddDays(wk,-7); }
+  const weekCounts=weeks.map(ws=>{ const we=wcAddDays(ws,7); return items.filter(i=>i.status==='done' && i.completedAt && i.completedAt.slice(0,10)>=ws && i.completedAt.slice(0,10)<we).length; });
+  _mktChartData={ status:{todo,inProg,stuck,done}, weekLabels:weeks.map(w=>w.slice(5)), weekCounts };
+  // Per-project completion (CSS bars).
+  const projects=(state.marketingProjects||[]).slice().filter(p=>p.status!=='archived').sort(_mktSort);
+  const projRows=projects.map(p=>{ const pr=mktProgress(mktItemsUnderProject(p.id)); return {p,pr}; }).sort((a,b)=>b.pr.total-a.pr.total);
+  // Workload: open (not done) top-level items assigned per member.
+  const openByEmp=new Map();
+  (state.marketingItemMembers||[]).forEach(m=>{ const it=mktItem(m.itemId); if(!it||it.parentId||it.status==='done') return; openByEmp.set(m.employeeId,(openByEmp.get(m.employeeId)||0)+1); });
+  const workload=[...openByEmp.entries()].map(([id,n])=>({id,name:mktEmpName(id),n})).sort((a,b)=>b.n-a.n).slice(0,8);
+  const maxLoad=workload.reduce((m,w)=>Math.max(m,w.n),0)||1;
+  if(!total) return mktEmpty('Nothing to report yet','Add projects, boards and cards — your KPIs and charts will appear here.',`<button onclick="mktSetHomeTab('projects')" class="btn btn-primary">Go to projects</button>`);
+  const tile=(label,value,sub,tone)=>`<div class="bg-white rounded-2xl shadow-card p-4"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(label)}</div><div class="font-display text-2xl font-semibold mt-1 ${tone||'text-slate-900'}">${value}</div>${sub?`<div class="text-xs text-slate-500 mt-1">${sub}</div>`:''}</div>`;
+  const noChart = (typeof Chart==='undefined');
+  return `
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-5">
+      ${tile('Total cards', total, `${projects.length} project${projects.length===1?'':'s'}`)}
+      ${tile('Completed', done, `${pct}% done`, 'text-emerald-700')}
+      ${tile('Working on it', inProg, '', 'text-amber-600')}
+      ${tile('Stuck', stuck, '', stuck?'text-rose-600':'text-slate-900')}
+      ${tile('Overdue', overdue, '', overdue?'text-rose-600':'text-slate-900')}
+      ${tile('Due this week', dueSoon, '', dueSoon?'text-amber-600':'text-slate-900')}
+    </div>
+    <div class="mb-5"><div class="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:#00c875"></div></div><div class="text-xs text-slate-500 mt-1">${done} of ${total} cards completed · ${pct}%</div></div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+      <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Status breakdown</h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:220px"><canvas id="mktStatusChart"></canvas></div>'}</div>
+      <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Completed per week <span class="text-slate-400 font-normal text-sm">(last 8 weeks)</span></h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:220px"><canvas id="mktWeeklyChart"></canvas></div>'}</div>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Progress by project</h3>${projRows.length?`<div class="space-y-3">${projRows.map(({p,pr})=>`<div><div class="flex items-center justify-between text-sm mb-1"><span class="flex items-center gap-2 min-w-0"><span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${p.color}"></span><span class="truncate text-slate-700">${escapeHTML(p.name)}</span></span><span class="text-xs text-slate-500 shrink-0">${pr.done}/${pr.total} · ${pr.pct}%</span></div>${mktProgressBar(pr.pct,p.color)}</div>`).join('')}</div>`:'<div class="text-sm text-slate-400">No active projects.</div>'}</div>
+      <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Open workload by member <span class="text-slate-400 font-normal text-sm">(top 8)</span></h3>${workload.length?`<div class="space-y-3">${workload.map(w=>`<div><div class="flex items-center justify-between text-sm mb-1"><span class="truncate text-slate-700">${escapeHTML(w.name)}</span><span class="text-xs text-slate-500 shrink-0">${w.n} open</span></div>${mktProgressBar(Math.round(w.n/maxLoad*100),'#6d28d9')}</div>`).join('')}</div>`:'<div class="text-sm text-slate-400">No open assigned cards.</div>'}</div>
+    </div>`;
+}
+function initMktCharts(){
+  if(typeof Chart==='undefined' || !_mktChartData) return;
+  Object.keys(_mktCharts).forEach(k=>{ try{ _mktCharts[k].destroy(); }catch(_){} delete _mktCharts[k]; });
+  const d=_mktChartData;
+  const cs=document.getElementById('mktStatusChart');
+  if(cs){ _mktCharts.status=new Chart(cs,{ type:'doughnut',
+    data:{ labels:['Not started','Working on it','Stuck','Done'], datasets:[{ data:[d.status.todo,d.status.inProg,d.status.stuck,d.status.done], backgroundColor:['#c4c8d4','#fdab3d','#e2445c','#00c875'], borderWidth:0 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right', labels:{ font:{size:10}, boxWidth:12 } } }, cutout:'58%' } }); }
+  const cw=document.getElementById('mktWeeklyChart');
+  if(cw){ _mktCharts.weekly=new Chart(cw,{ type:'bar',
+    data:{ labels:d.weekLabels, datasets:[{ label:'Completed', data:d.weekCounts, backgroundColor:'#6d28d9', borderRadius:4 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0, font:{size:10} } }, x:{ ticks:{ font:{size:10}, maxRotation:0, autoSkip:true } } } } }); }
 }
 // Project workspace: board TABS + the active board's kanban lists inline —
 // no separate "open board" step. This is the Trello-style single view.
@@ -24757,6 +24825,7 @@ function renderMain() {
   // shell's innerHTML lands. initInvCharts() no-ops if the hub canvases
   // aren't present or Chart.js failed to load.
   if (route === 'inventory_hub') initInvCharts();
+  if (route === 'marketing') initMktCharts();
 }
 
 /* -------------------- INIT -------------------- */
