@@ -18009,6 +18009,7 @@ async function saveBakeryPurchases() {
 const INVENTORY_CATEGORIES = {
   beans_raw:    { label: 'Coffee — Green Beans', icon: 'cash' },
   beans_roast:  { label: 'Coffee — Roasted',     icon: 'cash' },
+  retail_packaged: { label: 'Packaged / Retail', icon: 'box' },
   milk_dairy:   { label: 'Milk & Dairy',         icon: 'inbox' },
   syrups:       { label: 'Syrups & Flavoring',   icon: 'inbox' },
   cups_lids:    { label: 'Cups & Lids',          icon: 'archive' },
@@ -19859,7 +19860,7 @@ function openShelfCountModal() {
           <div class="text-xs text-slate-500">on hand ${cur.toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(it.unit||'kg')}</div>
         </div>
         <input id="sc_${it.id}" type="number" min="0" step="0.01" inputmode="decimal"
-               class="input w-28 text-right tabular-nums" value="${cur}"
+               class="input text-right tabular-nums shrink-0" style="width:6.5rem" value="${cur}"
                aria-label="Counted quantity for ${escapeHTML(it.name||'item')}">
       </div>`;
   };
@@ -19899,10 +19900,77 @@ function openShelfCountModal() {
   }, { saveLabel: 'Save count' });
 }
 
+// Weekly stock-take of packaged finished goods (retail_packaged) — mirrors the
+// daily shelf count but writes the counted figure as the item's on-hand so the
+// roaster's packaged stock stays connected to the general inventory. Each save
+// is a 'count' movement dated today, so the weekly history lives in the ledger.
+function openPackagedCountModal() {
+  const packaged = (state.inventory || [])
+    .filter(i => i.category === 'retail_packaged')
+    .sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (packaged.length === 0) { toast('Add packaged products first (Packaged tab → Add product).', 'error'); return; }
+
+  const groups = {};
+  packaged.forEach(it => { const b = (it.branch||'').trim() || 'Unassigned'; (groups[b] = groups[b]||[]).push(it); });
+  const orderedBranches = [
+    ...SUGGESTED_BRANCHES.filter(b => groups[b]),
+    ...Object.keys(groups).filter(b => !SUGGESTED_BRANCHES.includes(b) && b !== 'Unassigned').sort(),
+    ...(groups['Unassigned'] ? ['Unassigned'] : []),
+  ];
+  const today = todayISO();
+  const rowHTML = (it) => {
+    const cur = Number(it.quantity) || 0;
+    return `
+      <div class="flex items-center gap-3 px-4 py-2.5">
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-slate-900 truncate">${escapeHTML(it.name||'—')}</div>
+          <div class="text-xs text-slate-500">on hand ${cur.toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(it.unit||'units')}</div>
+        </div>
+        <input id="pc_${it.id}" type="number" min="0" step="1" inputmode="numeric"
+               class="input text-right tabular-nums shrink-0" style="width:6.5rem" value="${cur}"
+               aria-label="Counted quantity for ${escapeHTML(it.name||'item')}">
+      </div>`;
+  };
+  const form = `
+    <div class="space-y-4">
+      <p class="text-sm text-slate-500">Enter this week's count for each packaged product. The number becomes the item's on-hand in the general inventory, and the change is saved to its history. Leave a number unchanged to skip it.</p>
+      <div class="space-y-4">
+        ${orderedBranches.map(b => `
+          <div class="rounded-xl border border-slate-200 overflow-hidden">
+            <div class="px-4 py-2 bg-slate-50 border-b border-slate-100 font-display text-sm font-semibold text-slate-900">${escapeHTML(b)}</div>
+            <div class="divide-y divide-slate-100">${groups[b].map(rowHTML).join('')}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  openModal(`Weekly packaged count — ${fmtDate(today)}`, form, async () => {
+    let changed = 0, failed = 0;
+    for (const it of packaged) {
+      const el = document.getElementById('pc_' + it.id);
+      if (!el || el.value === '') continue;
+      const counted = parseFloat(el.value);
+      if (isNaN(counted) || counted < 0) continue;
+      const delta = counted - (Number(it.quantity) || 0);
+      if (delta === 0) continue;
+      const m = await logInventoryMovement(it.id, delta, {
+        type: 'count', occurredAt: today, branch: it.branch || null,
+        notes: 'Weekly packaged count',
+      });
+      if (m) changed++; else failed++;
+    }
+    render();
+    if (failed) toast(`${changed} counted, ${failed} failed`, changed ? 'success' : 'error');
+    else if (changed) toast(`Weekly count saved — ${changed} product${changed===1?'':'s'} updated`, 'success');
+    else toast('No changes — stock already matched', 'info');
+    return true;
+  }, { saveLabel: 'Save count' });
+}
+
 function renderRoaster() {
   const all = (state.inventory || []);
   const green = all.filter(i => i.category === 'beans_raw');
   const shelf = all.filter(i => i.category === 'beans_roast');
+  const packaged = all.filter(i => i.category === 'retail_packaged')
+    .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
   const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
   const weekly = all
     .filter(i => i.updatedAt && new Date(i.updatedAt) >= weekAgo)
@@ -19915,8 +19983,12 @@ function renderRoaster() {
   const shelfLow   = shelf.filter(isLowStock).length;
 
   let items = green;
-  if (roasterTab === 'shelf')  items = shelf;
-  if (roasterTab === 'weekly') items = weekly;
+  if (roasterTab === 'shelf')    items = shelf;
+  if (roasterTab === 'packaged') items = packaged;
+  if (roasterTab === 'weekly')   items = weekly;
+  // Category + unit used by the "Add …" buttons, per the active tab.
+  const addCat  = roasterTab==='shelf' ? 'beans_roast' : roasterTab==='packaged' ? 'retail_packaged' : 'beans_raw';
+  const addUnit = roasterTab==='packaged' ? 'units' : 'kg';
 
   const tabBtn = (key, label, count) => `
     <button onclick="setRoasterTab('${key}')" class="tab ${roasterTab===key?'active':''}">${escapeHTML(label)}<span class="ml-1.5 text-xs text-slate-400">${count}</span></button>`;
@@ -19933,10 +20005,11 @@ function renderRoaster() {
         <div class="flex gap-2 flex-wrap">
           <button onclick="printWeeklyInventoryReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Weekly report</button>
           <button onclick="openShelfCountModal()" class="btn btn-ghost">${icon('check','w-4 h-4')} Count shelf</button>
+          <button onclick="openPackagedCountModal()" class="btn btn-ghost">${icon('box','w-4 h-4')} Weekly count</button>
           <button onclick="openTransferModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log transfer</button>
           <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
           <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
-          <button onclick="openInventoryItemModal(null, {branch:'FAISALIYAH', category: roasterTab==='shelf' ? 'beans_roast' : 'beans_raw', unit:'kg'})" class="btn btn-primary">${icon('plus','w-4 h-4')} Add bean</button>
+          <button onclick="openInventoryItemModal(null, {branch:'FAISALIYAH', category: '${addCat}', unit:'${addUnit}'})" class="btn btn-primary">${icon('plus','w-4 h-4')} ${roasterTab==='packaged'?'Add product':'Add bean'}</button>
         </div>
       </div>
     </div>
@@ -19960,10 +20033,11 @@ function renderRoaster() {
     </div>
 
     <div class="flex gap-1 border-b border-slate-200 mb-4">
-      ${tabBtn('green',  'Green beans',  green.length)}
-      ${tabBtn('shelf',  'Daily shelf',  shelf.length)}
-      ${tabBtn('weekly', 'This week',    weekly.length)}
-      ${tabBtn('batches','Batches',      (state.roastBatches||[]).length)}
+      ${tabBtn('green',    'Green beans',  green.length)}
+      ${tabBtn('shelf',    'Daily shelf',  shelf.length)}
+      ${tabBtn('packaged', 'Packaged',     packaged.length)}
+      ${tabBtn('weekly',   'This week',    weekly.length)}
+      ${tabBtn('batches',  'Batches',      (state.roastBatches||[]).length)}
     </div>
 
     ${roasterTab === 'batches' ? renderRoasterBatchesSection() : items.length === 0 ? `
@@ -19972,13 +20046,15 @@ function renderRoaster() {
         <h3 class="font-display text-lg font-semibold text-slate-900">${
           roasterTab==='green' ? 'No green beans tracked yet'
           : roasterTab==='shelf' ? 'Nothing on the shelf yet'
+          : roasterTab==='packaged' ? 'No packaged products yet'
           : 'No movement in the last 7 days'
         }</h3>
         <p class="text-sm text-slate-500 mt-1">${
           roasterTab==='weekly' ? 'Bean updates from the past week will show up here.'
+          : roasterTab==='packaged' ? 'Add your packaged products (2.5kg / 250g / 125g bags, drip boxes) — they live in the general inventory, and the weekly count keeps their stock up to date.'
           : 'Add a bean item to start tracking. Pick the matching category from the dropdown.'
         }</p>
-        ${roasterTab !== 'weekly' ? `<button onclick="openInventoryItemModal(null, {branch:'FAISALIYAH', category: roasterTab==='shelf' ? 'beans_roast' : 'beans_raw', unit:'kg'})" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} Add bean</button>` : ''}
+        ${roasterTab !== 'weekly' ? `<button onclick="openInventoryItemModal(null, {branch:'FAISALIYAH', category: '${addCat}', unit:'${addUnit}'})" class="btn btn-primary mt-4">${icon('plus','w-4 h-4')} ${roasterTab==='packaged'?'Add product':'Add bean'}</button>` : ''}
       </div>
     ` : (() => {
       const rowHTML = (it) => {
