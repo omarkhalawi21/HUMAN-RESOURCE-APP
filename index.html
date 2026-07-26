@@ -17765,8 +17765,8 @@ function renderWeeklyCount() {
     <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
       <div>
         <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Weekly count</div>
-        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(branch)}</h2>
-        <div class="text-xs text-slate-500 mt-1">Consumables on hand · what was purchased · what got used this week.</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${view==='all'?'All branches':escapeHTML(branch)}</h2>
+        <div class="text-xs text-slate-500 mt-1">${view==='all'?'Combined weekly count across all branches — per branch and total.':'Consumables on hand · what was purchased · what got used this week.'}</div>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         ${branchSel}
@@ -17774,10 +17774,24 @@ function renderWeeklyCount() {
           <button onclick="weeklyCountState.view='entry'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='entry'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Count</button>
           <button onclick="wcCaptureInputs(); weeklyCountState.view='month'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='month'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Month grid</button>
           <button onclick="wcCaptureInputs(); weeklyCountState.view='summary'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='summary'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">Summary</button>
+          <button onclick="wcCaptureInputs(); weeklyCountState.view='all'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${view==='all'?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">All branches</button>
         </div>
         ${canManage ? `<button onclick="openWeeklyCountItemModal()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Manage items</button>` : ''}
       </div>
     </div>`;
+
+  // All-branches consolidated view — loads every branch for the selected
+  // week's month, then totals each item across branches for that week.
+  if (view === 'all') {
+    const missingAll = COFFEE_BRANCHES.some(b => !state.weeklyCountsCache[wcCacheKey(b, ym)]);
+    if (missingAll) {
+      COFFEE_BRANCHES.forEach(b => loadWeeklyCounts(b, ym));
+      return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading all branches…</div>`;
+    }
+    const allItems = (state.weeklyCountItems || []).filter(i => i.active).sort((a,b) => a.sortOrder - b.sortOrder);
+    if (!allItems.length) return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No weekly-count items yet.</div>`;
+    return header + renderWeeklyCountAll(allItems, week);
+  }
 
   // Need the selected month, the previous week's month (last→this week
   // delta across a month boundary), and the prior calendar month
@@ -17997,6 +18011,113 @@ function exportWeeklyCountSummaryCSV(branch, ym) {
   a.click();
   URL.revokeObjectURL(url);
   toast('Summary exported', 'success');
+}
+
+// ---- All-branches consolidated (selected week) ----
+// Each branch's on-hand count for the week, side by side, plus a combined
+// total per item. Reads the per-branch caches already loaded for the month.
+function wcAllRow(it, week) {
+  const vals = COFFEE_BRANCHES.map(b => { const s = wcGetSaved(b, week, it.id); return s && s.availableQty != null ? Number(s.availableQty) : null; });
+  const total = vals.some(v => v != null) ? Math.round(vals.reduce((s,v)=>s+(v||0),0)*100)/100 : null;
+  return { vals, total };
+}
+function renderWeeklyCountAll(items, week) {
+  const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
+  const groups = WC_CAT_ORDER
+    .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
+    .filter(([, l]) => l.length);
+  const counted = {}; COFFEE_BRANCHES.forEach(b => { counted[b] = items.filter(it => { const s = wcGetSaved(b, week, it.id); return s && s.availableQty != null; }).length; });
+  const tbl = (cat, list) => `
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto mb-4">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+            <th class="px-3 py-2 text-left sticky left-0 bg-white">${escapeHTML(WC_CATEGORIES[cat]||cat)}</th>
+            ${COFFEE_BRANCHES.map(b => `<th class="px-2 py-2 text-right">${escapeHTML(b)}</th>`).join('')}
+            <th class="px-2 py-2 text-right text-brand-700">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(it => { const r = wcAllRow(it, week);
+            return `<tr class="border-t border-slate-50">
+              <td class="px-3 py-2 sticky left-0 bg-white text-slate-800 whitespace-nowrap">${escapeHTML(it.name)} <span class="text-[10px] text-slate-400">${escapeHTML(it.unit)}</span></td>
+              ${r.vals.map(v => `<td class="px-2 py-2 text-right tabular-nums ${v==null?'text-slate-300':'text-slate-600'}">${n2(v)}</td>`).join('')}
+              <td class="px-2 py-2 text-right tabular-nums font-semibold text-slate-900">${n2(r.total)}</td>
+            </tr>`; }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  return `
+    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+      <label class="flex items-center gap-2 text-sm text-slate-600">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Week of</span>
+        <input type="date" value="${escapeHTML(week)}" max="${escapeHTML(todayISO())}" onchange="weeklyCountState.week=wcMonday(this.value); render();" class="input !w-auto !py-2">
+        <span class="text-xs text-slate-500">${escapeHTML(wcWeekLabel(week))}</span>
+      </label>
+      <div class="flex items-center gap-2">
+        <button onclick="exportWeeklyCountAllCSV('${escapeHTML(week)}')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="printWeeklyCountAll('${escapeHTML(week)}')" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print report</button>
+      </div>
+    </div>
+    <div class="bg-brand-50/60 border border-brand-100 rounded-xl px-4 py-3 mb-4 text-xs text-brand-800">
+      Combined on-hand count across all branches for the week of <strong>${escapeHTML(wcWeekLabel(week))}</strong>. Each branch column is that branch's counted quantity; <strong>Total</strong> sums them (blank where a branch hasn't counted that item). Counted: ${COFFEE_BRANCHES.map(b => `${escapeHTML(b)} ${counted[b]}/${items.length}`).join(' · ')}.
+    </div>
+    ${groups.map(([cat,list]) => tbl(cat,list)).join('')}`;
+}
+function exportWeeklyCountAllCSV(week) {
+  const items = (state.weeklyCountItems || []).filter(i => i.active).sort((a,b) => a.sortOrder - b.sortOrder);
+  const out = [['Week of','Category','Item','Unit', ...COFFEE_BRANCHES, 'Total']];
+  items.forEach(it => { const r = wcAllRow(it, week);
+    out.push([wcWeekLabel(week), WC_CATEGORIES[it.category]||it.category, it.name, it.unit,
+      ...r.vals.map(v => v==null?'':v), r.total==null?'':r.total]); });
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `weekly-count-all-branches-${week}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Report exported', 'success');
+}
+function printWeeklyCountAll(week) {
+  const items = (state.weeklyCountItems || []).filter(i => i.active).sort((a,b) => a.sortOrder - b.sortOrder);
+  const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
+  const groups = WC_CAT_ORDER
+    .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
+    .filter(([, l]) => l.length);
+  const counted = {}; COFFEE_BRANCHES.forEach(b => { counted[b] = items.filter(it => { const s = wcGetSaved(b, week, it.id); return s && s.availableQty != null; }).length; });
+  const body = groups.map(([cat, list]) => `
+    <tr class="cat"><td colspan="${COFFEE_BRANCHES.length + 2}">${escapeHTML(WC_CATEGORIES[cat]||cat)}</td></tr>
+    ${list.map(it => { const r = wcAllRow(it, week);
+      return `<tr><td>${escapeHTML(it.name)} <span class="u">${escapeHTML(it.unit)}</span></td>${r.vals.map(v => `<td class="r">${n2(v)}</td>`).join('')}<td class="r tot">${n2(r.total)}</td></tr>`; }).join('')}`).join('');
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Weekly Count — All Branches</title>
+  <style>${LETTERHEAD_CSS}
+    .page{ max-width:1000px; }
+    table.rep{ width:100%; border-collapse:collapse; font-size:12px; margin-top:12px; }
+    table.rep th{ background:#0f172a; color:#fff; padding:8px 10px; text-align:right; font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+    table.rep th:first-child{ text-align:left; }
+    table.rep td{ padding:7px 10px; border-bottom:1px solid #e5e7eb; text-align:right; color:#1a1a1a; }
+    table.rep td:first-child{ text-align:left; }
+    table.rep tr.cat td{ background:#f1f5f9; font-weight:700; text-transform:uppercase; font-size:10px; letter-spacing:.05em; color:#334155; }
+    table.rep td.tot{ font-weight:700; }
+    .u{ color:#94a3b8; font-size:10px; }
+    .meta{ font-size:12px; color:#374151; margin:4px 0 6px; }
+  </style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML('WEEKLY COUNT — ALL BRANCHES')}
+    <div class="doc-date">Week of ${escapeHTML(wcWeekLabel(week))}</div>
+    <p class="doc-intro">Combined on-hand consumables count across all branches for the week stated. Each branch column shows that branch's counted quantity; <strong>Total</strong> is the sum across branches.</p>
+    <div class="meta">${COFFEE_BRANCHES.map(b => `<strong>${escapeHTML(b)}:</strong> ${counted[b]}/${items.length} items counted`).join(' &nbsp;&middot;&nbsp; ')}</div>
+    <table class="rep">
+      <thead><tr><th>Item</th>${COFFEE_BRANCHES.map(b => `<th>${escapeHTML(b)}</th>`).join('')}<th>Total</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
+    <div class="doc-footer">Weekly count &middot; all branches &middot; week of ${escapeHTML(fmtDate(week))} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
+  </div>
+  </body></html>`;
+  if (!openPrintWindow(html)) return;
 }
 
 async function saveWeeklyCounts() {
