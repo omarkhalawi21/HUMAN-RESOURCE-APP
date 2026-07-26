@@ -5133,6 +5133,16 @@ CREATE POLICY "task_boards_delete_ops"
   USING (public.has_role(ARRAY['admin','operations']));
 
 -- =============================================================
+-- 93. ADVANCES — optional monthly repayment cap
+--    An advance is still recovered IN FULL from the next payroll run by
+--    default. If monthly_repayment is set (> 0), payroll instead deducts at
+--    most that amount per run, tracking amount_recovered until the advance is
+--    cleared (then it is marked repaid). No RLS change — same advances table.
+-- =============================================================
+ALTER TABLE public.advances ADD COLUMN IF NOT EXISTS monthly_repayment numeric;
+ALTER TABLE public.advances ADD COLUMN IF NOT EXISTS amount_recovered numeric NOT NULL DEFAULT 0;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
