@@ -5420,6 +5420,46 @@ CREATE POLICY "marketing_expenses_delete_mkt"
   USING (public.has_role(ARRAY['admin','operations','marketing']));
 
 -- =============================================================
+-- 98. COMPANY OWNER ROLE — limited, per-person oversight access (read-only)
+--   (a) Adds 'owner' to the system_role CHECK so it can be assigned.
+--   (b) Adds employees.allowed_pages jsonb — the per-owner page allowlist,
+--       enforced in the app via canSeePage() (it controls the owner's menu;
+--       the real data boundary is RLS below).
+--   (c) ADDITIVE owner SELECT policies on the role-gated tables an owner's
+--       grantable areas (Payroll & Finance, Operations, Reports source) read.
+--       Additive = only GRANTS; existing policies are untouched, so no other
+--       role's access changes. Read-only Phase 1: NO owner write grants.
+--   Tables already open to any authenticated user (payroll, advances,
+--   employees, attendance, marketing_*, holidays, tasks…) need nothing here.
+-- =============================================================
+ALTER TABLE public.employees DROP CONSTRAINT IF EXISTS employees_system_role_chk;
+ALTER TABLE public.employees ADD CONSTRAINT employees_system_role_chk
+  CHECK (system_role IS NULL OR system_role IN (
+    'admin','hr','operations','barista','head_barista','roaster',
+    'accounting','marketing','maintenance','bakery','employee','branch_device','owner'
+  ));
+
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS allowed_pages jsonb DEFAULT NULL;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'receipts','deductions','b2b_invoices',
+    'inventory_items','inventory_movements','suppliers','assets','maintenance_requests','roast_batches',
+    'daily_count_items','daily_counts','weekly_count_items','weekly_counts','expiry_check_items','expiry_checks',
+    'bakery_products','bakery_ingredients','bakery_stock',
+    'inventory_drinks','inventory_owners','inventory_usage_log','inventory_drink_sales'
+  ]
+  LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=t) THEN
+      EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t||'_select_owner', t);
+      EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (public.has_role(ARRAY[''owner'']))', t||'_select_owner', t);
+    END IF;
+  END LOOP;
+END $$;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
