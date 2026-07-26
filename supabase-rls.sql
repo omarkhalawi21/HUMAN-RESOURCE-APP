@@ -5381,6 +5381,45 @@ CREATE POLICY "marketing_budget_lines_delete_mkt"
   USING (public.has_role(ARRAY['admin','operations','marketing']));
 
 -- =============================================================
+-- 97. MARKETING — itemized expenses (roll up into a budget line's actual)
+--    Each expense belongs to a marketing_budget_line; the app keeps that
+--    line's `actual` column = SUM(its expenses) so the existing budget
+--    roll-ups/charts keep working without changing them. RLS mirrors the
+--    marketing gate.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.marketing_expenses (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  budget_line_id uuid NOT NULL REFERENCES public.marketing_budget_lines(id) ON DELETE CASCADE,
+  amount         numeric NOT NULL DEFAULT 0,
+  spent_on       date,
+  vendor         text,
+  note           text,
+  created_by     uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_expenses_line_idx ON public.marketing_expenses(budget_line_id, spent_on);
+
+ALTER TABLE public.marketing_expenses ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='marketing_expenses'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename); END LOOP;
+END $$;
+CREATE POLICY "marketing_expenses_select_all"
+  ON public.marketing_expenses FOR SELECT TO authenticated USING (true);
+CREATE POLICY "marketing_expenses_insert_mkt"
+  ON public.marketing_expenses FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','marketing']));
+CREATE POLICY "marketing_expenses_update_mkt"
+  ON public.marketing_expenses FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','marketing'])) WITH CHECK (public.has_role(ARRAY['admin','operations','marketing']));
+CREATE POLICY "marketing_expenses_delete_mkt"
+  ON public.marketing_expenses FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','marketing']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
