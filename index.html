@@ -775,6 +775,7 @@ function emptyState() {
     marketingItems: [],    // cards; parentId set = subitem
     marketingItemMembers: [], // [{ itemId, employeeId }] multi-assignee join
     marketingAttachments: [], // [{ id, itemId, name, mime, size }] metadata only (data_url fetched on demand)
+    marketingBudgetLines: [], // [{ id, projectId, category, planned, actual, note }] standalone budget lines (block 96)
     marketingItemEventsCache: {}, // on-demand per itemId: [{ ...event }]
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
@@ -1461,6 +1462,12 @@ function marketingBoardToDb(b) {
 }
 function mapMarketingAttachmentFromDb(r) {
   return { id: r.id, itemId: r.item_id, name: r.name||'', mime: r.mime||'', size: Number(r.size)||0, dataUrl: r.data_url||null, createdBy: r.created_by||null, createdAt: r.created_at };
+}
+function mapMarketingBudgetLineFromDb(r) {
+  return { id: r.id, projectId: r.project_id||null, category: r.category||'', planned: Number(r.planned)||0, actual: Number(r.actual)||0, note: r.note||'', sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at };
+}
+function marketingBudgetLineToDb(l) {
+  return { project_id: l.projectId||null, category: l.category||null, planned: Number(l.planned)||0, actual: Number(l.actual)||0, note: l.note||null, sort_order: Number(l.sortOrder)||0, created_by: l.createdBy||null };
 }
 function mapMarketingListFromDb(r) {
   return {
@@ -2161,7 +2168,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2299,6 +2306,7 @@ async function loadAll() {
       // Attachment METADATA only — the heavy base64 data_url is fetched on
       // demand at download time (mktDownloadAttachment), never bulk-loaded.
       sb.from('marketing_item_attachments').select('id, item_id, name, mime, size, created_by, created_at').limit(3000),
+      sb.from('marketing_budget_lines').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2370,6 +2378,7 @@ async function loadAll() {
     state.marketingItems     = (mktItemsR?.data || []).map(mapMarketingItemFromDb);
     state.marketingItemMembers = (mktItemMembersR?.data || []).map(mapMarketingItemMemberFromDb);
     state.marketingAttachments = (mktAttachmentsR?.data || []).map(mapMarketingAttachmentFromDb);
+    state.marketingBudgetLines = (mktBudgetR?.data || []).map(mapMarketingBudgetLineFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -13397,6 +13406,7 @@ let _mktItemModalId = null; // item whose detail modal is open
 let _mktHomeTab = 'projects'; // Marketing home: 'projects' | 'dashboard' | 'calendar'
 let _mktCalMonth = null;      // calendar month 'YYYY-MM' (lazy-init to current)
 let _mktCalScope = 'all';     // calendar project filter: 'all' | projectId
+let _mktBudgetScope = 'all';  // budget view: 'all' (overview) | projectId (detail)
 let _mktChartData = null;     // data snapshot for the dashboard's Chart.js charts
 const _mktCharts = {};        // live Chart.js instances (destroyed before re-create)
 const MKT_COLORS = ['#6d28d9','#0f6fde','#00c875','#fdab3d','#e2445c','#00a9c7','#ff642e','#9333ea'];
@@ -13447,11 +13457,12 @@ function renderMarketingHome(){
       <div class="mt-2">${mktProgressBar(pr.pct,p.color)}</div></button>`; };
   const tb=(key,label)=>`<button onclick="mktSetHomeTab('${key}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${_mktHomeTab===key?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}">${label}</button>`;
   const tabbar = `<div class="flex items-center gap-1.5 mb-5 bg-slate-100 rounded-xl p-1.5 w-fit">
-      ${tb('projects','Projects')}${tb('dashboard','Dashboard')}${tb('calendar','Calendar')}
+      ${tb('projects','Projects')}${tb('dashboard','Dashboard')}${tb('calendar','Calendar')}${tb('budget','Budget')}
     </div>`;
   const hero = mktHero('Marketing', 'Plan campaigns, run boards, and track the team work.', `<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`);
   if(_mktHomeTab==='dashboard') return `${hero}${tabbar}${renderMarketingDashboard()}`;
   if(_mktHomeTab==='calendar') return `${hero}${tabbar}${renderMarketingCalendar()}`;
+  if(_mktHomeTab==='budget') return `${hero}${tabbar}${renderMarketingBudget()}`;
   return `
     ${hero}${tabbar}
     ${projects.length ? `
@@ -13460,6 +13471,92 @@ function renderMarketingHome(){
     ` : mktEmpty('No projects yet','Create your first marketing project to start building boards and tasks.',`<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}`;
 }
 function mktSetHomeTab(tab){ _mktHomeTab = tab; render(); }
+// ---- budgeting (standalone budget lines, block 96) ----
+function mktBudgetLinesOf(projectId){ return (state.marketingBudgetLines||[]).filter(l=>l.projectId===projectId).sort(_mktSort); }
+function mktBudgetTotals(projectId){ const lines=mktBudgetLinesOf(projectId); const planned=lines.reduce((s,l)=>s+(Number(l.planned)||0),0); const actual=lines.reduce((s,l)=>s+(Number(l.actual)||0),0); return { planned, actual, variance:Math.round((planned-actual)*100)/100, pct: planned>0?Math.round(actual/planned*100):0, lines }; }
+function mktSetBudgetScope(v){ _mktBudgetScope=v||'all'; render(); }
+function renderMarketingBudget(){
+  const projects=(state.marketingProjects||[]).slice().filter(p=>p.status!=='archived').sort(_mktSort);
+  if(!projects.length) return mktEmpty('No projects yet','Create a project first, then plan its budget here.',`<button onclick="mktSetHomeTab('projects')" class="btn btn-primary">Go to projects</button>`);
+  const scopeSel=`<select class="input !py-1.5 !w-auto text-sm" onchange="mktSetBudgetScope(this.value)"><option value="all" ${_mktBudgetScope==='all'?'selected':''}>All projects (overview)</option>${projects.map(p=>`<option value="${p.id}" ${_mktBudgetScope===p.id?'selected':''}>${escapeHTML(p.name)}</option>`).join('')}</select>`;
+  const tile=(label,value,tone,sub)=>`<div class="bg-white rounded-2xl shadow-card p-4"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">${escapeHTML(label)}</div><div class="font-display text-2xl font-semibold mt-1 ${tone||'text-slate-900'}">${value}</div>${sub?`<div class="text-xs text-slate-500 mt-1">${sub}</div>`:''}</div>`;
+  const proj = (_mktBudgetScope!=='all') ? mktProject(_mktBudgetScope) : null;
+  if(proj){
+    const t=mktBudgetTotals(proj.id);
+    const overBudget = t.actual>t.planned && t.planned>0;
+    const rows=t.lines.length ? t.lines.map(l=>{ const v=Math.round(((Number(l.planned)||0)-(Number(l.actual)||0))*100)/100; const over=v<0;
+      return `<tr class="border-t border-slate-100">
+        <td class="py-2 pr-3 text-slate-800">${escapeHTML(l.category)}${l.note?`<div class="text-[11px] text-slate-400 truncate max-w-xs">${escapeHTML(l.note)}</div>`:''}</td>
+        <td class="py-2 pr-3 text-right text-slate-600">${fmtMoney(l.planned)}</td>
+        <td class="py-2 pr-3 text-right text-slate-600">${fmtMoney(l.actual)}</td>
+        <td class="py-2 pr-3 text-right font-semibold ${over?'text-rose-600':'text-emerald-600'}">${v<0?'−':''}${fmtMoney(Math.abs(v))}</td>
+        <td class="py-2 text-right whitespace-nowrap"><button onclick="openMarketingBudgetModal('${proj.id}','${l.id}')" class="text-slate-400 hover:text-brand-600 p-1" title="Edit">${icon('edit','w-4 h-4')}</button><button onclick="mktDeleteBudgetLine('${l.id}')" class="text-slate-400 hover:text-rose-600 p-1" title="Delete">${icon('trash','w-4 h-4')}</button></td>
+      </tr>`; }).join('')
+      : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">No budget lines yet. Add one to start planning.</td></tr>`;
+    return `
+      <div class="flex items-center justify-between gap-3 flex-wrap mb-4">${scopeSel}<button onclick="openMarketingBudgetModal('${proj.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add budget line</button></div>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+        ${tile('Planned', fmtMoney(t.planned))}
+        ${tile('Actual', fmtMoney(t.actual), overBudget?'text-rose-600':'text-slate-900')}
+        ${tile('Remaining', `${t.variance<0?'−':''}${fmtMoney(Math.abs(t.variance))}`, t.variance<0?'text-rose-600':'text-emerald-700')}
+        ${tile('Used', `${t.pct}%`, t.pct>100?'text-rose-600':'text-slate-900')}
+      </div>
+      <div class="mb-4"><div class="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${Math.min(100,t.pct)}%;background:${t.pct>100?'#e2445c':proj.color}"></div></div>${overBudget?`<div class="text-xs text-rose-600 mt-1">Over budget by ${fmtMoney(t.actual-t.planned)}</div>`:''}</div>
+      <div class="bg-white rounded-2xl shadow-card p-5 overflow-x-auto">
+        <table class="w-full text-sm"><thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left"><th class="pb-2 pr-3">Category</th><th class="pb-2 pr-3 text-right">Planned</th><th class="pb-2 pr-3 text-right">Actual</th><th class="pb-2 pr-3 text-right">Remaining</th><th class="pb-2"></th></tr></thead><tbody>${rows}</tbody></table>
+      </div>`;
+  }
+  // Overview across all projects
+  const totals=projects.map(p=>({p, t:mktBudgetTotals(p.id)}));
+  const grand=totals.reduce((s,x)=>{ s.planned+=x.t.planned; s.actual+=x.t.actual; return s; }, {planned:0,actual:0});
+  const grandVar=Math.round((grand.planned-grand.actual)*100)/100;
+  const cards=totals.map(({p,t})=>{ const over=t.actual>t.planned && t.planned>0;
+    return `<button onclick="mktSetBudgetScope('${p.id}')" class="text-left bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block w-full">
+      <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full shrink-0" style="background:${p.color}"></span><h3 class="font-display font-semibold text-slate-900 truncate">${escapeHTML(p.name)}</h3></div>
+      <div class="mt-3 flex items-center justify-between text-sm"><span class="text-slate-500">Planned</span><span class="font-semibold">${fmtMoney(t.planned)}</span></div>
+      <div class="flex items-center justify-between text-sm"><span class="text-slate-500">Actual</span><span class="font-semibold ${over?'text-rose-600':'text-slate-800'}">${fmtMoney(t.actual)}</span></div>
+      <div class="mt-2">${mktProgressBar(Math.min(100,t.pct), t.pct>100?'#e2445c':p.color)}</div>
+      <div class="text-xs mt-1 ${over?'text-rose-600':'text-slate-400'}">${over?`Over by ${fmtMoney(t.actual-t.planned)}`:`${t.pct}% used · ${t.lines.length} line${t.lines.length===1?'':'s'}`}</div>
+    </button>`; }).join('');
+  return `
+    <div class="mb-4">${scopeSel}</div>
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+      ${tile('Total planned', fmtMoney(grand.planned))}
+      ${tile('Total actual', fmtMoney(grand.actual), grand.actual>grand.planned?'text-rose-600':'text-slate-900')}
+      ${tile('Remaining', `${grandVar<0?'−':''}${fmtMoney(Math.abs(grandVar))}`, grandVar<0?'text-rose-600':'text-emerald-700')}
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${cards}</div>`;
+}
+function openMarketingBudgetModal(projectId, id){
+  if(!canManageMarketing()) return;
+  const l = id ? (state.marketingBudgetLines||[]).find(x=>x.id===id) : null;
+  const cur=state.settings.currency||'';
+  const body=`<div class="space-y-4">
+    <div><label class="label">Category *</label><input id="mkt-bl-cat" class="input" value="${l?escapeHTML(l.category):''}" placeholder="e.g. Paid ads, Influencers, Print"></div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="label">Planned (${escapeHTML(cur)})</label><input id="mkt-bl-planned" inputmode="decimal" class="input" value="${l?escapeHTML(String(l.planned)):''}" placeholder="0.00"></div>
+      <div><label class="label">Actual spent (${escapeHTML(cur)})</label><input id="mkt-bl-actual" inputmode="decimal" class="input" value="${l?escapeHTML(String(l.actual)):''}" placeholder="0.00"></div>
+    </div>
+    <div><label class="label">Note</label><textarea id="mkt-bl-note" class="input" rows="2" placeholder="Optional">${l?escapeHTML(l.note):''}</textarea></div>
+  </div>`;
+  openModal(l?'Edit budget line':'New budget line', body, async ()=>{
+    const category=$('#mkt-bl-cat')?.value.trim(); if(!category){ toast('Enter a category','error'); return false; }
+    const planned=Math.round((parseFloat(($('#mkt-bl-planned')?.value||'').replace(/,/g,''))||0)*100)/100;
+    const actual=Math.round((parseFloat(($('#mkt-bl-actual')?.value||'').replace(/,/g,''))||0)*100)/100;
+    if(planned<0||actual<0){ toast('Amounts cannot be negative','error'); return false; }
+    const payload=marketingBudgetLineToDb({ projectId, category, planned, actual, note:$('#mkt-bl-note')?.value.trim(), createdBy:currentEmployee()?.id, sortOrder: l?l.sortOrder:mktBudgetLinesOf(projectId).length });
+    if(l){ const { data, error } = await sb.from('marketing_budget_lines').update(payload).eq('id',l.id).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(l, mapMarketingBudgetLineFromDb(data)); }
+    else { const { data, error } = await sb.from('marketing_budget_lines').insert(payload).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } state.marketingBudgetLines.push(mapMarketingBudgetLineFromDb(data)); }
+    render(); toast(l?'Budget line updated':'Budget line added','success'); return true;
+  }, { saveLabel: l?'Save':'Add' });
+}
+async function mktDeleteBudgetLine(id){
+  if(!confirm('Delete this budget line?')) return;
+  const { error } = await sb.from('marketing_budget_lines').delete().eq('id',id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingBudgetLines = state.marketingBudgetLines.filter(l=>l.id!==id);
+  render(); toast('Budget line deleted','success');
+}
 // ---- scheduling calendar ----
 function mktCalShift(ym, delta){ const [y,m]=ym.split('-').map(Number); const d=new Date(y, m-1+delta, 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
 function mktCalPrev(){ _mktCalMonth=mktCalShift(_mktCalMonth||todayISO().slice(0,7), -1); render(); }
