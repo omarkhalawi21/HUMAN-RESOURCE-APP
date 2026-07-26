@@ -6704,6 +6704,7 @@ const KSA_DEDUCTION_CAP_PCT = 0.5;
 function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
   const deductionUpdates = new Map(); // deductionId -> true (flip to 'applied' after run)
+  const advanceLines = [];           // [{ employeeId, name, label, amount }] advance/loan repayments taken this run (for the modal breakdown)
   const warnings = [];               // [{ employeeId, name, gross, deductions, cap50, rawNet, overCap, negativeNet, overCapBy, negativeBy }]
   const holidaySet = new Set((state.holidays || []).map(h => h.date));
   // Bucket attendance by employee ONCE (only when there are holidays
@@ -6801,6 +6802,11 @@ function calcPayroll(ym) {
     });
     // Advance repayments are itemised deduction lines too.
     empAdj.push(...advanceItems);
+    advanceItems.forEach(it => advanceLines.push({
+      employeeId: e.id,
+      name: ((e.firstName||'')+' '+(e.lastName||'')).trim() || e.email || e.id,
+      label: it.label, amount: it.amount,
+    }));
     const manualBonus = empAdj.filter(a => a.kind === 'bonus').reduce((s,a) => s + a.amount, 0);
     const manualDeduction = empAdj.filter(a => a.kind === 'deduction').reduce((s,a) => s + a.amount, 0);
     const bonus = Math.round((ot.amount + manualBonus)*100)/100;
@@ -6844,7 +6850,7 @@ function calcPayroll(ym) {
       manualBonus: s.manualBonus + mb,
     };
   }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0 });
-  return { rows, advanceUpdates, deductionUpdates, totals, isRerun, warnings };
+  return { rows, advanceUpdates, deductionUpdates, advanceLines, totals, isRerun, warnings };
 }
 
 function runPayroll() {
@@ -7024,56 +7030,83 @@ function renderPayrollAdjust() {
   const emps = (state.employees || []).filter(isPayableEmployee).slice()
     .sort((a,b) => ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
   const empOptions = emps.map(e=>`<option value="${e.id}">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('');
-  // Registered deductions posted from the Deductions page for the selected
-  // pay month — surfaced here so the operator reviews/edits/skips them before
-  // the run instead of having them applied silently. ALL of the month's
-  // deductions are shown: pending ones are editable and charged this run;
-  // already-applied ones are read-only for reference (never re-charged).
+  // A full breakdown of EVERYTHING reducing pay for the selected month —
+  // registered deductions (editable/skippable), advance & loan repayments,
+  // and manual deduction lines. Registered items are the only ones edited
+  // here; advances are managed on the Advances page, manual ones in the
+  // form below. On a re-run the month was already charged, so the breakdown
+  // is sourced from the issued payslips and shown read-only for reference.
   const ym = $('#rp-period')?.value || '';
   const validYm = /^\d{4}-\d{2}$/.test(ym);
   const isRerun = validYm && (state.payroll || []).some(p => p.period === ym);
-  const monthDeds = validYm
-    ? (state.deductions || []).filter(d => (d.status === 'pending' || d.status === 'applied') && d.period === ym)
-    : [];
-  // Only pending deductions on a NON-rerun get charged this run (calcPayroll
-  // skips all deductions on a rerun). Applied ones are historical.
-  const dedChargeable = monthDeds.filter(d => d.status === 'pending' && !isRerun && !_payrollSkipDeductions.has(d.id));
-  const dedChargeTotal = dedChargeable.reduce((s,d) => s + (Number(d.amount)||0), 0);
-  const dedAppliedTotal = monthDeds.filter(d => d.status === 'applied').reduce((s,d) => s + (Number(d.amount)||0), 0);
-  const dedList = monthDeds.map(d => {
-    const e = getEmployee(d.employeeId);
-    const nm = e ? ((e.firstName||'')+' '+(e.lastName||'')).trim() : '—';
-    const applied = d.status === 'applied';
-    const skipped = _payrollSkipDeductions.has(d.id);
-    const readOnly = applied || isRerun;          // cannot edit/charge these now
-    const willCharge = !readOnly && !skipped;     // pending, fresh run, included
-    const badge = applied
-      ? '<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-medium shrink-0">Applied</span>'
-      : isRerun
-        ? '<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-medium shrink-0">Not re-charged</span>'
-        : skipped
-          ? '<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-medium shrink-0">Skipped</span>'
-          : '<span class="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 text-[11px] font-medium shrink-0">This run</span>';
-    return `<div class="flex items-center gap-2 text-xs rounded-lg px-3 py-2 border ${willCharge?'bg-white border-rose-100':'bg-slate-50 border-slate-200 opacity-75'}">
-      <span class="font-medium text-slate-800 truncate" style="flex:0 1 120px">${escapeHTML(nm)}</span>
-      <span class="text-slate-500 flex-1 truncate" title="${escapeHTML(d.reason||'')}">${escapeHTML(d.reason||'Deduction')}${d.incidentDate?` · ${escapeHTML(d.incidentDate)}`:''}</span>
+  const _money = n => fmtMoney(Math.round((Number(n)||0)*100)/100);
+  const _nmeOf = id => { const e = getEmployee(id); return e ? (((e.firstName||'')+' '+(e.lastName||'')).trim() || e.email || '—') : '—'; };
+  const _badge = (txt, cls) => `<span class="px-2 py-0.5 rounded-full ${cls} text-[11px] font-medium shrink-0">${txt}</span>`;
+  // Read-only itemised line (advance / manual / already-charged).
+  const _roLine = (name, label, amount, badge) => `<div class="flex items-center gap-2 text-xs rounded-lg px-3 py-2 border bg-slate-50 border-slate-200">
+      <span class="font-medium text-slate-800 truncate" style="flex:0 1 120px">${escapeHTML(name)}</span>
+      <span class="text-slate-500 flex-1 truncate" title="${escapeHTML(label)}">${escapeHTML(label)}</span>
       ${badge}
-      <input inputmode="decimal" value="${escapeHTML(String(d.amount))}" ${readOnly||skipped?'disabled':''} onchange="savePayrollDeductionAmount('${d.id}', this.value)" class="input !py-1 !h-8 !w-24 text-right ${willCharge?'text-rose-700':'line-through text-slate-400'}" aria-label="Deduction amount">
-      ${readOnly ? '<span class="w-[52px]"></span>' : `<button type="button" onclick="togglePayrollDeduction('${d.id}')" class="px-2 py-1 rounded font-medium ${skipped?'text-emerald-600 hover:bg-emerald-50':'text-slate-400 hover:text-rose-600 hover:bg-slate-100'}" title="${skipped?'Include in this run':'Skip this run (stays pending)'}">${skipped?'Include':'Skip'}</button>`}
+      <span class="w-24 text-right font-semibold text-rose-700 tabular-nums">−${_money(amount)}</span>
     </div>`;
-  }).join('');
-  const dedSummary = isRerun
-    ? (dedAppliedTotal>0 ? `<span class="font-semibold text-slate-600">${fmtMoney(dedAppliedTotal)} already applied</span>` : 'already applied')
-    : `${dedChargeable.length} to deduct · <span class="font-semibold text-rose-700">−${fmtMoney(dedChargeTotal)}</span>${dedAppliedTotal>0?` · <span class="text-slate-400">${fmtMoney(dedAppliedTotal)} already applied</span>`:''}`;
-  const dedSection = !monthDeds.length ? '' : `
+  const _advBadge = _badge('Advance', 'bg-indigo-50 text-indigo-700');
+  let dedSection = '';
+  if (validYm && isRerun) {
+    // Everything actually charged this month, straight from the issued payslips.
+    const lines = [];
+    let total = 0;
+    (state.payroll || []).filter(p => p.period === ym).forEach(p => {
+      const nm = _nmeOf(p.employeeId);
+      (p.adjustments || []).forEach(a => {
+        if (a.kind !== 'deduction') return;
+        const isAdv = /^(advance|loan) repayment/i.test(a.label || '');
+        total += Number(a.amount) || 0;
+        lines.push(_roLine(nm, a.label || 'Deduction', a.amount, isAdv ? _advBadge : _badge('Deduction', 'bg-emerald-50 text-emerald-700')));
+      });
+    });
+    dedSection = !lines.length ? '' : `
       <div class="mt-4 pt-4 border-t border-slate-100">
         <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
-          <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Registered deductions for ${escapeHTML(ym)}</div>
-          <div class="text-xs text-slate-500">${dedSummary}</div>
+          <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Deductions charged for ${escapeHTML(ym)}</div>
+          <div class="text-xs text-slate-500"><span class="font-semibold text-rose-700">−${_money(total)}</span> already charged</div>
         </div>
-        <p class="text-xs text-slate-500 mb-3">All deductions posted from the Deductions page for this month. ${isRerun ? 'This month was already run, so these were charged in the original run and are shown for reference — they are <strong>not</strong> re-charged.' : 'Pending ones are deducted this run — edit an amount, or <strong>Skip</strong> to leave it pending for a later run. Applied ones are shown for reference.'}</p>
-        <div class="space-y-2 mb-4 pb-4 border-b border-slate-100">${dedList}</div>
+        <p class="text-xs text-slate-500 mb-3">This month was already run. Every deduction line from the issued payslips — advance/loan repayments, registered deductions and manual — is shown for reference. Re-running does <strong>not</strong> re-charge them.</p>
+        <div class="space-y-2 mb-4 pb-4 border-b border-slate-100">${lines.join('')}</div>
       </div>`;
+  } else if (validYm) {
+    // Fresh run. Registered deductions are editable/skippable; advance & loan
+    // repayments computed for this run are shown read-only for the full picture.
+    const calc = calcPayroll(ym);
+    const regDeds = (state.deductions || []).filter(d => d.status === 'pending' && d.period === ym);
+    const regChargeTotal = regDeds.filter(d => !_payrollSkipDeductions.has(d.id)).reduce((s,d) => s + (Number(d.amount)||0), 0);
+    const regList = regDeds.map(d => {
+      const skipped = _payrollSkipDeductions.has(d.id);
+      return `<div class="flex items-center gap-2 text-xs rounded-lg px-3 py-2 border ${skipped?'bg-slate-50 border-slate-200 opacity-75':'bg-white border-rose-100'}">
+        <span class="font-medium text-slate-800 truncate" style="flex:0 1 120px">${escapeHTML(_nmeOf(d.employeeId))}</span>
+        <span class="text-slate-500 flex-1 truncate" title="${escapeHTML(d.reason||'')}">${escapeHTML(d.reason||'Deduction')}${d.incidentDate?` · ${escapeHTML(d.incidentDate)}`:''}</span>
+        ${skipped ? _badge('Skipped','bg-slate-100 text-slate-500') : _badge('This run','bg-rose-50 text-rose-700')}
+        <input inputmode="decimal" value="${escapeHTML(String(d.amount))}" ${skipped?'disabled':''} onchange="savePayrollDeductionAmount('${d.id}', this.value)" class="input !py-1 !h-8 !w-24 text-right ${skipped?'line-through text-slate-400':'text-rose-700'}" aria-label="Deduction amount">
+        <button type="button" onclick="togglePayrollDeduction('${d.id}')" class="px-2 py-1 rounded font-medium ${skipped?'text-emerald-600 hover:bg-emerald-50':'text-slate-400 hover:text-rose-600 hover:bg-slate-100'}" title="${skipped?'Include in this run':'Skip this run (stays pending)'}">${skipped?'Include':'Skip'}</button>
+      </div>`;
+    }).join('');
+    const advLines = calc.advanceLines || [];
+    const advTotal = advLines.reduce((s,l) => s + (Number(l.amount)||0), 0);
+    const advList = advLines.map(l => _roLine(l.name, l.label, l.amount, _advBadge)).join('');
+    if (regDeds.length || advList) {
+      dedSection = `
+      <div class="mt-4 pt-4 border-t border-slate-100">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Deductions for ${escapeHTML(ym)}</div>
+        <p class="text-xs text-slate-500 mb-3">Everything reducing pay this run. <strong>Registered</strong> deductions are editable — change an amount or <strong>Skip</strong> one for a later run. <strong>Advance/loan</strong> repayments are set on the Advances page (use <em>Repayment plan</em> there to split one). Manual lines are added in the form below.</p>
+        ${regDeds.length ? `
+          <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Registered · ${regDeds.filter(d=>!_payrollSkipDeductions.has(d.id)).length}/${regDeds.length} included · <span class="text-rose-600">−${_money(regChargeTotal)}</span></div>
+          <div class="space-y-2 mb-3">${regList}</div>` : ''}
+        ${advList ? `
+          <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-2">Advance / loan repayments · <span class="text-rose-600">−${_money(advTotal)}</span></div>
+          <div class="space-y-2 mb-3">${advList}</div>` : ''}
+        <div class="pb-1 border-b border-slate-100"></div>
+      </div>`;
+    }
+  }
   const list = (_payrollAdjustments || []).map((a,i) => {
     const e = getEmployee(a.employeeId);
     const nm = e ? ((e.firstName||'')+' '+(e.lastName||'')).trim() : '—';
