@@ -6619,6 +6619,10 @@ function openPayslip(payrollId) {
 // payslip via payroll.adjustments so the issued payslip is a fixed,
 // itemised snapshot.
 let _payrollAdjustments = [];
+// Registered deductions (from the Deductions page) for the run's month that
+// the operator chose to SKIP this run — they stay pending for a later run.
+// Reviewed/toggled in the Run Payroll modal; honored by calcPayroll.
+let _payrollSkipDeductions = new Set();
 // Sec #7 fix — surface partial-failure of payroll bookkeeping.
 // runPayroll inserts payslips then does best-effort Promise.all of
 // advance + deduction updates. Before this PR, errors in those
@@ -6789,6 +6793,7 @@ function calcPayroll(ym) {
     // flipped to 'applied' after the run so it's never double-counted.
     if (!isRerun) (state.deductions || []).forEach(d => {
       if (d.employeeId !== e.id || d.status !== 'pending' || d.period !== ym) return;
+      if (_payrollSkipDeductions.has(d.id)) return; // operator skipped it for this run
       const amt = Math.round((Number(d.amount)||0)*100)/100;
       if (amt <= 0) return;
       empAdj.push({ kind: 'deduction', label: `${d.reason||'Deduction'}${d.incidentDate?` (${d.incidentDate})`:''}`, amount: amt });
@@ -6845,13 +6850,17 @@ function calcPayroll(ym) {
 function runPayroll() {
   if (!canManagePeople()) return;
   _payrollAdjustments = [];
-  const defaultYm = new Date().toISOString().slice(0,7);
+  _payrollSkipDeductions = new Set();
+  // Local components, not toISOString() — the latter skews the month back a
+  // day at UTC+3 (see the setPayrollRange UTC note).
+  const _now = new Date();
+  const defaultYm = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}`;
   const form = `
     <div class="space-y-4">
       <div>
         <label class="label">Pay period</label>
-        <input id="rp-period" type="month" class="input" value="${defaultYm}" oninput="renderRunPayrollPreview()">
-        <p class="text-xs text-slate-500 mt-1">Every active employee will receive a payslip for this period. Approved advances flagged for deduction are applied automatically. Add any one-off deductions or bonuses below before running.</p>
+        <input id="rp-period" type="month" class="input" value="${defaultYm}" oninput="renderPayrollAdjust(); renderRunPayrollPreview()">
+        <p class="text-xs text-slate-500 mt-1">Every active employee will receive a payslip for this period. Approved advances flagged for deduction are applied automatically. Registered deductions for the month appear below to review before running. Add any one-off deductions or bonuses too.</p>
       </div>
       <div id="rp-adjust"></div>
       <div id="rp-preview"></div>
@@ -7015,6 +7024,39 @@ function renderPayrollAdjust() {
   const emps = (state.employees || []).filter(isPayableEmployee).slice()
     .sort((a,b) => ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
   const empOptions = emps.map(e=>`<option value="${e.id}">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('');
+  // Registered deductions posted from the Deductions page for the selected
+  // pay month — surfaced here so the operator reviews/edits/skips them before
+  // the run instead of having them applied silently.
+  const ym = $('#rp-period')?.value || '';
+  const validYm = /^\d{4}-\d{2}$/.test(ym);
+  const isRerun = validYm && (state.payroll || []).some(p => p.period === ym);
+  const monthDeds = validYm ? (state.deductions || []).filter(d => d.status === 'pending' && d.period === ym) : [];
+  const dedActive = monthDeds.filter(d => !_payrollSkipDeductions.has(d.id));
+  const dedTotal = dedActive.reduce((s,d) => s + (Number(d.amount)||0), 0);
+  const dedList = monthDeds.map(d => {
+    const e = getEmployee(d.employeeId);
+    const nm = e ? ((e.firstName||'')+' '+(e.lastName||'')).trim() : '—';
+    const skipped = _payrollSkipDeductions.has(d.id);
+    return `<div class="flex items-center gap-2 text-xs rounded-lg px-3 py-2 border ${skipped?'bg-slate-50 border-slate-200 opacity-60':'bg-white border-rose-100'}">
+      <span class="font-medium text-slate-800 truncate" style="flex:0 1 130px">${escapeHTML(nm)}</span>
+      <span class="text-slate-500 flex-1 truncate" title="${escapeHTML(d.reason||'')}">${escapeHTML(d.reason||'Deduction')}${d.incidentDate?` · ${escapeHTML(d.incidentDate)}`:''}</span>
+      <input inputmode="decimal" value="${escapeHTML(String(d.amount))}" ${skipped?'disabled':''} onchange="savePayrollDeductionAmount('${d.id}', this.value)" class="input !py-1 !h-8 !w-24 text-right ${skipped?'line-through text-slate-400':'text-rose-700'}" aria-label="Deduction amount">
+      <button type="button" onclick="togglePayrollDeduction('${d.id}')" class="px-2 py-1 rounded font-medium ${skipped?'text-emerald-600 hover:bg-emerald-50':'text-slate-400 hover:text-rose-600 hover:bg-slate-100'}" title="${skipped?'Include in this run':'Skip this run (stays pending)'}">${skipped?'Include':'Skip'}</button>
+    </div>`;
+  }).join('');
+  const dedSection = !monthDeds.length ? '' : isRerun ? `
+      <div class="mt-4 pt-4 border-t border-slate-100">
+        <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Registered deductions for ${escapeHTML(ym)}</div>
+        <p class="text-xs text-slate-500">${monthDeds.length} registered deduction${monthDeds.length===1?'':'s'} for this month ${monthDeds.length===1?'was':'were'} already applied in the original run and will <strong>not</strong> be charged again on this re-run.</p>
+      </div>` : `
+      <div class="mt-4 pt-4 border-t border-slate-100">
+        <div class="flex items-center justify-between mb-1">
+          <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold">Registered deductions for ${escapeHTML(ym)}</div>
+          <div class="text-xs text-slate-500">${dedActive.length}/${monthDeds.length} included · <span class="font-semibold text-rose-700">−${fmtMoney(dedTotal)}</span></div>
+        </div>
+        <p class="text-xs text-slate-500 mb-3">Posted from the Deductions page for this month. Review before running — edit an amount, or <strong>Skip</strong> to leave it pending for a later run. Skipped items are not deducted now.</p>
+        <div class="space-y-2 mb-4 pb-4 border-b border-slate-100">${dedList}</div>
+      </div>`;
   const list = (_payrollAdjustments || []).map((a,i) => {
     const e = getEmployee(a.employeeId);
     const nm = e ? ((e.firstName||'')+' '+(e.lastName||'')).trim() : '—';
@@ -7037,6 +7079,7 @@ function renderPayrollAdjust() {
         <div style="flex:0 1 130px"><label class="label">Hours worked</label><input id="ot-hours" inputmode="decimal" class="input" placeholder="e.g. 10"></div>
         <div style="flex:0 0 auto"><button type="button" onclick="addPayrollOtHours()" class="btn btn-ghost">Add OT</button></div>
       </div>
+      ${dedSection}
       <div class="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Manual adjustments (optional)</div>
       <p class="text-xs text-slate-500 mb-3">One-off deduction or bonus for a specific employee this run — e.g. uniform damage, an unpaid-leave day, a spot bonus. Itemised on that payslip with the reason. Payslips already issued are never changed.</p>
       <div class="flex flex-wrap gap-2 items-end">
@@ -7083,6 +7126,31 @@ function removePayrollAdjustment(i) {
   _payrollAdjustments.splice(i, 1);
   renderPayrollAdjust();
   renderRunPayrollPreview();
+}
+// Toggle a registered deduction in/out of THIS run. Skipped ids stay pending
+// (nothing is deleted) so they can be picked up by a later run.
+function togglePayrollDeduction(id) {
+  if (_payrollSkipDeductions.has(id)) _payrollSkipDeductions.delete(id);
+  else _payrollSkipDeductions.add(id);
+  renderPayrollAdjust();
+  renderRunPayrollPreview();
+}
+// Inline-edit a registered deduction's amount from the Run Payroll modal.
+// Persists to the deductions record (it is still pending), so the change is
+// permanent — not run-scoped — mirroring an edit on the Deductions page.
+async function savePayrollDeductionAmount(id, value) {
+  const d = (state.deductions || []).find(x => x.id === id);
+  if (!d) return;
+  const amt = parseFloat(String(value).replace(/,/g,''));
+  if (!isFinite(amt) || amt <= 0) { toast('Enter an amount greater than 0', 'error'); renderPayrollAdjust(); return; }
+  const rounded = Math.round(amt*100)/100;
+  if (rounded === Math.round((Number(d.amount)||0)*100)/100) return; // unchanged
+  const { data, error } = await sb.from('deductions').update({ amount: rounded }).eq('id', id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); renderPayrollAdjust(); return; }
+  Object.assign(d, mapDeductionFromDb(data));
+  renderPayrollAdjust();
+  renderRunPayrollPreview();
+  toast('Deduction updated', 'success');
 }
 
 // Sec #7 fix — retry only the failed bookkeeping updates from the
@@ -21709,6 +21777,7 @@ function closeModal() {
   if (typeof _maintenancePhoto !== 'undefined') _maintenancePhoto = null;
   if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
+  if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
   if (typeof _sigPad !== 'undefined') _sigPad = null;
   if (typeof _invCsvRows !== 'undefined') _invCsvRows = null;
   if (_modalTrapHandler) {
