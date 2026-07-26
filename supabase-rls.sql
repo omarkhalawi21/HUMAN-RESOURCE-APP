@@ -5340,6 +5340,47 @@ CREATE POLICY "marketing_item_attachments_delete_author_or_mkt"
   );
 
 -- =============================================================
+-- 96. MARKETING — budgeting (standalone budget lines per project)
+--    Each line is a budget category on a project with a PLANNED amount and
+--    an ACTUAL (spent) amount; the app rolls them up into planned vs actual
+--    per project. Standalone — not linked to receipts. RLS mirrors the
+--    marketing gate (admin/operations/marketing write; authenticated read).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.marketing_budget_lines (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id  uuid NOT NULL REFERENCES public.marketing_projects(id) ON DELETE CASCADE,
+  category    text NOT NULL,
+  planned     numeric NOT NULL DEFAULT 0,
+  actual      numeric NOT NULL DEFAULT 0,
+  note        text,
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_budget_lines_project_idx ON public.marketing_budget_lines(project_id);
+
+ALTER TABLE public.marketing_budget_lines ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='marketing_budget_lines'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename); END LOOP;
+END $$;
+CREATE POLICY "marketing_budget_lines_select_all"
+  ON public.marketing_budget_lines FOR SELECT TO authenticated USING (true);
+CREATE POLICY "marketing_budget_lines_insert_mkt"
+  ON public.marketing_budget_lines FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','marketing']));
+CREATE POLICY "marketing_budget_lines_update_mkt"
+  ON public.marketing_budget_lines FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','marketing'])) WITH CHECK (public.has_role(ARRAY['admin','operations','marketing']));
+CREATE POLICY "marketing_budget_lines_delete_mkt"
+  ON public.marketing_budget_lines FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','marketing']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
