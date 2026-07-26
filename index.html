@@ -13394,7 +13394,9 @@ function canManageMarketing() { return hasRole('admin','operations','marketing')
 let _mktProjectId  = null; // drill-down: selected project
 let _mktBoardId    = null; // drill-down: selected board
 let _mktItemModalId = null; // item whose detail modal is open
-let _mktHomeTab = 'projects'; // Marketing home: 'projects' | 'dashboard'
+let _mktHomeTab = 'projects'; // Marketing home: 'projects' | 'dashboard' | 'calendar'
+let _mktCalMonth = null;      // calendar month 'YYYY-MM' (lazy-init to current)
+let _mktCalScope = 'all';     // calendar project filter: 'all' | projectId
 let _mktChartData = null;     // data snapshot for the dashboard's Chart.js charts
 const _mktCharts = {};        // live Chart.js instances (destroyed before re-create)
 const MKT_COLORS = ['#6d28d9','#0f6fde','#00c875','#fdab3d','#e2445c','#00a9c7','#ff642e','#9333ea'];
@@ -13443,12 +13445,13 @@ function renderMarketingHome(){
       ${p.description?`<p class="text-sm text-slate-500 mt-1 line-clamp-2">${escapeHTML(p.description)}</p>`:''}
       <div class="mt-4 flex items-center justify-between text-xs text-slate-500"><span>${boards} board${boards===1?'':'s'}</span><span>${pr.done}/${pr.total} done · ${pr.pct}%</span></div>
       <div class="mt-2">${mktProgressBar(pr.pct,p.color)}</div></button>`; };
+  const tb=(key,label)=>`<button onclick="mktSetHomeTab('${key}')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${_mktHomeTab===key?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}">${label}</button>`;
   const tabbar = `<div class="flex items-center gap-1.5 mb-5 bg-slate-100 rounded-xl p-1.5 w-fit">
-      <button onclick="mktSetHomeTab('projects')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${_mktHomeTab!=='dashboard'?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}">Projects</button>
-      <button onclick="mktSetHomeTab('dashboard')" class="px-3 py-1.5 rounded-lg text-sm font-medium ${_mktHomeTab==='dashboard'?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}">Dashboard</button>
+      ${tb('projects','Projects')}${tb('dashboard','Dashboard')}${tb('calendar','Calendar')}
     </div>`;
   const hero = mktHero('Marketing', 'Plan campaigns, run boards, and track the team work.', `<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`);
   if(_mktHomeTab==='dashboard') return `${hero}${tabbar}${renderMarketingDashboard()}`;
+  if(_mktHomeTab==='calendar') return `${hero}${tabbar}${renderMarketingCalendar()}`;
   return `
     ${hero}${tabbar}
     ${projects.length ? `
@@ -13457,6 +13460,63 @@ function renderMarketingHome(){
     ` : mktEmpty('No projects yet','Create your first marketing project to start building boards and tasks.',`<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}`;
 }
 function mktSetHomeTab(tab){ _mktHomeTab = tab; render(); }
+// ---- scheduling calendar ----
+function mktCalShift(ym, delta){ const [y,m]=ym.split('-').map(Number); const d=new Date(y, m-1+delta, 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function mktCalPrev(){ _mktCalMonth=mktCalShift(_mktCalMonth||todayISO().slice(0,7), -1); render(); }
+function mktCalNext(){ _mktCalMonth=mktCalShift(_mktCalMonth||todayISO().slice(0,7), 1); render(); }
+function mktCalToday(){ _mktCalMonth=todayISO().slice(0,7); render(); }
+function mktSetCalScope(v){ _mktCalScope=v||'all'; render(); }
+function mktCalItems(scope){
+  let items=(state.marketingItems||[]).filter(i=>!i.parentId && i.dueDate);
+  if(scope && scope!=='all'){ const bs=new Set(mktBoardsOf(scope).map(b=>b.id)); const ls=new Set((state.marketingLists||[]).filter(l=>bs.has(l.boardId)).map(l=>l.id)); items=items.filter(i=>ls.has(i.listId)); }
+  return items;
+}
+function renderMarketingCalendar(){
+  const ym=(_mktCalMonth && /^\d{4}-\d{2}$/.test(_mktCalMonth)) ? _mktCalMonth : (todayISO().slice(0,7));
+  _mktCalMonth=ym;
+  const [y,mo]=ym.split('-').map(Number);
+  const monthLbl=new Date(y,mo-1,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  const today=todayISO();
+  const projects=(state.marketingProjects||[]).slice().sort(_mktSort);
+  // Group this month's due cards by day-of-month.
+  const items=mktCalItems(_mktCalScope);
+  const byDay={}; let undated=0;
+  items.forEach(it=>{ if((it.dueDate||'').slice(0,7)===ym){ (byDay[it.dueDate]=byDay[it.dueDate]||[]).push(it); } });
+  const totalNoDue=(state.marketingItems||[]).filter(i=>!i.parentId && !i.dueDate && i.status!=='done').length;
+  // Grid: Sun-first weeks.
+  const startDow=new Date(y,mo-1,1).getDay();
+  const days=new Date(y,mo,0).getDate();
+  const cells=[]; for(let i=0;i<startDow;i++) cells.push(null); for(let d=1;d<=days;d++) cells.push(d); while(cells.length%7) cells.push(null);
+  const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const chip=it=>{ const s=TASK_STATUSES[it.status]||TASK_STATUSES.todo; const overdue=it.status!=='done' && it.dueDate<today;
+    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] truncate ${overdue?'bg-rose-50 text-rose-700':'hover:bg-slate-100 text-slate-700'}" title="${escapeHTML(it.title)}"><span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:${s.solid}"></span><span class="truncate">${escapeHTML(it.title)}</span></button>`; };
+  const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg min-h-[92px]"></div>`;
+    const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=(byDay[ds]||[]); const isToday=ds===today;
+    const shown=list.slice(0,3); const extra=list.length-shown.length;
+    return `<div class="bg-white border ${isToday?'border-brand-400':'border-slate-200'} rounded-lg min-h-[92px] p-1.5 flex flex-col gap-0.5">
+      <div class="text-[11px] font-semibold ${isToday?'text-brand-700':'text-slate-400'} mb-0.5">${d}${isToday?' ·':''}</div>
+      ${shown.map(chip).join('')}
+      ${extra>0?`<div class="text-[10px] text-slate-400 px-1.5">+${extra} more</div>`:''}
+    </div>`; };
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <button onclick="mktCalPrev()" class="btn btn-ghost btn-sm" aria-label="Previous month">‹</button>
+        <div class="font-display text-lg font-semibold text-slate-900 min-w-[10rem] text-center">${escapeHTML(monthLbl)}</div>
+        <button onclick="mktCalNext()" class="btn btn-ghost btn-sm" aria-label="Next month">›</button>
+        <button onclick="mktCalToday()" class="btn btn-ghost btn-sm">Today</button>
+      </div>
+      <div class="flex items-center gap-2">
+        ${totalNoDue?`<span class="text-xs text-amber-600">${totalNoDue} card${totalNoDue===1?'':'s'} with no due date</span>`:''}
+        <select class="input !py-1.5 !w-auto text-sm" onchange="mktSetCalScope(this.value)"><option value="all" ${_mktCalScope==='all'?'selected':''}>All projects</option>${projects.map(p=>`<option value="${p.id}" ${_mktCalScope===p.id?'selected':''}>${escapeHTML(p.name)}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      <div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(x=>`<div class="text-[11px] font-semibold text-slate-400 text-center uppercase tracking-wider">${x}</div>`).join('')}</div>
+      <div class="grid grid-cols-7 gap-1.5">${cells.map(cell).join('')}</div>
+      <div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap">${Object.entries(TASK_STATUSES).map(([k,v])=>`<span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:${v.solid}"></span>${escapeHTML(v.label)}</span>`).join('')}<span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-400"></span>Overdue</span></div>
+    </div>`;
+}
 // KPI + charts overview across the whole marketing workspace (Chart.js,
 // already loaded + CSP-cleared; falls back to a note if the lib is absent).
 function renderMarketingDashboard(){
