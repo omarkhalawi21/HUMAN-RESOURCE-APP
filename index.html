@@ -6727,6 +6727,45 @@ function calcPayroll(ym) {
   // entered manual adjustments still recompute so a re-run can fix
   // those. Advances/deductions for a redo go via a manual adjustment.
   const isRerun = (state.payroll || []).some(p => p.period === ym);
+  // GROUND-TRUTH advance recovery, from the money actually charged on issued
+  // payslips — immune to the amount_recovered / installments_paid ledger
+  // desyncing (a failed post-run bookkeeping update, or a column added after
+  // an earlier run). Without this, a repayment that was charged but whose
+  // ledger update didn't persist gets "forgotten" and re-charged next run —
+  // the over-recovery bug (e.g. 500 in one month + full amount the next).
+  // We sum each employee's advance/loan repayment lines across ALL payslips,
+  // then allocate that pool across their approved advances oldest-first so
+  // already-repaid ones consume their share and outstanding ones get the
+  // correct remainder. Used as a FLOOR on "already recovered" — it can only
+  // reduce what we take, never increase it.
+  const priorRecoveredById = new Map(); // advanceId -> amount already recovered (ground truth)
+  {
+    const poolByEmp = new Map();
+    for (const p of (state.payroll || [])) {
+      let sum = 0;
+      for (const adj of (p.adjustments || [])) {
+        if (adj.kind === 'deduction' && /^(advance|loan)\s+repayment/i.test(adj.label || '')) sum += Number(adj.amount) || 0;
+      }
+      if (sum) poolByEmp.set(p.employeeId, Math.round(((poolByEmp.get(p.employeeId) || 0) + sum) * 100) / 100);
+    }
+    const advsByEmp = new Map();
+    for (const a of (state.advances || [])) {
+      if (a.status !== 'approved') continue;
+      if (!advsByEmp.has(a.employeeId)) advsByEmp.set(a.employeeId, []);
+      advsByEmp.get(a.employeeId).push(a);
+    }
+    for (const [empId, advs] of advsByEmp) {
+      let pool = poolByEmp.get(empId) || 0;
+      advs.sort((x, y) => String(x.requestedAt || '').localeCompare(String(y.requestedAt || '')));
+      for (const a of advs) {
+        const amt = Math.round((Number(a.amount) || 0) * 100) / 100;
+        const alloc = Math.min(pool, amt);
+        pool = Math.round((pool - alloc) * 100) / 100;
+        const stored = Math.round((Number(a.amountRecovered) || 0) * 100) / 100;
+        priorRecoveredById.set(a.id, Math.max(stored, alloc));
+      }
+    }
+  }
   // Skip terminated employees — they should not appear in payroll runs
   // after their termination date. Branch-device (iPad) accounts are
   // excluded too: they are login rows, not paid staff.
@@ -6758,17 +6797,25 @@ function calcPayroll(ym) {
         if (paid >= months) return; // already fully repaid
         const per = Math.round((total / months) * 100) / 100;
         const newPaid = paid + 1;
-        const priorTaken = Math.round(per * paid * 100) / 100;
-        const installment = newPaid >= months
-          ? Math.max(0, Math.round((total - priorTaken) * 100) / 100) // last: clear the balance
-          : per;
+        // Ground-truth already-taken (payslip history) takes precedence over
+        // the per×paid estimate so a desynced installments_paid can't cause
+        // an over- or double-charge. Clamp so we never exceed the balance.
+        const priorTaken = priorRecoveredById.has(a.id)
+          ? priorRecoveredById.get(a.id)
+          : Math.round(per * paid * 100) / 100;
+        const balance = Math.max(0, Math.round((total - priorTaken) * 100) / 100);
+        const installment = Math.min(balance, newPaid >= months ? balance : per); // last: clear the balance
         if (installment > 0) advanceItems.push({ kind:'deduction', label:`Loan repayment${reason?': '+reason:''} (installment ${newPaid}/${months})`, amount: installment });
-        advanceUpdates.set(a.id, { installmentsPaid: newPaid, repaid: newPaid >= months });
+        advanceUpdates.set(a.id, { installmentsPaid: newPaid, repaid: newPaid >= months || (priorTaken + installment) >= total - 0.001 });
       } else {
         // Advance. Default = recover IN FULL this run (unchanged). If a
         // monthly_repayment cap is set, recover at most that per run and
-        // track amount_recovered until the advance is cleared.
-        const recovered = Math.round((Number(a.amountRecovered) || 0) * 100) / 100;
+        // track amount_recovered until the advance is cleared. `recovered`
+        // uses the ground-truth floor (payslip history) so a repayment that
+        // was charged but never persisted to the ledger is NOT re-charged.
+        const recovered = priorRecoveredById.has(a.id)
+          ? priorRecoveredById.get(a.id)
+          : Math.round((Number(a.amountRecovered) || 0) * 100) / 100;
         const remaining = Math.round((total - recovered) * 100) / 100;
         if (remaining <= 0) { advanceUpdates.set(a.id, { installmentsPaid: (Number(a.installmentsPaid)||0), amountRecovered: recovered, repaid: true }); return; }
         const cap  = Math.round((Number(a.monthlyRepayment) || 0) * 100) / 100;
