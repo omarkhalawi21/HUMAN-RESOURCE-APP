@@ -13585,8 +13585,12 @@ function renderMarketingCalendar(){
   const days=new Date(y,mo,0).getDate();
   const cells=[]; for(let i=0;i<startDow;i++) cells.push(null); for(let d=1;d<=days;d++) cells.push(d); while(cells.length%7) cells.push(null);
   const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const chip=it=>{ const s=TASK_STATUSES[it.status]||TASK_STATUSES.todo; const overdue=it.status!=='done' && it.dueDate<today;
-    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] truncate ${overdue?'bg-rose-50 text-rose-700':'hover:bg-slate-100 text-slate-700'}" title="${escapeHTML(it.title)}"><span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:${s.solid}"></span><span class="truncate">${escapeHTML(it.title)}</span></button>`; };
+  // Apple-style pastel event block, tinted from the card's PROJECT colour
+  // (project colour at low alpha + a solid left accent). Overdue cards get a
+  // rose accent; done cards are muted + struck through.
+  const chip=it=>{ const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
+    const overdue=it.status!=='done' && it.dueDate<today; const done=it.status==='done';
+    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md text-[11px] truncate ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${escapeHTML(it.title)}${overdue?' · overdue':''}"><span class="block truncate ${done?'line-through':''}">${escapeHTML(it.title)}</span></button>`; };
   const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg min-h-[92px]"></div>`;
     const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=(byDay[ds]||[]); const isToday=ds===today;
     const shown=list.slice(0,3); const extra=list.length-shown.length;
@@ -13611,7 +13615,7 @@ function renderMarketingCalendar(){
     <div class="bg-white rounded-2xl shadow-card p-4">
       <div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(x=>`<div class="text-[11px] font-semibold text-slate-400 text-center uppercase tracking-wider">${x}</div>`).join('')}</div>
       <div class="grid grid-cols-7 gap-1.5">${cells.map(cell).join('')}</div>
-      <div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap">${Object.entries(TASK_STATUSES).map(([k,v])=>`<span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:${v.solid}"></span>${escapeHTML(v.label)}</span>`).join('')}<span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-400"></span>Overdue</span></div>
+      ${(()=>{ const ids=new Set(); Object.values(byDay).forEach(arr=>arr.forEach(it=>{ const b=mktBoardOfItem(it); if(b) ids.add(b.projectId); })); const legend=projects.filter(p=>ids.has(p.id)); return legend.length?`<div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap"><span class="text-slate-400">Projects:</span>${legend.map(p=>`<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:${p.color}"></span>${escapeHTML(p.name)}</span>`).join('')}<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#f15780"></span>Overdue</span></div>`:''; })()}
     </div>`;
 }
 // KPI + charts overview across the whole marketing workspace (Chart.js,
