@@ -13408,6 +13408,8 @@ let _mktCalMonth = null;      // calendar month 'YYYY-MM' (lazy-init to current)
 let _mktCalScope = 'all';     // calendar project filter: 'all' | projectId
 let _mktBudgetScope = 'all';  // budget view: 'all' (overview) | projectId (detail)
 let _mktChartData = null;     // data snapshot for the dashboard's Chart.js charts
+let _mktBudgetViz = null;     // budget chart data: { mode:'detail'|'overview', labels, planned, actual }
+const MKT_CAT_COLORS = ['#12b3a6','#0f6fde','#90e696','#fd8206','#fec30b','#f15780','#7de5e6','#9333ea','#00c875','#fea8bf'];
 const _mktCharts = {};        // live Chart.js instances (destroyed before re-create)
 const MKT_COLORS = ['#6d28d9','#0f6fde','#00c875','#fdab3d','#e2445c','#00a9c7','#ff642e','#9333ea'];
 
@@ -13493,6 +13495,19 @@ function renderMarketingBudget(){
         <td class="py-2 text-right whitespace-nowrap"><button onclick="openMarketingBudgetModal('${proj.id}','${l.id}')" class="text-slate-400 hover:text-brand-600 p-1" title="Edit">${icon('edit','w-4 h-4')}</button><button onclick="mktDeleteBudgetLine('${l.id}')" class="text-slate-400 hover:text-rose-600 p-1" title="Delete">${icon('trash','w-4 h-4')}</button></td>
       </tr>`; }).join('')
       : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">No budget lines yet. Add one to start planning.</td></tr>`;
+    // Budget Health Monitor — one bar per category, actual ÷ planned, colour
+    // graded (healthy → warning → over). Lines with no planned amount are
+    // flagged as unbudgeted spend.
+    const health = t.lines.map(l=>{
+      const planned=Number(l.planned)||0, actual=Number(l.actual)||0;
+      const pct = planned>0 ? Math.round(actual/planned*100) : (actual>0?101:0);
+      const col = planned<=0 ? (actual>0?'#f15780':'#cbd5e1') : (pct>100?'#f15780':pct>85?'#fec30b':'#00c875');
+      const lbl = planned>0 ? `${pct}% of budget` : (actual>0?'unbudgeted':'no budget set');
+      return `<div><div class="flex items-center justify-between text-xs mb-1"><span class="truncate text-slate-700">${escapeHTML(l.category)}</span><span class="shrink-0 ${pct>100?'text-rose-600 font-semibold':'text-slate-400'}">${lbl}</span></div><div class="h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${Math.min(100,pct)}%;background:${col}"></div></div></div>`;
+    }).join('');
+    // Chart data for initMktCharts (spending doughnut + budgeted-vs-actual bars).
+    _mktBudgetViz = { mode:'detail', labels:t.lines.map(l=>l.category), planned:t.lines.map(l=>Number(l.planned)||0), actual:t.lines.map(l=>Number(l.actual)||0) };
+    const noChart = (typeof Chart==='undefined');
     return `
       <div class="flex items-center justify-between gap-3 flex-wrap mb-4">${scopeSel}<button onclick="openMarketingBudgetModal('${proj.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add budget line</button></div>
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -13501,7 +13516,13 @@ function renderMarketingBudget(){
         ${tile('Remaining', `${t.variance<0?'−':''}${fmtMoney(Math.abs(t.variance))}`, t.variance<0?'text-rose-600':'text-emerald-700')}
         ${tile('Used', `${t.pct}%`, t.pct>100?'text-rose-600':'text-slate-900')}
       </div>
-      <div class="mb-4"><div class="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${Math.min(100,t.pct)}%;background:${t.pct>100?'#e2445c':proj.color}"></div></div>${overBudget?`<div class="text-xs text-rose-600 mt-1">Over budget by ${fmtMoney(t.actual-t.planned)}</div>`:''}</div>
+      <div class="mb-5"><div class="h-2.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${Math.min(100,t.pct)}%;background:${t.pct>100?'#e2445c':proj.color}"></div></div>${overBudget?`<div class="text-xs text-rose-600 mt-1">Over budget by ${fmtMoney(t.actual-t.planned)}</div>`:''}</div>
+      ${t.lines.length?`
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Budget health monitor</h3><div class="space-y-3">${health}</div></div>
+        <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Spending breakdown <span class="text-slate-400 font-normal text-sm">(actual)</span></h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:220px"><canvas id="mktBudgetDoughnut"></canvas></div>'}</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-card p-5 mb-4"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Budgeted vs actual</h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:260px"><canvas id="mktBudgetBars"></canvas></div>'}</div>`:''}
       <div class="bg-white rounded-2xl shadow-card p-5 overflow-x-auto">
         <table class="w-full text-sm"><thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left"><th class="pb-2 pr-3">Category</th><th class="pb-2 pr-3 text-right">Planned</th><th class="pb-2 pr-3 text-right">Actual</th><th class="pb-2 pr-3 text-right">Remaining</th><th class="pb-2"></th></tr></thead><tbody>${rows}</tbody></table>
       </div>`;
@@ -13518,6 +13539,9 @@ function renderMarketingBudget(){
       <div class="mt-2">${mktProgressBar(Math.min(100,t.pct), t.pct>100?'#e2445c':p.color)}</div>
       <div class="text-xs mt-1 ${over?'text-rose-600':'text-slate-400'}">${over?`Over by ${fmtMoney(t.actual-t.planned)}`:`${t.pct}% used · ${t.lines.length} line${t.lines.length===1?'':'s'}`}</div>
     </button>`; }).join('');
+  const withBudget=totals.filter(x=>x.t.planned>0 || x.t.actual>0);
+  _mktBudgetViz = { mode:'overview', labels:withBudget.map(x=>x.p.name), planned:withBudget.map(x=>x.t.planned), actual:withBudget.map(x=>x.t.actual) };
+  const noChart=(typeof Chart==='undefined');
   return `
     <div class="mb-4">${scopeSel}</div>
     <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
@@ -13525,6 +13549,7 @@ function renderMarketingBudget(){
       ${tile('Total actual', fmtMoney(grand.actual), grand.actual>grand.planned?'text-rose-600':'text-slate-900')}
       ${tile('Remaining', `${grandVar<0?'−':''}${fmtMoney(Math.abs(grandVar))}`, grandVar<0?'text-rose-600':'text-emerald-700')}
     </div>
+    ${withBudget.length?`<div class="bg-white rounded-2xl shadow-card p-5 mb-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Budgeted vs actual by project</h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:260px"><canvas id="mktBudgetOverviewBars"></canvas></div>'}</div>`:''}
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${cards}</div>`;
 }
 function openMarketingBudgetModal(projectId, id){
@@ -13664,8 +13689,9 @@ function renderMarketingDashboard(){
     </div>`;
 }
 function initMktCharts(){
-  if(typeof Chart==='undefined' || !_mktChartData) return;
+  if(typeof Chart==='undefined') return;
   Object.keys(_mktCharts).forEach(k=>{ try{ _mktCharts[k].destroy(); }catch(_){} delete _mktCharts[k]; });
+  if(_mktChartData){
   const d=_mktChartData;
   const cs=document.getElementById('mktStatusChart');
   if(cs){ _mktCharts.status=new Chart(cs,{ type:'doughnut',
@@ -13675,6 +13701,22 @@ function initMktCharts(){
   if(cw){ _mktCharts.weekly=new Chart(cw,{ type:'bar',
     data:{ labels:d.weekLabels, datasets:[{ label:'Completed', data:d.weekCounts, backgroundColor:'#6d28d9', borderRadius:4 }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0, font:{size:10} } }, x:{ ticks:{ font:{size:10}, maxRotation:0, autoSkip:true } } } } }); }
+  }
+  // Budget charts (detail: spending doughnut + budgeted-vs-actual bars;
+  // overview: budgeted-vs-actual by project). Guarded by canvas presence.
+  const bv=_mktBudgetViz;
+  if(bv){
+    const bd=document.getElementById('mktBudgetDoughnut');
+    if(bd){ _mktCharts.budgetDoughnut=new Chart(bd,{ type:'doughnut',
+      data:{ labels:bv.labels, datasets:[{ data:bv.actual, backgroundColor:bv.labels.map((_,i)=>MKT_CAT_COLORS[i%MKT_CAT_COLORS.length]), borderWidth:0 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right', labels:{ font:{size:10}, boxWidth:12 } } }, cutout:'58%' } }); }
+    const groupCanvas = document.getElementById('mktBudgetBars') || document.getElementById('mktBudgetOverviewBars');
+    if(groupCanvas){ _mktCharts.budgetBars=new Chart(groupCanvas,{ type:'bar',
+      data:{ labels:bv.labels, datasets:[
+        { label:'Budgeted', data:bv.planned, backgroundColor:'#0f6fde', borderRadius:4 },
+        { label:'Actual',   data:bv.actual,  backgroundColor:'#12b3a6', borderRadius:4 } ] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'top', labels:{ font:{size:10}, boxWidth:12 } } }, scales:{ y:{ beginAtZero:true, ticks:{ font:{size:10} } }, x:{ ticks:{ font:{size:10}, maxRotation:0, autoSkip:true } } } } }); }
+  }
 }
 // Project workspace: board TABS + the active board's kanban lists inline —
 // no separate "open board" step. This is the Trello-style single view.
