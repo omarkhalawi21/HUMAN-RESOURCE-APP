@@ -4430,6 +4430,12 @@ async function forceDeleteEmployee(id) {
 function isActiveEmployee(e) {
   return !!e && e.status !== 'terminated' && e.status !== 'pending';
 }
+// A branch-device (shared iPad login) is an employee row for permission
+// scoping, NOT a real person — it has no salary and must never receive a
+// payslip. Payroll surfaces filter on this, not bare isActiveEmployee.
+function isPayableEmployee(e) {
+  return isActiveEmployee(e) && e.systemRole !== 'branch_device';
+}
 function openTerminationModal(empId) {
   const e = getEmployee(empId);
   if (!e) return;
@@ -6717,8 +6723,9 @@ function calcPayroll(ym) {
   // those. Advances/deductions for a redo go via a manual adjustment.
   const isRerun = (state.payroll || []).some(p => p.period === ym);
   // Skip terminated employees — they should not appear in payroll runs
-  // after their termination date.
-  const rows = state.employees.filter(isActiveEmployee).map(e => {
+  // after their termination date. Branch-device (iPad) accounts are
+  // excluded too: they are login rows, not paid staff.
+  const rows = state.employees.filter(isPayableEmployee).map(e => {
     // Every approved, not-yet-repaid advance is recovered IN FULL from
     // the next payroll run (company policy — no partial/installment or
     // manual-only plans). The stored deduct_from_payroll value is
@@ -7005,7 +7012,7 @@ function renderRunPayrollPreview() {
 function renderPayrollAdjust() {
   const target = $('#rp-adjust');
   if (!target) return;
-  const emps = (state.employees || []).filter(isActiveEmployee).slice()
+  const emps = (state.employees || []).filter(isPayableEmployee).slice()
     .sort((a,b) => ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
   const empOptions = emps.map(e=>`<option value="${e.id}">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('');
   const list = (_payrollAdjustments || []).map((a,i) => {
@@ -10948,6 +10955,7 @@ function renderAdvances() {
                         <button onclick="decideAdvance('${a.id}','rejected')" class="btn btn-sm btn-danger">${icon('close','w-4 h-4')} ${escapeHTML(t('reject'))}</button>
                         <button onclick="printAdvanceSlip('${a.id}')" aria-label="Print advance slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('file','w-4 h-4')}</button>
                       `: a.status==='approved' && !a.repaidAt ? `
+                        ${a.kind!=='loan' ? `<button onclick="openAdvanceCapModal('${a.id}')" class="btn btn-sm btn-ghost" title="Split the remaining balance into monthly payments">${icon('cash','w-4 h-4')} Repayment plan</button>` : ''}
                         <button onclick="markAdvanceRepaid('${a.id}')" class="btn btn-sm btn-ghost">${icon('check','w-4 h-4')} Mark repaid</button>
                         <button onclick="printAdvanceSlip('${a.id}')" aria-label="Print advance slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>
                       ` : `<button onclick="printAdvanceSlip('${a.id}')" aria-label="Print advance slip" title="Print slip" class="text-slate-500 hover:text-brand-600 p-1.5 rounded hover:bg-slate-100">${icon('download','w-4 h-4')}</button>`
@@ -11090,6 +11098,59 @@ async function decideAdvance(id, decision) {
   render();
   toast(`Advance ${decision}`, 'success');
   if (decision === 'approved' && confirm('Open the approved advance slip for printing?')) printAdvanceSlip(id);
+}
+// Retrofit a monthly-repayment plan onto an already-approved, outstanding
+// advance. calcPayroll recovers at most monthly_repayment per run (no
+// installment ceiling), so setting a cap here splits the REMAINING balance
+// into N monthly payments starting from the next run. Setting N=1 clears
+// the cap (full remaining recovered in one run). Past runs already charged
+// are not reversed — this only affects future recovery.
+function openAdvanceCapModal(id) {
+  if (!canManagePeople()) return;
+  const a = (state.advances || []).find(x => x.id === id);
+  if (!a || a.status !== 'approved' || a.repaidAt || a.kind === 'loan') return;
+  const e = getEmployee(a.employeeId);
+  const nm = e ? ((e.firstName||'')+' '+(e.lastName||'')).trim() : '—';
+  const total = Math.round((Number(a.amount)||0)*100)/100;
+  const recovered = Math.round((Number(a.amountRecovered)||0)*100)/100;
+  const remaining = Math.round((total - recovered)*100)/100;
+  const curCap = Number(a.monthlyRepayment)||0;
+  const defN = (curCap > 0 && remaining > 0) ? Math.max(1, Math.ceil(remaining / curCap)) : 1;
+  const form = `
+    <div class="space-y-4">
+      <div class="bg-slate-50 rounded-xl p-4 text-sm space-y-1.5">
+        <div class="flex justify-between"><span class="text-slate-600">Employee</span><span class="font-semibold text-slate-900">${escapeHTML(nm)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-600">Advance amount</span><span class="font-semibold">${fmtMoney(total)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-600">Already recovered</span><span class="font-semibold">${fmtMoney(recovered)}</span></div>
+        <div class="flex justify-between"><span class="text-slate-600">Remaining</span><span class="font-bold text-brand-700">${fmtMoney(remaining)}</span></div>
+      </div>
+      <div>
+        <label class="label">Split remaining into monthly payments</label>
+        <input id="adv-cap-n" class="input" type="number" min="1" step="1" value="${defN}" oninput="advCapHint(${remaining})">
+        <div class="text-xs text-slate-500 mt-1" id="adv-cap-hint2"></div>
+      </div>
+      <p class="text-xs text-slate-500">Each payroll run deducts up to this monthly amount until the advance is cleared; the last payment absorbs rounding so the total matches exactly. Set to <strong>1</strong> to recover the full remaining balance in the next run.</p>
+    </div>`;
+  openModal('Repayment plan', form, async () => {
+    const n = Math.max(1, Math.floor(Number($('#adv-cap-n')?.value)||1));
+    // cap null = full recovery next run; otherwise per-run ceiling.
+    const cap = (n <= 1 || remaining <= 0) ? null : Math.ceil((remaining / n) * 100) / 100;
+    const { data, error } = await sb.from('advances').update({ monthly_repayment: cap }).eq('id', id).select().single();
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    Object.assign(a, mapAdvanceFromDb(data));
+    render();
+    toast(cap ? `Repayment plan set: ${fmtMoney(cap)} per run (~${n} payments)` : 'Repayment set to full next run', 'success');
+    return true;
+  });
+  advCapHint(remaining);
+}
+function advCapHint(remaining) {
+  const el = $('#adv-cap-hint2');
+  if (!el) return;
+  const n = Math.max(1, Math.floor(Number($('#adv-cap-n')?.value)||1));
+  if (n <= 1 || remaining <= 0) { el.textContent = 'Full remaining balance deducted in the next payroll run.'; return; }
+  const cap = Math.ceil((remaining / n) * 100) / 100;
+  el.textContent = `≈ ${fmtMoney(cap)} deducted per payroll run until cleared.`;
 }
 async function markAdvanceRepaid(id) {
   const a = state.advances.find(x => x.id===id);
