@@ -776,6 +776,7 @@ function emptyState() {
     marketingItemMembers: [], // [{ itemId, employeeId }] multi-assignee join
     marketingAttachments: [], // [{ id, itemId, name, mime, size }] metadata only (data_url fetched on demand)
     marketingBudgetLines: [], // [{ id, projectId, category, planned, actual, note }] standalone budget lines (block 96)
+    marketingExpenses: [],    // [{ id, budgetLineId, amount, spentOn, vendor, note }] itemized expenses (block 97); sum → line.actual
     marketingItemEventsCache: {}, // on-demand per itemId: [{ ...event }]
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
@@ -1468,6 +1469,12 @@ function mapMarketingBudgetLineFromDb(r) {
 }
 function marketingBudgetLineToDb(l) {
   return { project_id: l.projectId||null, category: l.category||null, planned: Number(l.planned)||0, actual: Number(l.actual)||0, note: l.note||null, sort_order: Number(l.sortOrder)||0, created_by: l.createdBy||null };
+}
+function mapMarketingExpenseFromDb(r) {
+  return { id: r.id, budgetLineId: r.budget_line_id||null, amount: Number(r.amount)||0, spentOn: r.spent_on||null, vendor: r.vendor||'', note: r.note||'', createdBy: r.created_by||null, createdAt: r.created_at };
+}
+function marketingExpenseToDb(e) {
+  return { budget_line_id: e.budgetLineId||null, amount: Number(e.amount)||0, spent_on: e.spentOn||null, vendor: e.vendor||null, note: e.note||null, created_by: e.createdBy||null };
 }
 function mapMarketingListFromDb(r) {
   return {
@@ -2168,7 +2175,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2307,6 +2314,7 @@ async function loadAll() {
       // demand at download time (mktDownloadAttachment), never bulk-loaded.
       sb.from('marketing_item_attachments').select('id, item_id, name, mime, size, created_by, created_at').limit(3000),
       sb.from('marketing_budget_lines').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+      sb.from('marketing_expenses').select('*').order('spent_on', { ascending: false }).limit(5000),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2379,6 +2387,7 @@ async function loadAll() {
     state.marketingItemMembers = (mktItemMembersR?.data || []).map(mapMarketingItemMemberFromDb);
     state.marketingAttachments = (mktAttachmentsR?.data || []).map(mapMarketingAttachmentFromDb);
     state.marketingBudgetLines = (mktBudgetR?.data || []).map(mapMarketingBudgetLineFromDb);
+    state.marketingExpenses = (mktExpensesR?.data || []).map(mapMarketingExpenseFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -13407,6 +13416,7 @@ let _mktHomeTab = 'projects'; // Marketing home: 'projects' | 'dashboard' | 'cal
 let _mktCalMonth = null;      // calendar month 'YYYY-MM' (lazy-init to current)
 let _mktCalScope = 'all';     // calendar project filter: 'all' | projectId
 let _mktBudgetScope = 'all';  // budget view: 'all' (overview) | projectId (detail)
+let _mktExpLineId = null;     // budget line whose expenses modal is open
 let _mktChartData = null;     // data snapshot for the dashboard's Chart.js charts
 let _mktBudgetViz = null;     // budget chart data: { mode:'detail'|'overview', labels, planned, actual }
 const MKT_CAT_COLORS = ['#12b3a6','#0f6fde','#90e696','#fd8206','#fec30b','#f15780','#7de5e6','#9333ea','#00c875','#fea8bf'];
@@ -13490,9 +13500,9 @@ function renderMarketingBudget(){
       return `<tr class="border-t border-slate-100">
         <td class="py-2 pr-3 text-slate-800">${escapeHTML(l.category)}${l.note?`<div class="text-[11px] text-slate-400 truncate max-w-xs">${escapeHTML(l.note)}</div>`:''}</td>
         <td class="py-2 pr-3 text-right text-slate-600">${fmtMoney(l.planned)}</td>
-        <td class="py-2 pr-3 text-right text-slate-600">${fmtMoney(l.actual)}</td>
+        <td class="py-2 pr-3 text-right"><button onclick="openMarketingExpensesModal('${l.id}')" class="text-slate-700 hover:text-brand-700 hover:underline">${fmtMoney(l.actual)}</button> <span class="text-[10px] text-slate-400">(${mktExpensesOf(l.id).length})</span></td>
         <td class="py-2 pr-3 text-right font-semibold ${over?'text-rose-600':'text-emerald-600'}">${v<0?'−':''}${fmtMoney(Math.abs(v))}</td>
-        <td class="py-2 text-right whitespace-nowrap"><button onclick="openMarketingBudgetModal('${proj.id}','${l.id}')" class="text-slate-400 hover:text-brand-600 p-1" title="Edit">${icon('edit','w-4 h-4')}</button><button onclick="mktDeleteBudgetLine('${l.id}')" class="text-slate-400 hover:text-rose-600 p-1" title="Delete">${icon('trash','w-4 h-4')}</button></td>
+        <td class="py-2 text-right whitespace-nowrap"><button onclick="openMarketingExpensesModal('${l.id}')" class="text-slate-400 hover:text-brand-600 p-1" title="Log expenses">${icon('receipt','w-4 h-4')}</button><button onclick="openMarketingBudgetModal('${proj.id}','${l.id}')" class="text-slate-400 hover:text-brand-600 p-1" title="Edit">${icon('edit','w-4 h-4')}</button><button onclick="mktDeleteBudgetLine('${l.id}')" class="text-slate-400 hover:text-rose-600 p-1" title="Delete">${icon('trash','w-4 h-4')}</button></td>
       </tr>`; }).join('')
       : `<tr><td colspan="5" class="py-6 text-center text-slate-400 text-sm">No budget lines yet. Add one to start planning.</td></tr>`;
     // Budget Health Monitor — one bar per category, actual ÷ planned, colour
@@ -13506,7 +13516,12 @@ function renderMarketingBudget(){
       return `<div><div class="flex items-center justify-between text-xs mb-1"><span class="truncate text-slate-700">${escapeHTML(l.category)}</span><span class="shrink-0 ${pct>100?'text-rose-600 font-semibold':'text-slate-400'}">${lbl}</span></div><div class="h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${Math.min(100,pct)}%;background:${col}"></div></div></div>`;
     }).join('');
     // Chart data for initMktCharts (spending doughnut + budgeted-vs-actual bars).
-    _mktBudgetViz = { mode:'detail', labels:t.lines.map(l=>l.category), planned:t.lines.map(l=>Number(l.planned)||0), actual:t.lines.map(l=>Number(l.actual)||0) };
+    // Spend-over-time: this project's expenses bucketed by month (last 6).
+    const lineIds=new Set(t.lines.map(l=>l.id));
+    const projExp=(state.marketingExpenses||[]).filter(e=>lineIds.has(e.budgetLineId));
+    const months=[]; { const now=todayISO().slice(0,7); let [yy,mm]=now.split('-').map(Number); for(let i=0;i<6;i++){ months.unshift(`${yy}-${String(mm).padStart(2,'0')}`); mm--; if(mm<1){ mm=12; yy--; } } }
+    const trendData=months.map(m=>Math.round(projExp.filter(e=>(e.spentOn||e.createdAt||'').slice(0,7)===m).reduce((s,e)=>s+(Number(e.amount)||0),0)*100)/100);
+    _mktBudgetViz = { mode:'detail', labels:t.lines.map(l=>l.category), planned:t.lines.map(l=>Number(l.planned)||0), actual:t.lines.map(l=>Number(l.actual)||0), trend:{ labels:months.map(m=>m.slice(5)), data:trendData, has:projExp.length>0 } };
     const noChart = (typeof Chart==='undefined');
     return `
       <div class="flex items-center justify-between gap-3 flex-wrap mb-4">${scopeSel}<button onclick="openMarketingBudgetModal('${proj.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Add budget line</button></div>
@@ -13522,7 +13537,10 @@ function renderMarketingBudget(){
         <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Budget health monitor</h3><div class="space-y-3">${health}</div></div>
         <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Spending breakdown <span class="text-slate-400 font-normal text-sm">(actual)</span></h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:220px"><canvas id="mktBudgetDoughnut"></canvas></div>'}</div>
       </div>
-      <div class="bg-white rounded-2xl shadow-card p-5 mb-4"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Budgeted vs actual</h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:260px"><canvas id="mktBudgetBars"></canvas></div>'}</div>`:''}
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Budgeted vs actual</h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:260px"><canvas id="mktBudgetBars"></canvas></div>'}</div>
+        <div class="bg-white rounded-2xl shadow-card p-5"><h3 class="font-display text-base font-semibold text-slate-900 mb-3">Spend over time <span class="text-slate-400 font-normal text-sm">(last 6 months)</span></h3>${noChart?'<div class="text-sm text-slate-400">Charts unavailable.</div>':'<div style="height:260px"><canvas id="mktSpendTrend"></canvas></div>'}</div>
+      </div>`:''}
       <div class="bg-white rounded-2xl shadow-card p-5 overflow-x-auto">
         <table class="w-full text-sm"><thead><tr class="text-[10px] uppercase tracking-wider text-slate-400 text-left"><th class="pb-2 pr-3">Category</th><th class="pb-2 pr-3 text-right">Planned</th><th class="pb-2 pr-3 text-right">Actual</th><th class="pb-2 pr-3 text-right">Remaining</th><th class="pb-2"></th></tr></thead><tbody>${rows}</tbody></table>
       </div>`;
@@ -13558,29 +13576,89 @@ function openMarketingBudgetModal(projectId, id){
   const cur=state.settings.currency||'';
   const body=`<div class="space-y-4">
     <div><label class="label">Category *</label><input id="mkt-bl-cat" class="input" value="${l?escapeHTML(l.category):''}" placeholder="e.g. Paid ads, Influencers, Print"></div>
-    <div class="grid grid-cols-2 gap-3">
-      <div><label class="label">Planned (${escapeHTML(cur)})</label><input id="mkt-bl-planned" inputmode="decimal" class="input" value="${l?escapeHTML(String(l.planned)):''}" placeholder="0.00"></div>
-      <div><label class="label">Actual spent (${escapeHTML(cur)})</label><input id="mkt-bl-actual" inputmode="decimal" class="input" value="${l?escapeHTML(String(l.actual)):''}" placeholder="0.00"></div>
-    </div>
+    <div><label class="label">Planned budget (${escapeHTML(cur)})</label><input id="mkt-bl-planned" inputmode="decimal" class="input" value="${l?escapeHTML(String(l.planned)):''}" placeholder="0.00"></div>
     <div><label class="label">Note</label><textarea id="mkt-bl-note" class="input" rows="2" placeholder="Optional">${l?escapeHTML(l.note):''}</textarea></div>
+    <p class="text-xs text-slate-500">Actual spend is tracked by logging individual expenses on this line (the ${icon('receipt','w-3 h-3 inline')} button), which add up automatically.</p>
   </div>`;
   openModal(l?'Edit budget line':'New budget line', body, async ()=>{
     const category=$('#mkt-bl-cat')?.value.trim(); if(!category){ toast('Enter a category','error'); return false; }
     const planned=Math.round((parseFloat(($('#mkt-bl-planned')?.value||'').replace(/,/g,''))||0)*100)/100;
-    const actual=Math.round((parseFloat(($('#mkt-bl-actual')?.value||'').replace(/,/g,''))||0)*100)/100;
-    if(planned<0||actual<0){ toast('Amounts cannot be negative','error'); return false; }
-    const payload=marketingBudgetLineToDb({ projectId, category, planned, actual, note:$('#mkt-bl-note')?.value.trim(), createdBy:currentEmployee()?.id, sortOrder: l?l.sortOrder:mktBudgetLinesOf(projectId).length });
-    if(l){ const { data, error } = await sb.from('marketing_budget_lines').update(payload).eq('id',l.id).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(l, mapMarketingBudgetLineFromDb(data)); }
-    else { const { data, error } = await sb.from('marketing_budget_lines').insert(payload).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } state.marketingBudgetLines.push(mapMarketingBudgetLineFromDb(data)); }
+    if(planned<0){ toast('Planned cannot be negative','error'); return false; }
+    const note=$('#mkt-bl-note')?.value.trim();
+    if(l){ const { data, error } = await sb.from('marketing_budget_lines').update({ category, planned, note: note||null, updated_at:new Date().toISOString() }).eq('id',l.id).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(l, mapMarketingBudgetLineFromDb(data)); }
+    else { const payload=marketingBudgetLineToDb({ projectId, category, planned, actual:0, note, createdBy:currentEmployee()?.id, sortOrder: mktBudgetLinesOf(projectId).length }); const { data, error } = await sb.from('marketing_budget_lines').insert(payload).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } state.marketingBudgetLines.push(mapMarketingBudgetLineFromDb(data)); }
     render(); toast(l?'Budget line updated':'Budget line added','success'); return true;
   }, { saveLabel: l?'Save':'Add' });
 }
 async function mktDeleteBudgetLine(id){
-  if(!confirm('Delete this budget line?')) return;
+  if(!confirm('Delete this budget line and its logged expenses?')) return;
   const { error } = await sb.from('marketing_budget_lines').delete().eq('id',id);
   if(error){ toast(humanizeError(error),'error'); return; }
   state.marketingBudgetLines = state.marketingBudgetLines.filter(l=>l.id!==id);
+  state.marketingExpenses = (state.marketingExpenses||[]).filter(e=>e.budgetLineId!==id);
   render(); toast('Budget line deleted','success');
+}
+// ---- itemized expenses (block 97) — each rolls up into its line's actual ----
+function mktExpensesOf(lineId){ return (state.marketingExpenses||[]).filter(e=>e.budgetLineId===lineId).slice().sort((a,b)=>String(b.spentOn||b.createdAt||'').localeCompare(String(a.spentOn||a.createdAt||''))); }
+async function mktRecalcLineActual(lineId){
+  const l=(state.marketingBudgetLines||[]).find(x=>x.id===lineId); if(!l) return;
+  const sum=Math.round(mktExpensesOf(lineId).reduce((s,e)=>s+(Number(e.amount)||0),0)*100)/100;
+  if(sum===Math.round((Number(l.actual)||0)*100)/100) return;
+  const { data, error } = await sb.from('marketing_budget_lines').update({ actual:sum, updated_at:new Date().toISOString() }).eq('id',lineId).select().single();
+  if(error){ toast(humanizeError(error),'error'); return; }
+  Object.assign(l, mapMarketingBudgetLineFromDb(data));
+}
+function openMarketingExpensesModal(lineId){
+  if(!canManageMarketing()) return;
+  const l=(state.marketingBudgetLines||[]).find(x=>x.id===lineId); if(!l) return;
+  _mktExpLineId=lineId;
+  openModal(`Expenses · ${escapeHTML(l.category)}`, `<div id="mkt-exp-body">${mktExpensesBodyHTML(lineId)}</div>`, ()=>true, { saveLabel: t('close') });
+}
+function refreshMktExpenses(lineId){ if(_mktExpLineId!==lineId) return; const el=document.getElementById('mkt-exp-body'); if(el) el.innerHTML=mktExpensesBodyHTML(lineId); }
+function mktExpensesBodyHTML(lineId){
+  const l=(state.marketingBudgetLines||[]).find(x=>x.id===lineId); if(!l) return '';
+  const cur=state.settings.currency||''; const exps=mktExpensesOf(lineId);
+  const spent=exps.reduce((s,e)=>s+(Number(e.amount)||0),0);
+  const planned=Number(l.planned)||0; const remaining=Math.round((planned-spent)*100)/100; const over=remaining<0;
+  const list=exps.length ? exps.map(e=>`<div class="flex items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+      <div class="min-w-0 flex-1"><div class="text-slate-800 truncate">${escapeHTML(e.vendor||'Expense')}${e.note?` <span class="text-slate-400 text-xs">· ${escapeHTML(e.note)}</span>`:''}</div><div class="text-[11px] text-slate-400">${e.spentOn?escapeHTML(fmtDate(e.spentOn)):escapeHTML(fmtDate(e.createdAt))}</div></div>
+      <div class="font-semibold text-slate-700 whitespace-nowrap">${fmtMoney(e.amount)}</div>
+      <button onclick="mktDeleteExpense('${lineId}','${e.id}')" class="text-slate-300 hover:text-rose-600" title="Delete">${icon('trash','w-3.5 h-3.5')}</button>
+    </div>`).join('') : '<div class="text-sm text-slate-400 text-center py-4">No expenses logged yet.</div>';
+  return `
+    <div class="grid grid-cols-3 gap-3 mb-4 text-center">
+      <div class="bg-slate-50 rounded-xl p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Planned</div><div class="font-semibold mt-0.5">${fmtMoney(planned)}</div></div>
+      <div class="bg-slate-50 rounded-xl p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Spent</div><div class="font-semibold mt-0.5 ${over?'text-rose-600':'text-slate-900'}">${fmtMoney(spent)}</div></div>
+      <div class="bg-slate-50 rounded-xl p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Remaining</div><div class="font-semibold mt-0.5 ${over?'text-rose-600':'text-emerald-700'}">${over?'−':''}${fmtMoney(Math.abs(remaining))}</div></div>
+    </div>
+    <div class="space-y-1.5 mb-4">${list}</div>
+    <div class="border-t border-slate-100 pt-3">
+      <label class="label">Add expense</label>
+      <div class="grid grid-cols-2 gap-2">
+        <input id="mkt-exp-amt" inputmode="decimal" class="input" placeholder="Amount (${escapeHTML(cur)}) *">
+        <input id="mkt-exp-date" type="date" class="input" value="${todayISO()}">
+        <input id="mkt-exp-vendor" class="input" placeholder="Vendor / who">
+        <input id="mkt-exp-note" class="input" placeholder="Note (optional)">
+      </div>
+      <div class="text-right mt-2"><button class="btn btn-primary btn-sm" onclick="mktAddExpense('${lineId}')">${icon('plus','w-4 h-4')} Add expense</button></div>
+    </div>`;
+}
+async function mktAddExpense(lineId){
+  const amt=Math.round((parseFloat(($('#mkt-exp-amt')?.value||'').replace(/,/g,''))||0)*100)/100;
+  if(!isFinite(amt) || amt<=0){ toast('Enter an amount greater than 0','error'); return; }
+  const payload=marketingExpenseToDb({ budgetLineId:lineId, amount:amt, spentOn:$('#mkt-exp-date')?.value||null, vendor:$('#mkt-exp-vendor')?.value.trim(), note:$('#mkt-exp-note')?.value.trim(), createdBy:currentEmployee()?.id });
+  const { data, error } = await sb.from('marketing_expenses').insert(payload).select().single();
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingExpenses.push(mapMarketingExpenseFromDb(data));
+  await mktRecalcLineActual(lineId);
+  render(); refreshMktExpenses(lineId); toast('Expense added','success');
+}
+async function mktDeleteExpense(lineId, id){
+  const { error } = await sb.from('marketing_expenses').delete().eq('id',id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingExpenses = state.marketingExpenses.filter(e=>e.id!==id);
+  await mktRecalcLineActual(lineId);
+  render(); refreshMktExpenses(lineId);
 }
 // ---- scheduling calendar ----
 function mktCalShift(ym, delta){ const [y,m]=ym.split('-').map(Number); const d=new Date(y, m-1+delta, 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
@@ -13710,6 +13788,10 @@ function initMktCharts(){
     if(bd){ _mktCharts.budgetDoughnut=new Chart(bd,{ type:'doughnut',
       data:{ labels:bv.labels, datasets:[{ data:bv.actual, backgroundColor:bv.labels.map((_,i)=>MKT_CAT_COLORS[i%MKT_CAT_COLORS.length]), borderWidth:0 }] },
       options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right', labels:{ font:{size:10}, boxWidth:12 } } }, cutout:'58%' } }); }
+    const st=document.getElementById('mktSpendTrend');
+    if(st && bv.trend){ _mktCharts.spendTrend=new Chart(st,{ type:'bar',
+      data:{ labels:bv.trend.labels, datasets:[{ label:'Spent', data:bv.trend.data, backgroundColor:'#12b3a6', borderRadius:4 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ font:{size:10} } }, x:{ ticks:{ font:{size:10}, maxRotation:0, autoSkip:true } } } } }); }
     const groupCanvas = document.getElementById('mktBudgetBars') || document.getElementById('mktBudgetOverviewBars');
     if(groupCanvas){ _mktCharts.budgetBars=new Chart(groupCanvas,{ type:'bar',
       data:{ labels:bv.labels, datasets:[
@@ -22696,6 +22778,7 @@ function closeModal() {
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
   if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
   if (typeof _mktItemModalId !== 'undefined') _mktItemModalId = null;
+  if (typeof _mktExpLineId !== 'undefined') _mktExpLineId = null;
   if (typeof _sigPad !== 'undefined') _sigPad = null;
   if (typeof _invCsvRows !== 'undefined') _invCsvRows = null;
   if (_modalTrapHandler) {
