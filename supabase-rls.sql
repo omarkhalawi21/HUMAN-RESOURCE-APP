@@ -5292,6 +5292,54 @@ CREATE POLICY "marketing_item_events_delete_author_or_mkt"
   );
 
 -- =============================================================
+-- 95. MARKETING — card labels + attachments (Trello parity)
+--    labels: per-board named+coloured labels, stored as a jsonb array on the
+--    board ([{id,name,color}]); a card references them by id in item.label_ids
+--    (jsonb array of strings). Attachments: a child table holding a base64
+--    data_url (same pattern as receipts); the heavy data_url is fetched on
+--    demand, never bulk-loaded. RLS mirrors the block-94 marketing gate.
+-- =============================================================
+ALTER TABLE public.marketing_boards ADD COLUMN IF NOT EXISTS labels    jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.marketing_items  ADD COLUMN IF NOT EXISTS label_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+CREATE TABLE IF NOT EXISTS public.marketing_item_attachments (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id     uuid NOT NULL REFERENCES public.marketing_items(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  mime        text,
+  size        int,
+  data_url    text,        -- base64 data: URL, fetched on demand (not bulk-loaded)
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_item_attachments_item_idx ON public.marketing_item_attachments(item_id, created_at);
+
+ALTER TABLE public.marketing_item_attachments ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='marketing_item_attachments'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename); END LOOP;
+END $$;
+CREATE POLICY "marketing_item_attachments_select_all"
+  ON public.marketing_item_attachments FOR SELECT TO authenticated USING (true);
+CREATE POLICY "marketing_item_attachments_insert_mkt_or_member"
+  ON public.marketing_item_attachments FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations','marketing'])
+    OR EXISTS (SELECT 1 FROM public.marketing_item_members m
+               JOIN public.employees e ON e.id = m.employee_id
+               WHERE m.item_id = marketing_item_attachments.item_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "marketing_item_attachments_delete_author_or_mkt"
+  ON public.marketing_item_attachments FOR DELETE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations','marketing'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = marketing_item_attachments.created_by AND e.user_id = auth.uid())
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
