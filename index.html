@@ -13441,6 +13441,16 @@ function mktProgress(items){ const top=items.filter(i=>!i.parentId); const done=
 // ---- small view helpers ----
 function mktProgressBar(pct, color){ return `<div class="h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${color||'#6d28d9'}"></div></div>`; }
 function mktStatusPill(status){ const s=TASK_STATUSES[status]||TASK_STATUSES.todo; return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${s.pill}">${escapeHTML(s.label)}</span>`; }
+// Inline status changer for a card face — change status without opening the
+// card. stopPropagation on pointer/click so it neither drags the card nor
+// opens its detail modal.
+function mktCardStatusSelect(it){
+  const s=TASK_STATUSES[it.status]||TASK_STATUSES.todo;
+  return `<select aria-label="Status" title="Change status"
+    onpointerdown="event.stopPropagation()" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"
+    onchange="event.stopPropagation(); mktChangeItemStatus('${it.id}', this.value)"
+    class="${s.pill} rounded-full text-[11px] font-medium border-0 pl-2 pr-5 py-0.5 cursor-pointer">${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${it.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select>`;
+}
 function mktDueBadge(it){ if(!it.dueDate) return ''; if(it.status==='done') return `<span class="text-[11px] text-slate-400">${escapeHTML(fmtDate(it.dueDate))}</span>`; const d=daysUntil(it.dueDate); if(d==null) return ''; if(d<0) return `<span class="inline-flex items-center text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-medium">Overdue ${-d}d</span>`; if(d<=3) return `<span class="inline-flex items-center text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium">Due ${d===0?'today':d+'d'}</span>`; return `<span class="text-[11px] text-slate-400">${escapeHTML(fmtDate(it.dueDate))}</span>`; }
 function mktMemberAvatars(iid, size=22){ const mem=mktMembers(iid); if(!mem.length) return ''; return `<div class="flex -space-x-1.5">${mem.slice(0,4).map(e=>`<span title="${escapeHTML(mktEmpName(e.id))}">${avatarHTML(e,size)}</span>`).join('')}${mem.length>4?`<span class="inline-flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold border-2 border-white" style="width:${size}px;height:${size}px">+${mem.length-4}</span>`:''}</div>`; }
 function mktCrumbs(crumbs){ return crumbs.map((c,i)=>{ const last=i===crumbs.length-1; return last ? `<span class="text-slate-800 font-medium">${escapeHTML(c.label)}</span>` : `<button onclick="${c.onclick}" class="text-slate-500 hover:text-brand-700">${escapeHTML(c.label)}</button><span class="text-slate-300">/</span>`; }).join(' '); }
@@ -13827,7 +13837,7 @@ function mktItemCard(it, labelMap){
   const subs=mktSubitems(it.id); const subDone=subs.filter(s=>s.status==='done').length;
   const pr=TASK_PRIORITIES[it.priority]||TASK_PRIORITIES.normal;
   const atts=mktAttachmentsOf(it.id);
-  const meta=[mktStatusPill(it.status)];
+  const meta=[mktCardStatusSelect(it)];
   if(it.priority!=='normal') meta.push(`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`);
   const due=mktDueBadge(it); if(due) meta.push(due);
   if(it.description) meta.push(`<span class="text-slate-400 inline-flex items-center" title="Has notes">${icon('file','w-3 h-3')}</span>`);
