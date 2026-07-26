@@ -1175,6 +1175,12 @@ function mapCompanyFromDb(r) {
 // employee object. Order here is the order shown in the role dropdown.
 const ROLES = {
   admin:        { label: 'Admin' },
+  // Company owner — limited, per-person oversight access. The pages an owner
+  // can see are stored on employees.allowed_pages (a checklist set in the
+  // employee editor); gating is enforced via canSeePage(). Read-only in
+  // practice: 'owner' is in no edit-gate role array, so edit controls stay
+  // hidden, and RLS grants owner SELECT (not write) on the extra tables.
+  owner:        { label: 'Company Owner' },
   hr:           { label: 'HR' },
   operations:   { label: 'Operations' },
   accounting:   { label: 'Accounting' },
@@ -1211,6 +1217,7 @@ function mapEmployeeFromDb(r) {
     // emp.isAdmin — the CLAUDE.md warns about this; new code reading
     // emp.isAdmin would silently bypass the "view as role" preview.
     systemRole: sysRole,
+    allowedPages: Array.isArray(r.allowed_pages) ? r.allowed_pages : null, // owner page allowlist (block 98)
     avatarColor: r.avatar_color || '#df3247',
     photo: r.photo,
     leave_annual: r.leave_annual, leave_sick: r.leave_sick, leave_personal: r.leave_personal,
@@ -1232,6 +1239,11 @@ function employeeToDb(e) {
     hire_date: e.hireDate, salary: Number(e.salary)||0,
     status: e.status || 'active',
     system_role: sysRole,
+    // Only reference allowed_pages when saving an OWNER — this keeps every
+    // other employee save working even if block 98 hasn't been run yet
+    // (the column would otherwise not exist). Owner saves require the column,
+    // which ships in the same block that adds the 'owner' role.
+    ...(sysRole === 'owner' ? { allowed_pages: Array.isArray(e.allowedPages) ? e.allowedPages : [] } : {}),
     // Validate avatarColor on write — stored XSS defence-in-depth.
     avatar_color: safeAvatarColor(e.avatarColor), photo: e.photo,
   };
@@ -2832,6 +2844,39 @@ function currentRole() {
   return e?.systemRole || 'employee';
 }
 function hasRole(...roles) { return roles.includes(currentRole()); }
+// ---- Company owner: per-person page allowlist (block 98) ----
+// Grantable pages, grouped for the employee-editor checklist. Keys are route
+// keys. 'dashboard'/'account'/'help' are always available to owners.
+const OWNER_PAGE_GROUPS = [
+  { label:'Dashboards & Reports', keys:['reports','analytics','spend_report'] },
+  { label:'Payroll & Finance',    keys:['payroll','advances','deductions','receipts','b2b_invoices'] },
+  { label:'Operations',           keys:['marketing','inventory','inventory_hub','suppliers','daily_count','weekly_count','expiry_check','roaster','maintenance','assets','bakery_transfers','bakery_stock','bakery_purchases'] },
+];
+const OWNER_ALL_KEYS = OWNER_PAGE_GROUPS.flatMap(g => g.keys);
+const OWNER_ALWAYS   = ['dashboard','account','help'];
+const OWNER_PAGE_LABELS = {
+  reports:'Reports', analytics:'Analytics', spend_report:'Spend report',
+  payroll:'Payroll', advances:'Advances & Loans', deductions:'Deductions', receipts:'Receipts', b2b_invoices:'B2B Invoices',
+  marketing:'Marketing', inventory:'Inventory', inventory_hub:'Inventory hub', suppliers:'Suppliers',
+  daily_count:'Daily count', weekly_count:'Weekly count', expiry_check:'Expiry checklist',
+  roaster:'Roaster', maintenance:'Maintenance', assets:'Assets',
+  bakery_transfers:'Bakery transfers', bakery_stock:'Bakery stock', bakery_purchases:'Bakery purchases',
+};
+// The effective allowlist for the CURRENT owner. When an admin previews
+// "as owner" they have no allowlist of their own, so show everything
+// grantable (so they can review the full owner surface).
+function ownerAllowedPages() {
+  if (typeof isPreviewing === 'function' && isPreviewing()) return OWNER_ALL_KEYS;
+  const e = currentEmployee();
+  return Array.isArray(e?.allowedPages) ? e.allowedPages : [];
+}
+// Single gate for both nav visibility and route access, applied only to
+// owners. Non-owners are unaffected (their existing show:/case gates stand).
+function canSeePage(key) {
+  if (currentRole() !== 'owner') return true;
+  if (OWNER_ALWAYS.includes(key)) return true;
+  return ownerAllowedPages().includes(key);
+}
 // canManagePeople — true for anyone who runs day-to-day HR work.
 // Used everywhere an HR-style action should be allowed: managing
 // employees, approving leave, running payroll, issuing warnings/
@@ -3337,7 +3382,11 @@ function renderShell(routeContent) {
       </div>
       <nav id="sidebar-nav" class="flex-1 overflow-y-auto p-3 space-y-1">
         ${(() => {
-          const visible = navItems.filter(n=>n.show);
+          // Owners see exactly their allowlisted pages (their per-item show:
+          // predicates don't include 'owner', so gate on canSeePage instead).
+          const visible = currentRole()==='owner'
+            ? navItems.filter(n => canSeePage(n.key))
+            : navItems.filter(n => n.show);
           const groupLabels = {
             main:    state.settings.lang==='ar' ? 'الرئيسية' : 'Operations',
             people:  state.settings.lang==='ar' ? 'شؤون الموظفين' : 'People Care',
@@ -4950,6 +4999,10 @@ function openCertificateModalFor(empId) {
   setTimeout(() => { const sel = document.getElementById('cert-emp'); if (sel) sel.value = empId; }, 50);
 }
 let _pendingPhoto = null;
+function toggleOwnerAccessPane(role) {
+  const p = document.getElementById('m-owner-pane');
+  if (p) p.classList.toggle('hidden', role !== 'owner');
+}
 function openEmployeeModal(id) {
   const editing = id ? getEmployee(id) : null;
   _pendingPhoto = editing?.photo || null;
@@ -5025,13 +5078,25 @@ function openEmployeeModal(id) {
             const allowed = isAdmin() && !isSelf;
             const reason = isSelf ? 'You cannot change your own role' : 'Only admins can change roles';
             return `
-              <select id="m-sysrole" class="input" ${allowed ? '' : `disabled title="${escapeHTML(reason)}"`}>
+              <select id="m-sysrole" class="input" ${allowed ? 'onchange="toggleOwnerAccessPane(this.value)"' : `disabled title="${escapeHTML(reason)}"`}>
                 ${Object.entries(ROLES).map(([k,r]) => `<option value="${k}" ${(editing?.systemRole||'employee')===k?'selected':''}>${escapeHTML(r.label)}</option>`).join('')}
               </select>
               <div class="text-[10px] text-slate-500 mt-1">${allowed ? 'Controls dashboard access &amp; permissions. Distinct from job title.' : escapeHTML(reason) + '.'}</div>
             `;
           })()}
         </div>
+        ${(isAdmin() && !(editing && editing.user_id === state.session?.userId)) ? `
+        <div id="m-owner-pane" class="md:col-span-2 ${(editing?.systemRole==='owner')?'':'hidden'} bg-brand-50/40 border border-brand-100 rounded-xl p-4">
+          <div class="text-[11px] uppercase tracking-wider text-brand-700 font-semibold mb-1">Company owner — page access</div>
+          <p class="text-xs text-slate-500 mb-3">Tick the pages this owner can open. They get read-only access to what you grant; everything else stays hidden from them.</p>
+          ${OWNER_PAGE_GROUPS.map(g => `
+            <div class="mb-3">
+              <div class="text-[11px] font-semibold text-slate-500 mb-1.5">${escapeHTML(g.label)}</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                ${g.keys.map(k => `<label class="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" id="ownerpg-${k}" ${((editing?.allowedPages)||[]).includes(k)?'checked':''}> ${escapeHTML(OWNER_PAGE_LABELS[k]||k)}</label>`).join('')}
+              </div>
+            </div>`).join('')}
+        </div>` : ''}
         <div><label class="label">Department</label>
           ${(() => {
             const deptOptions = [...new Set([...SUGGESTED_DEPARTMENTS, ...state.employees.map(e=>e.department).filter(Boolean)])];
@@ -5121,6 +5186,15 @@ function openEmployeeModal(id) {
       // Disabled select on self-edit; preserve the original to avoid clobber.
       systemRole: (sysSel && !sysSel.disabled) ? sysSel.value : (editing?.systemRole || 'employee'),
     };
+    // Owner page allowlist — collect the ticked pages (block 98). Only an
+    // admin editing someone else manages the list (the pane is admin-only);
+    // otherwise preserve the existing allowlist so a save doesn't wipe it.
+    if (data.systemRole === 'owner') {
+      const canEditPages = sysSel && !sysSel.disabled && document.getElementById('m-owner-pane');
+      data.allowedPages = canEditPages
+        ? OWNER_ALL_KEYS.filter(k => document.getElementById('ownerpg-'+k)?.checked)
+        : (editing?.allowedPages || []);
+    }
     if (!data.firstName || !data.email) { toast('Name and email required', 'error'); return false; }
     const dbRow = { ...employeeToDb(data), photo: _pendingPhoto, avatar_color: safeAvatarColor(editing?.avatarColor || pickColor()) };
     let savedId = editing?.id;
@@ -15657,6 +15731,7 @@ function renderReceipts() {
 function renderRoleDashboard() {
   if (isAdmin()) return renderDashboard();
   const role = currentRole();
+  if (role === 'owner')        return renderOwnerDashboard();
   if (role === 'accounting')   return renderAccountingDashboard();
   if (role === 'operations')   return renderOperationsDashboard();
   if (role === 'maintenance')  return renderMaintenanceDashboard();
@@ -15669,6 +15744,50 @@ function renderRoleDashboard() {
   }
   // admin and hr still use the existing HR dashboard.
   return renderDashboard();
+}
+
+// Owner home — a curated launcher of just the pages this owner is granted.
+function renderOwnerDashboard() {
+  const me = currentEmployee();
+  const nm = me ? (me.firstName||'').trim() : '';
+  const allowed = ownerAllowedPages();
+  const ICON = { reports:'report', analytics:'report', spend_report:'report', payroll:'wallet', advances:'cash', deductions:'cash', receipts:'receipt', b2b_invoices:'receipt', marketing:'report', inventory:'box', inventory_hub:'report', suppliers:'building', daily_count:'box', weekly_count:'box', expiry_check:'calendar', roaster:'cash', maintenance:'wrench', assets:'wrench', bakery_transfers:'box', bakery_stock:'box', bakery_purchases:'box' };
+  const groups = OWNER_PAGE_GROUPS
+    .map(g => [g.label, g.keys.filter(k => allowed.includes(k))])
+    .filter(([, ks]) => ks.length);
+  const card = k => `<a href="#/${k}" class="bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 flex items-center gap-3">
+      <span class="w-10 h-10 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center shrink-0">${icon(ICON[k]||'report','w-5 h-5')}</span>
+      <span class="font-display font-semibold text-slate-900">${escapeHTML(OWNER_PAGE_LABELS[k]||k)}</span>
+    </a>`;
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #a8172e 0%, transparent 70%);"></div>
+      <div class="relative">
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold">Company Owner</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Welcome${nm?`, ${escapeHTML(nm)}`:''}</h2>
+        <p class="text-slate-500 mt-1 text-sm">Your overview. Open any area you have access to below.</p>
+      </div>
+    </div>
+    ${groups.length ? groups.map(([label, ks]) => `
+      <h3 class="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">${escapeHTML(label)}</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">${ks.map(card).join('')}</div>
+    `).join('') : `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">No pages have been shared with you yet. Ask an admin to grant access from your employee profile.</div>`}`;
+}
+// Owner router — dispatches to a page's render fn without the per-case role
+// gates (canSeePage already authorized). Anything not granted → owner home.
+function renderOwnerRoute(route) {
+  if (route === 'dashboard' || !canSeePage(route)) return renderRoleDashboard();
+  const FN = {
+    reports:renderReports, analytics:renderAnalytics, spend_report:renderSpendReport,
+    payroll:renderPayroll, advances:renderAdvances, deductions:renderDeductions, receipts:renderReceipts, b2b_invoices:renderB2bInvoices,
+    marketing:renderMarketing, inventory:renderInventory, inventory_hub:renderInventoryHub, suppliers:renderSuppliers,
+    daily_count:renderDailyCount, weekly_count:renderWeeklyCount, expiry_check:renderExpiryCheck,
+    roaster:renderRoaster, maintenance:renderMaintenance, assets:renderAssets,
+    bakery_transfers:renderBakeryTransfers, bakery_stock:renderBakeryStock, bakery_purchases:renderBakeryPurchases,
+    account:renderAccount, help:renderHelp,
+  };
+  const fn = FN[route];
+  return fn ? fn() : renderRoleDashboard();
 }
 
 function renderAccountingDashboard() {
@@ -25189,6 +25308,10 @@ function renderMain() {
   startClockTicker();
   const route = getRoute();
   let content = '';
+  // Owners are routed through their allowlist, bypassing the per-case role
+  // gates for pages they're granted (canSeePage already authorized them).
+  if (currentRole() === 'owner') { content = renderOwnerRoute(route); }
+  else
   switch (route) {
     case 'dashboard':    content = renderRoleDashboard(); break;
     case 'my_work':      content = renderMyWork(); break;
