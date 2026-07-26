@@ -5143,6 +5143,155 @@ ALTER TABLE public.advances ADD COLUMN IF NOT EXISTS monthly_repayment numeric;
 ALTER TABLE public.advances ADD COLUMN IF NOT EXISTS amount_recovered numeric NOT NULL DEFAULT 0;
 
 -- =============================================================
+-- 94. MARKETING DASHBOARD — Projects → Boards → Lists → Items
+--    A dedicated, marketing-only workspace (kept separate from the shared
+--    Work Management task boards on purpose). Hierarchy:
+--      marketing_projects → marketing_boards → marketing_lists →
+--      marketing_items (self-referential parent_id = subitems)
+--    plus marketing_item_members (multi-assignee join) and
+--    marketing_item_events (comment/activity timeline, mirrors task_events).
+--    All edits gated to admin/operations/marketing; SELECT open to any
+--    authenticated user (collaborative read, same as task boards). Deleting
+--    a parent CASCADEs to its children so nothing is orphaned.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.marketing_projects (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text NOT NULL,
+  description text,
+  color       text NOT NULL DEFAULT '#6d28d9',
+  status      text NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.marketing_boards (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id  uuid NOT NULL REFERENCES public.marketing_projects(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  color       text NOT NULL DEFAULT '#6d28d9',
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_boards_project_idx ON public.marketing_boards(project_id);
+
+CREATE TABLE IF NOT EXISTS public.marketing_lists (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  board_id    uuid NOT NULL REFERENCES public.marketing_boards(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  color       text NOT NULL DEFAULT '#6d28d9',
+  sort_order  int  NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_lists_board_idx ON public.marketing_lists(board_id);
+
+CREATE TABLE IF NOT EXISTS public.marketing_items (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  list_id      uuid NOT NULL REFERENCES public.marketing_lists(id) ON DELETE CASCADE,
+  parent_id    uuid REFERENCES public.marketing_items(id) ON DELETE CASCADE, -- set = subitem
+  title        text NOT NULL,
+  description  text,
+  status       text NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','in_progress','blocked','done')),
+  priority     text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
+  start_date   date,
+  due_date     date,
+  completed_at timestamptz,
+  sort_order   int  NOT NULL DEFAULT 0,
+  created_by   uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_items_list_idx   ON public.marketing_items(list_id);
+CREATE INDEX IF NOT EXISTS marketing_items_parent_idx ON public.marketing_items(parent_id);
+
+CREATE TABLE IF NOT EXISTS public.marketing_item_members (
+  item_id     uuid NOT NULL REFERENCES public.marketing_items(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (item_id, employee_id)
+);
+CREATE INDEX IF NOT EXISTS marketing_item_members_emp_idx ON public.marketing_item_members(employee_id);
+
+CREATE TABLE IF NOT EXISTS public.marketing_item_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_id     uuid NOT NULL REFERENCES public.marketing_items(id) ON DELETE CASCADE,
+  actor_id    uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  kind        text NOT NULL CHECK (kind IN ('comment','status','created')),
+  body        text,
+  from_status text,
+  to_status   text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS marketing_item_events_item_idx ON public.marketing_item_events(item_id, created_at);
+
+-- RLS: SELECT open to authenticated; write gated to admin/operations/marketing.
+-- (Same 4-policy shape as the task boards; event author can also edit/delete
+-- their own comment.) Drop-then-create in a loop so re-running is idempotent.
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename IN
+             ('marketing_projects','marketing_boards','marketing_lists',
+              'marketing_items','marketing_item_members','marketing_item_events')
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+ALTER TABLE public.marketing_projects     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_boards       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_lists        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_items        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_item_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.marketing_item_events  ENABLE ROW LEVEL SECURITY;
+
+-- projects / boards / lists / items / members: identical 4-policy gate.
+DO $$
+DECLARE tbl text;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['marketing_projects','marketing_boards','marketing_lists','marketing_items','marketing_item_members']
+  LOOP
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated USING (true)', tbl||'_select_all', tbl);
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR INSERT TO authenticated WITH CHECK (public.has_role(ARRAY[''admin'',''operations'',''marketing'']))', tbl||'_insert_mkt', tbl);
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR UPDATE TO authenticated USING (public.has_role(ARRAY[''admin'',''operations'',''marketing''])) WITH CHECK (public.has_role(ARRAY[''admin'',''operations'',''marketing'']))', tbl||'_update_mkt', tbl);
+    EXECUTE format('CREATE POLICY %I ON public.%I FOR DELETE TO authenticated USING (public.has_role(ARRAY[''admin'',''operations'',''marketing'']))', tbl||'_delete_mkt', tbl);
+  END LOOP;
+END $$;
+
+-- item events: read all; insert if marketing role OR you're a member of the
+-- item; update/delete your own comment (or marketing role).
+CREATE POLICY "marketing_item_events_select_all"
+  ON public.marketing_item_events FOR SELECT TO authenticated USING (true);
+CREATE POLICY "marketing_item_events_insert_mkt_or_member"
+  ON public.marketing_item_events FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations','marketing'])
+    OR EXISTS (SELECT 1 FROM public.marketing_item_members m
+               JOIN public.employees e ON e.id = m.employee_id
+               WHERE m.item_id = marketing_item_events.item_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "marketing_item_events_update_author_or_mkt"
+  ON public.marketing_item_events FOR UPDATE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations','marketing'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = marketing_item_events.actor_id AND e.user_id = auth.uid())
+  )
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations','marketing'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = marketing_item_events.actor_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "marketing_item_events_delete_author_or_mkt"
+  ON public.marketing_item_events FOR DELETE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations','marketing'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = marketing_item_events.actor_id AND e.user_id = auth.uid())
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

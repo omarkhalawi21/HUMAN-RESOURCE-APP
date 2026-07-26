@@ -764,6 +764,12 @@ function emptyState() {
     tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, groupId, createdBy, createdAt, updatedAt }] — Work Management board
     taskGroups: [],     // [{ id, name, color, boardId, sortOrder, createdBy, createdAt }] — lists within a board (block 91/92)
     taskBoards: [],     // [{ id, name, color, sortOrder, createdBy, createdAt }] — Trello-style boards (block 92)
+    marketingProjects: [], // Marketing Dashboard (block 94): top-level campaigns/projects
+    marketingBoards: [],   // boards within a marketing project
+    marketingLists: [],    // lists (columns) within a marketing board
+    marketingItems: [],    // cards; parentId set = subitem
+    marketingItemMembers: [], // [{ itemId, employeeId }] multi-assignee join
+    marketingItemEventsCache: {}, // on-demand per itemId: [{ ...event }]
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
     todoLists: [],      // personal lists for office staff: [{ id, ownerId, name, items:[{id,text,done,doneAt,createdAt}], sortOrder, createdAt, updatedAt }] — RLS scopes to owner
@@ -1417,6 +1423,69 @@ function taskBoardToDb(b) {
 function mapTaskEventFromDb(r) {
   return {
     id: r.id, taskId: r.task_id, actorId: r.actor_id||null,
+    kind: r.kind||'comment', body: r.body||'',
+    fromStatus: r.from_status||null, toStatus: r.to_status||null,
+    createdAt: r.created_at,
+  };
+}
+// ---- Marketing Dashboard (block 94) converters ----
+function mapMarketingProjectFromDb(r) {
+  return {
+    id: r.id, name: r.name||'', description: r.description||'',
+    color: r.color||'#6d28d9', status: r.status||'active',
+    sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function marketingProjectToDb(p) {
+  return {
+    name: p.name||null, description: p.description||null, color: p.color||'#6d28d9',
+    status: p.status||'active', sort_order: Number(p.sortOrder)||0, created_by: p.createdBy||null,
+  };
+}
+function mapMarketingBoardFromDb(r) {
+  return {
+    id: r.id, projectId: r.project_id||null, name: r.name||'', color: r.color||'#6d28d9',
+    sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at,
+  };
+}
+function marketingBoardToDb(b) {
+  return { project_id: b.projectId||null, name: b.name||null, color: b.color||'#6d28d9', sort_order: Number(b.sortOrder)||0, created_by: b.createdBy||null };
+}
+function mapMarketingListFromDb(r) {
+  return {
+    id: r.id, boardId: r.board_id||null, name: r.name||'', color: r.color||'#6d28d9',
+    sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at,
+  };
+}
+function marketingListToDb(l) {
+  return { board_id: l.boardId||null, name: l.name||null, color: l.color||'#6d28d9', sort_order: Number(l.sortOrder)||0, created_by: l.createdBy||null };
+}
+function mapMarketingItemFromDb(r) {
+  return {
+    id: r.id, listId: r.list_id||null, parentId: r.parent_id||null,
+    title: r.title||'', description: r.description||'',
+    status: r.status||'todo', priority: r.priority||'normal',
+    startDate: r.start_date||null, dueDate: r.due_date||null, completedAt: r.completed_at||null,
+    sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function marketingItemToDb(i) {
+  return {
+    list_id: i.listId||null, parent_id: i.parentId||null,
+    title: i.title||null, description: i.description||null,
+    status: i.status||'todo', priority: i.priority||'normal',
+    start_date: i.startDate||null, due_date: i.dueDate||null, completed_at: i.completedAt||null,
+    sort_order: Number(i.sortOrder)||0, created_by: i.createdBy||null,
+  };
+}
+function mapMarketingItemMemberFromDb(r) {
+  return { itemId: r.item_id, employeeId: r.employee_id, createdAt: r.created_at };
+}
+function mapMarketingItemEventFromDb(r) {
+  return {
+    id: r.id, itemId: r.item_id, actorId: r.actor_id||null,
     kind: r.kind||'comment', body: r.body||'',
     fromStatus: r.from_status||null, toStatus: r.to_status||null,
     createdAt: r.created_at,
@@ -2081,7 +2150,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2207,6 +2276,15 @@ async function loadAll() {
       sb.from('b2b_invoices').select('*').order('invoice_no', { ascending: false }).limit(500),
       sb.from('task_groups').select('*').order('sort_order', { ascending: true }),
       sb.from('task_boards').select('*').order('sort_order', { ascending: true }),
+      // Marketing Dashboard (block 94). Projects/boards/lists/members are
+      // small bounded sets; items are bounded operational cards (like tasks).
+      // RLS gives non-marketing users [] — no error. Item comment/activity
+      // (marketing_item_events) is loaded on demand per item, not here.
+      sb.from('marketing_projects').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
+      sb.from('marketing_boards').select('*').order('sort_order', { ascending: true }),
+      sb.from('marketing_lists').select('*').order('sort_order', { ascending: true }),
+      sb.from('marketing_items').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }).limit(2000),
+      sb.from('marketing_item_members').select('*'),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2272,6 +2350,11 @@ async function loadAll() {
     state.b2bInvoices        = (b2bInvoicesR?.data || []).map(mapB2bInvoiceFromDb);
     state.taskGroups         = (taskGroupsR?.data || []).map(mapTaskGroupFromDb);
     state.taskBoards         = (taskBoardsR?.data || []).map(mapTaskBoardFromDb);
+    state.marketingProjects  = (mktProjectsR?.data || []).map(mapMarketingProjectFromDb);
+    state.marketingBoards    = (mktBoardsR?.data || []).map(mapMarketingBoardFromDb);
+    state.marketingLists     = (mktListsR?.data || []).map(mapMarketingListFromDb);
+    state.marketingItems     = (mktItemsR?.data || []).map(mapMarketingItemFromDb);
+    state.marketingItemMembers = (mktItemMembersR?.data || []).map(mapMarketingItemMemberFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -2874,7 +2957,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -3172,6 +3255,7 @@ function renderShell(routeContent) {
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
     { key:'my_work',      icon:'check',     label:'My Work',         show:true,  group:'main' },
     { key:'work_management', icon:'check',  label:'Work Management',  show:hasRole('admin','operations'), group:'main' },
+    { key:'marketing',    icon:'report',    label:'Marketing',        show:canManageMarketing(), group:'main' },
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
     { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main', parent:'team' },
@@ -13286,6 +13370,341 @@ function printComplianceReport() {
   if (!openPrintWindow(html)) return;
 }
 
+/* -------------------- MARKETING DASHBOARD (block 94) -------------------- */
+// Dedicated marketing workspace: Projects → Boards → Lists → Items
+// (+ self-referential subitems), multi-assignee, and a comment/activity
+// timeline. Separate from the shared Work Management task boards on purpose.
+// Phase 1 = the hierarchy. Charts/KPIs, calendar and budgeting come later.
+function canManageMarketing() { return hasRole('admin','operations','marketing'); }
+let _mktProjectId  = null; // drill-down: selected project
+let _mktBoardId    = null; // drill-down: selected board
+let _mktItemModalId = null; // item whose detail modal is open
+const MKT_COLORS = ['#6d28d9','#0f6fde','#00c875','#fdab3d','#e2445c','#00a9c7','#ff642e','#9333ea'];
+
+// ---- accessors ----
+function mktProject(id){ return (state.marketingProjects||[]).find(p=>p.id===id)||null; }
+function mktBoard(id){ return (state.marketingBoards||[]).find(b=>b.id===id)||null; }
+function mktItem(id){ return (state.marketingItems||[]).find(i=>i.id===id)||null; }
+function _mktSort(a,b){ return (a.sortOrder-b.sortOrder) || String(a.createdAt||'').localeCompare(String(b.createdAt||'')); }
+function mktBoardsOf(pid){ return (state.marketingBoards||[]).filter(b=>b.projectId===pid).sort(_mktSort); }
+function mktListsOf(bid){ return (state.marketingLists||[]).filter(l=>l.boardId===bid).sort(_mktSort); }
+function mktItemsOf(lid){ return (state.marketingItems||[]).filter(i=>i.listId===lid && !i.parentId).sort(_mktSort); }
+function mktSubitems(iid){ return (state.marketingItems||[]).filter(i=>i.parentId===iid).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))); }
+function mktMembers(iid){ return (state.marketingItemMembers||[]).filter(m=>m.itemId===iid).map(m=>getEmployee(m.employeeId)).filter(Boolean); }
+function mktEmpName(id){ const e=getEmployee(id); return e?(((e.firstName||'')+' '+(e.lastName||'')).trim()||e.email||'—'):'—'; }
+function mktItemsUnderBoard(bid){ const ls=new Set(mktListsOf(bid).map(l=>l.id)); return (state.marketingItems||[]).filter(i=>ls.has(i.listId)); }
+function mktItemsUnderProject(pid){ const bs=new Set(mktBoardsOf(pid).map(b=>b.id)); const ls=new Set((state.marketingLists||[]).filter(l=>bs.has(l.boardId)).map(l=>l.id)); return (state.marketingItems||[]).filter(i=>ls.has(i.listId)); }
+function mktProgress(items){ const top=items.filter(i=>!i.parentId); const done=top.filter(i=>i.status==='done').length; return {total:top.length, done, pct: top.length?Math.round(done/top.length*100):0}; }
+
+// ---- small view helpers ----
+function mktProgressBar(pct, color){ return `<div class="h-2 rounded-full bg-slate-100 overflow-hidden"><div class="h-full rounded-full" style="width:${pct}%;background:${color||'#6d28d9'}"></div></div>`; }
+function mktStatusPill(status){ const s=TASK_STATUSES[status]||TASK_STATUSES.todo; return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${s.pill}">${escapeHTML(s.label)}</span>`; }
+function mktDueBadge(it){ if(!it.dueDate) return ''; if(it.status==='done') return `<span class="text-[11px] text-slate-400">${escapeHTML(fmtDate(it.dueDate))}</span>`; const d=daysUntil(it.dueDate); if(d==null) return ''; if(d<0) return `<span class="inline-flex items-center text-[11px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 font-medium">Overdue ${-d}d</span>`; if(d<=3) return `<span class="inline-flex items-center text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-medium">Due ${d===0?'today':d+'d'}</span>`; return `<span class="text-[11px] text-slate-400">${escapeHTML(fmtDate(it.dueDate))}</span>`; }
+function mktMemberAvatars(iid, size=22){ const mem=mktMembers(iid); if(!mem.length) return ''; return `<div class="flex -space-x-1.5">${mem.slice(0,4).map(e=>`<span title="${escapeHTML(mktEmpName(e.id))}">${avatarHTML(e,size)}</span>`).join('')}${mem.length>4?`<span class="inline-flex items-center justify-center rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold border-2 border-white" style="width:${size}px;height:${size}px">+${mem.length-4}</span>`:''}</div>`; }
+function mktCrumbs(crumbs){ return crumbs.map((c,i)=>{ const last=i===crumbs.length-1; return last ? `<span class="text-slate-800 font-medium">${escapeHTML(c.label)}</span>` : `<button onclick="${c.onclick}" class="text-slate-500 hover:text-brand-700">${escapeHTML(c.label)}</button><span class="text-slate-300">/</span>`; }).join(' '); }
+function mktHeaderBar(crumbs, actionsHTML){ return `<div class="bg-white rounded-2xl shadow-card p-4 mb-5 flex items-center justify-between gap-3 flex-wrap"><div class="flex items-center gap-2 text-sm min-w-0 flex-wrap">${mktCrumbs(crumbs)}</div><div class="flex items-center gap-2">${actionsHTML||''}</div></div>`; }
+function mktHero(title, subtitle, actionsHTML){ return `<div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden"><div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #6d28d9 0%, transparent 70%);"></div><div class="relative flex items-start justify-between gap-4 flex-wrap"><div><div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('report','w-3.5 h-3.5')} Marketing</div><h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(title)}</h2><p class="text-slate-500 mt-1 text-sm max-w-md">${escapeHTML(subtitle)}</p></div><div class="flex items-center gap-2">${actionsHTML||''}</div></div></div>`; }
+function mktEmpty(title, sub, action){ return `<div class="bg-white rounded-2xl shadow-card p-10 text-center"><div class="text-slate-800 font-semibold">${escapeHTML(title)}</div><div class="text-sm text-slate-500 mt-1 mb-4 max-w-md mx-auto">${escapeHTML(sub)}</div>${action||''}</div>`; }
+function mktPickColor(hiddenId, btn){ const h=document.getElementById(hiddenId); if(h) h.value=btn.getAttribute('data-c'); const wrap=btn.parentElement; if(wrap) wrap.querySelectorAll('button').forEach(b=>{ const on=b===btn; b.style.outline = on?'2px solid #0f172a':'none'; b.style.outlineOffset = on?'2px':'0'; }); }
+function mktColorField(hiddenId, current){ const cur=current||MKT_COLORS[0]; return `<div class="flex gap-2 flex-wrap">${MKT_COLORS.map(c=>{const sel=cur===c;return `<button type="button" data-c="${c}" onclick="mktPickColor('${hiddenId}',this)" class="w-7 h-7 rounded-full" style="background:${c};${sel?'outline:2px solid #0f172a;outline-offset:2px;':''}"></button>`;}).join('')}</div><input type="hidden" id="${hiddenId}" value="${cur}">`; }
+
+// ---- routing / render ----
+function renderMarketing(){
+  if(!canManageMarketing()) return renderRoleDashboard();
+  if(_mktBoardId && !mktBoard(_mktBoardId)) _mktBoardId=null;
+  if(_mktProjectId && !mktProject(_mktProjectId)){ _mktProjectId=null; _mktBoardId=null; }
+  const board=_mktBoardId?mktBoard(_mktBoardId):null;
+  if(board && mktProject(board.projectId)){ _mktProjectId=board.projectId; return renderMarketingBoard(board); }
+  const project=_mktProjectId?mktProject(_mktProjectId):null;
+  if(project) return renderMarketingProjectView(project);
+  return renderMarketingHome();
+}
+function renderMarketingHome(){
+  const projects=(state.marketingProjects||[]).slice().sort(_mktSort);
+  const active=projects.filter(p=>p.status!=='archived');
+  const archived=projects.filter(p=>p.status==='archived');
+  const card=p=>{ const pr=mktProgress(mktItemsUnderProject(p.id)); const boards=mktBoardsOf(p.id).length;
+    return `<button onclick="mktOpenProject('${p.id}')" class="text-left bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block w-full">
+      <div class="flex items-start justify-between gap-2"><div class="flex items-center gap-2 min-w-0"><span class="w-3 h-3 rounded-full shrink-0" style="background:${p.color}"></span><h3 class="font-display font-semibold text-slate-900 truncate">${escapeHTML(p.name)}</h3></div>${p.status==='archived'?'<span class="badge badge-slate">Archived</span>':''}</div>
+      ${p.description?`<p class="text-sm text-slate-500 mt-1 line-clamp-2">${escapeHTML(p.description)}</p>`:''}
+      <div class="mt-4 flex items-center justify-between text-xs text-slate-500"><span>${boards} board${boards===1?'':'s'}</span><span>${pr.done}/${pr.total} done · ${pr.pct}%</span></div>
+      <div class="mt-2">${mktProgressBar(pr.pct,p.color)}</div></button>`; };
+  return `
+    ${mktHero('Marketing', 'Plan campaigns, run boards, and track the team work.', `<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}
+    ${projects.length ? `
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${active.map(card).join('')}</div>
+      ${archived.length?`<h3 class="text-sm font-semibold text-slate-500 mt-8 mb-3 uppercase tracking-wider">Archived</h3><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${archived.map(card).join('')}</div>`:''}
+    ` : mktEmpty('No projects yet','Create your first marketing project to start building boards and tasks.',`<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}`;
+}
+function renderMarketingProjectView(p){
+  const boards=mktBoardsOf(p.id);
+  const bcard=b=>{ const pr=mktProgress(mktItemsUnderBoard(b.id));
+    return `<button onclick="mktOpenBoard('${b.id}')" class="text-left bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block w-full">
+      <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full shrink-0" style="background:${b.color}"></span><h3 class="font-display font-semibold text-slate-900 truncate">${escapeHTML(b.name)}</h3></div>
+      <div class="mt-4 flex items-center justify-between text-xs text-slate-500"><span>${mktListsOf(b.id).length} lists</span><span>${pr.done}/${pr.total} done · ${pr.pct}%</span></div>
+      <div class="mt-2">${mktProgressBar(pr.pct,b.color)}</div></button>`; };
+  return `
+    ${mktHeaderBar([{label:'Marketing',onclick:'mktBackHome()'},{label:p.name}], `
+      <button onclick="openMarketingProjectModal('${p.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Edit</button>
+      <button onclick="mktDeleteProject('${p.id}')" class="btn btn-ghost btn-sm text-rose-600" title="Delete project">${icon('trash','w-4 h-4')}</button>
+      <button onclick="openMarketingBoardModal('${p.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} New board</button>`)}
+    ${boards.length ? `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${boards.map(bcard).join('')}</div>` : mktEmpty('No boards yet','Add a board to organise this project into lists.',`<button onclick="openMarketingBoardModal('${p.id}')" class="btn btn-primary">${icon('plus','w-4 h-4')} New board</button>`)}`;
+}
+function mktItemCard(it){
+  const subs=mktSubitems(it.id); const subDone=subs.filter(s=>s.status==='done').length;
+  const pr=TASK_PRIORITIES[it.priority]||TASK_PRIORITIES.normal;
+  return `<div onclick="openMarketingItemDetail('${it.id}')" class="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-card transition-shadow">
+    <div class="flex items-start gap-2">
+      <span class="w-1 self-stretch rounded shrink-0" style="background:${(TASK_STATUSES[it.status]||TASK_STATUSES.todo).solid}"></span>
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-medium ${it.status==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.title)}</div>
+        <div class="flex items-center gap-1.5 flex-wrap mt-2">${mktStatusPill(it.status)}${it.priority!=='normal'?`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`:''}${mktDueBadge(it)}${subs.length?`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5">${icon('check','w-3 h-3')}${subDone}/${subs.length}</span>`:''}</div>
+        ${mktMembers(it.id).length?`<div class="mt-2">${mktMemberAvatars(it.id)}</div>`:''}
+      </div>
+    </div></div>`;
+}
+function renderMarketingBoard(b){
+  const project=mktProject(b.projectId); const lists=mktListsOf(b.id);
+  const column=l=>{ const items=mktItemsOf(l.id);
+    return `<div class="w-72 shrink-0 bg-slate-50 rounded-xl border border-slate-200 flex flex-col max-h-[calc(100vh-16rem)]">
+      <div class="p-3 flex items-center gap-2 border-b border-slate-200">
+        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${l.color}"></span>
+        <h4 class="font-semibold text-sm text-slate-800 flex-1 truncate">${escapeHTML(l.name)}</h4>
+        <span class="text-xs text-slate-400">${items.length}</span>
+        <button onclick="openMarketingListModal('${b.id}','${l.id}')" class="text-slate-400 hover:text-slate-600 p-0.5" title="Edit list">${icon('edit','w-3.5 h-3.5')}</button>
+        <button onclick="mktDeleteList('${l.id}')" class="text-slate-400 hover:text-rose-600 p-0.5" title="Delete list">${icon('trash','w-3.5 h-3.5')}</button>
+      </div>
+      <div class="p-2 space-y-2 overflow-y-auto flex-1">${items.map(mktItemCard).join('') || '<div class="text-xs text-slate-400 text-center py-4">No items yet</div>'}</div>
+      <button onclick="openMarketingItemModal('${l.id}')" class="m-2 mt-0 text-sm text-slate-500 hover:text-brand-700 hover:bg-white rounded-lg py-1.5 text-center border border-dashed border-slate-300">+ Add item</button>
+    </div>`; };
+  return `
+    ${mktHeaderBar([{label:'Marketing',onclick:'mktBackHome()'},{label:project?project.name:'Project',onclick:'mktBackToProject()'},{label:b.name}], `
+      <button onclick="openMarketingBoardModal('${b.projectId}','${b.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Edit</button>
+      <button onclick="mktDeleteBoard('${b.id}')" class="btn btn-ghost btn-sm text-rose-600" title="Delete board">${icon('trash','w-4 h-4')}</button>
+      <button onclick="openMarketingListModal('${b.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} New list</button>`)}
+    ${lists.length ? `<div class="flex gap-4 overflow-x-auto pb-4">${lists.map(column).join('')}<button onclick="openMarketingListModal('${b.id}')" class="w-72 shrink-0 h-12 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:text-brand-700 hover:border-brand-300 text-sm">+ Add list</button></div>`
+      : mktEmpty('No lists yet','Add a list (column) to start adding items to this board.',`<button onclick="openMarketingListModal('${b.id}')" class="btn btn-primary">${icon('plus','w-4 h-4')} New list</button>`)}`;
+}
+
+// ---- item detail modal ----
+async function openMarketingItemDetail(id){ const it=mktItem(id); if(!it) return; await loadMarketingItemEvents(id); _mktItemModalId=id; openModal(it.title||'Item', `<div id="mkt-item-body">${mktItemBodyHTML(id)}</div>`, ()=>true, { saveLabel: t('close') }); }
+function refreshMarketingItemDetail(id){ if(_mktItemModalId!==id) return; const el=document.getElementById('mkt-item-body'); if(el) el.innerHTML=mktItemBodyHTML(id); }
+function mktItemBodyHTML(id){
+  const it=mktItem(id); if(!it) return '<div class="text-sm text-slate-500">Item not found.</div>';
+  const events=(state.marketingItemEventsCache?.[id])||[];
+  const members=mktMembers(id);
+  const assigned=new Set((state.marketingItemMembers||[]).filter(m=>m.itemId===id).map(m=>m.employeeId));
+  const candidates=(state.employees||[]).filter(isActiveEmployee).filter(e=>!assigned.has(e.id)).sort((a,b)=>mktEmpName(a.id).localeCompare(mktEmpName(b.id)));
+  const subs=mktSubitems(id); const subDone=subs.filter(s=>s.status==='done').length;
+  const timeline=[{kind:'created',actorId:it.createdBy,createdAt:it.createdAt}];
+  events.forEach(e=>{ if(e.kind!=='created') timeline.push(e); });
+  timeline.sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||'')));
+  const rows=timeline.map((e,i)=>{ let dot='bg-slate-300',line='';
+    if(e.kind==='created'){ line=`<span class="font-medium text-slate-700">${escapeHTML(mktEmpName(e.actorId))}</span> created this item`; dot='bg-brand-400'; }
+    else if(e.kind==='status'){ const to=(TASK_STATUSES[e.toStatus]||{}).label||e.toStatus; const from=(TASK_STATUSES[e.fromStatus]||{}).label||e.fromStatus; dot=e.toStatus==='done'?'bg-emerald-500':e.toStatus==='blocked'?'bg-rose-500':'bg-blue-500'; line=`<span class="font-medium text-slate-700">${escapeHTML(mktEmpName(e.actorId))}</span> moved <span class="text-slate-500">${escapeHTML(from||'—')}</span> → <span class="font-medium text-slate-700">${escapeHTML(to)}</span>`; }
+    else { dot='bg-brand-500'; line=`<span class="font-medium text-slate-700">${escapeHTML(mktEmpName(e.actorId))}</span>: <span class="text-slate-700 whitespace-pre-wrap">${escapeHTML(e.body||'')}</span>`; }
+    return `<div class="flex gap-3"><div class="flex flex-col items-center"><span class="w-2.5 h-2.5 rounded-full ${dot} mt-1.5 shrink-0"></span>${i<timeline.length-1?'<span class="w-px flex-1 bg-slate-200 my-1"></span>':''}</div><div class="pb-4 min-w-0 flex-1"><div class="text-sm">${line}</div><div class="text-[11px] text-slate-400">${escapeHTML(fmtDate(e.createdAt))} · ${escapeHTML(timeAgo(e.createdAt))}</div></div></div>`;
+  }).join('');
+  return `
+    <input class="input font-semibold text-base mb-4" value="${escapeHTML(it.title)}" onchange="mktUpdateItem('${id}',{title:(this.value||'').trim()||'Untitled'})" aria-label="Item title">
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div><label class="label">Status</label><select class="input" onchange="mktChangeItemStatus('${id}',this.value)">${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${it.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+      <div><label class="label">Priority</label><select class="input" onchange="mktUpdateItem('${id}',{priority:this.value})">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${it.priority===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+      <div><label class="label">Start date</label><input type="date" class="input" value="${it.startDate||''}" onchange="mktUpdateItem('${id}',{start_date:this.value||null})"></div>
+      <div><label class="label">Due date</label><input type="date" class="input" value="${it.dueDate||''}" onchange="mktUpdateItem('${id}',{due_date:this.value||null})"></div>
+    </div>
+    <div class="mb-4">
+      <label class="label">Assigned to</label>
+      <div class="flex items-center gap-2 flex-wrap">${members.map(e=>`<span class="inline-flex items-center gap-1 bg-slate-100 rounded-full pl-1 pr-2 py-0.5 text-xs">${avatarHTML(e,20)}<span>${escapeHTML(mktEmpName(e.id))}</span><button onclick="mktRemoveMember('${id}','${e.id}')" class="text-slate-400 hover:text-rose-600" title="Remove">${icon('close','w-3 h-3')}</button></span>`).join('') || '<span class="text-xs text-slate-400">No one assigned</span>'}</div>
+      <select class="input mt-2" onchange="if(this.value){mktAddMember('${id}',this.value); this.value='';}"><option value="">+ Assign a member…</option>${candidates.map(e=>`<option value="${e.id}">${escapeHTML(mktEmpName(e.id))}</option>`).join('')}</select>
+    </div>
+    <div class="mb-4">
+      <label class="label">Notes</label>
+      <textarea id="mkt-notes-${id}" class="input" rows="3" placeholder="Add details, links, the brief…">${escapeHTML(it.description||'')}</textarea>
+      <div class="mt-1 text-right"><button class="btn btn-ghost btn-sm" onclick="mktUpdateItem('${id}',{description:(document.getElementById('mkt-notes-${id}').value||'').trim()})">Save notes</button></div>
+    </div>
+    <div class="mb-4">
+      <label class="label">Subitems ${subs.length?`<span class="text-slate-400 font-normal">· ${subDone}/${subs.length} done</span>`:''}</label>
+      <div class="space-y-1.5">${subs.map(s=>`<div class="flex items-center gap-2 text-sm"><input type="checkbox" ${s.status==='done'?'checked':''} onchange="mktToggleSubitem('${s.id}')"><span class="flex-1 ${s.status==='done'?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(s.title)}</span><button onclick="mktDeleteItem('${s.id}')" class="text-slate-300 hover:text-rose-600" title="Delete">${icon('trash','w-3.5 h-3.5')}</button></div>`).join('')}</div>
+      <form class="mt-2 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('input'); mktAddSubitem('${id}',i.value); i.value='';"><input class="input flex-1 text-sm" placeholder="Add a subitem…" maxlength="200"><button type="submit" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')}</button></form>
+    </div>
+    <div class="border-t border-slate-100 pt-3">
+      <h4 class="font-display text-base font-semibold text-slate-900 mb-3">Activity</h4>
+      <div>${rows}</div>
+      <form class="mt-2 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('textarea'); mktAddComment('${id}',i.value); i.value='';"><textarea class="input flex-1 text-sm" rows="2" maxlength="1000" placeholder="Add a note or comment…"></textarea><button type="submit" class="btn btn-primary btn-sm self-end">${icon('plus','w-4 h-4')} Add</button></form>
+      <div class="mt-4 pt-3 border-t border-slate-100 text-right"><button onclick="mktDeleteItem('${id}')" class="btn btn-ghost btn-sm text-rose-600">${icon('trash','w-4 h-4')} Delete item</button></div>
+    </div>`;
+}
+
+// ---- item mutations ----
+async function mktUpdateItem(id, patch, opts={}){
+  const { data, error } = await sb.from('marketing_items').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if(error){ toast(humanizeError(error),'error'); return false; }
+  const it=mktItem(id); if(it) Object.assign(it, mapMarketingItemFromDb(data));
+  if(!opts.silent){ render(); refreshMarketingItemDetail(id); }
+  return true;
+}
+async function mktChangeItemStatus(id, status){
+  const it=mktItem(id); if(!it) return; const from=it.status;
+  const ok=await mktUpdateItem(id, { status, completed_at: status==='done'? new Date().toISOString() : null }, { silent:true });
+  if(!ok) return;
+  await logMarketingItemEvent(id,'status',{ fromStatus:from, toStatus:status });
+  render(); refreshMarketingItemDetail(id);
+}
+async function mktAddMember(itemId, empId){
+  if(!empId) return;
+  if((state.marketingItemMembers||[]).some(m=>m.itemId===itemId&&m.employeeId===empId)) return;
+  const { data, error } = await sb.from('marketing_item_members').insert({ item_id:itemId, employee_id:empId }).select().single();
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingItemMembers.push(mapMarketingItemMemberFromDb(data));
+  render(); refreshMarketingItemDetail(itemId);
+}
+async function mktRemoveMember(itemId, empId){
+  const { error } = await sb.from('marketing_item_members').delete().eq('item_id',itemId).eq('employee_id',empId);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingItemMembers = state.marketingItemMembers.filter(m=>!(m.itemId===itemId&&m.employeeId===empId));
+  render(); refreshMarketingItemDetail(itemId);
+}
+async function mktAddSubitem(parentId, title){
+  const t2=(title||'').trim(); if(!t2) return; const parent=mktItem(parentId); if(!parent) return;
+  const { data, error } = await sb.from('marketing_items').insert(marketingItemToDb({ listId:parent.listId, parentId, title:t2, createdBy:currentEmployee()?.id })).select().single();
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingItems.push(mapMarketingItemFromDb(data));
+  render(); refreshMarketingItemDetail(parentId);
+}
+async function mktToggleSubitem(id){
+  const it=mktItem(id); if(!it) return; const status=it.status==='done'?'todo':'done';
+  await mktUpdateItem(id, { status, completed_at: status==='done'? new Date().toISOString() : null }, { silent:true });
+  render(); if(it.parentId) refreshMarketingItemDetail(it.parentId);
+}
+async function mktDeleteItem(id){
+  if(!confirm('Delete this item and its subitems, members and comments?')) return;
+  const it=mktItem(id);
+  const { error } = await sb.from('marketing_items').delete().eq('id', id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  const gone=new Set([id, ...mktSubitems(id).map(s=>s.id)]);
+  state.marketingItems = state.marketingItems.filter(i=>!gone.has(i.id));
+  state.marketingItemMembers = state.marketingItemMembers.filter(m=>!gone.has(m.itemId));
+  if(_mktItemModalId===id){ closeModal(); render(); return; }
+  render();
+  if(it && it.parentId) refreshMarketingItemDetail(it.parentId);
+}
+// ---- comments / activity ----
+async function loadMarketingItemEvents(itemId){
+  state.marketingItemEventsCache = state.marketingItemEventsCache || {};
+  const { data, error } = await sb.from('marketing_item_events').select('*').eq('item_id',itemId).order('created_at',{ ascending:true });
+  state.marketingItemEventsCache[itemId] = error ? [] : (data||[]).map(mapMarketingItemEventFromDb);
+  if(error) console.error('load marketing item events failed:', error);
+  return state.marketingItemEventsCache[itemId];
+}
+async function logMarketingItemEvent(itemId, kind, opts={}){
+  const me=currentEmployee();
+  const { data, error } = await sb.from('marketing_item_events').insert({ item_id:itemId, actor_id: me?.id||null, kind, body: opts.body||null, from_status: opts.fromStatus||null, to_status: opts.toStatus||null }).select().single();
+  if(error){ console.error('marketing item event failed:', error); return null; }
+  state.marketingItemEventsCache = state.marketingItemEventsCache || {};
+  (state.marketingItemEventsCache[itemId] = state.marketingItemEventsCache[itemId] || []).push(mapMarketingItemEventFromDb(data));
+  return data;
+}
+async function mktAddComment(itemId, body){
+  const txt=(body||'').trim(); if(!txt) return;
+  const ev=await logMarketingItemEvent(itemId,'comment',{ body:txt });
+  if(!ev){ toast('Could not post comment','error'); return; }
+  refreshMarketingItemDetail(itemId);
+}
+
+// ---- project / board / list / item CRUD modals ----
+function openMarketingProjectModal(id){
+  if(!canManageMarketing()) return; const p=id?mktProject(id):null;
+  const body=`<div class="space-y-4">
+    <div><label class="label">Project name *</label><input id="mkt-p-name" class="input" value="${p?escapeHTML(p.name):''}" placeholder="e.g. Q3 Brand Campaign"></div>
+    <div><label class="label">Description</label><textarea id="mkt-p-desc" class="input" rows="2" placeholder="Optional">${p?escapeHTML(p.description):''}</textarea></div>
+    <div><label class="label">Colour</label>${mktColorField('mkt-p-color', p?p.color:MKT_COLORS[0])}</div>
+    ${p?`<div><label class="label">Status</label><select id="mkt-p-status" class="input"><option value="active" ${p.status==='active'?'selected':''}>Active</option><option value="archived" ${p.status==='archived'?'selected':''}>Archived</option></select></div>`:''}
+  </div>`;
+  openModal(p?'Edit project':'New project', body, async ()=>{
+    const name=$('#mkt-p-name')?.value.trim(); if(!name){ toast('Enter a project name','error'); return false; }
+    const payload=marketingProjectToDb({ name, description:$('#mkt-p-desc')?.value.trim(), color:$('#mkt-p-color')?.value, status: p?($('#mkt-p-status')?.value||'active'):'active', createdBy:currentEmployee()?.id, sortOrder: p?p.sortOrder:(state.marketingProjects||[]).length });
+    if(p){ const { data, error } = await sb.from('marketing_projects').update(payload).eq('id',p.id).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(p, mapMarketingProjectFromDb(data)); }
+    else { const { data, error } = await sb.from('marketing_projects').insert(payload).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } state.marketingProjects.push(mapMarketingProjectFromDb(data)); }
+    render(); toast(p?'Project updated':'Project created','success'); return true;
+  }, { saveLabel: p?'Save':'Create' });
+}
+function openMarketingBoardModal(projectId, id){
+  if(!canManageMarketing()) return; const b=id?mktBoard(id):null; const pid=b?b.projectId:projectId;
+  const body=`<div class="space-y-4"><div><label class="label">Board name *</label><input id="mkt-b-name" class="input" value="${b?escapeHTML(b.name):''}" placeholder="e.g. Content Calendar"></div><div><label class="label">Colour</label>${mktColorField('mkt-b-color', b?b.color:MKT_COLORS[0])}</div></div>`;
+  openModal(b?'Edit board':'New board', body, async ()=>{
+    const name=$('#mkt-b-name')?.value.trim(); if(!name){ toast('Enter a board name','error'); return false; }
+    const payload=marketingBoardToDb({ projectId:pid, name, color:$('#mkt-b-color')?.value, createdBy:currentEmployee()?.id, sortOrder: b?b.sortOrder:mktBoardsOf(pid).length });
+    if(b){ const { data, error } = await sb.from('marketing_boards').update(payload).eq('id',b.id).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(b, mapMarketingBoardFromDb(data)); }
+    else { const { data, error } = await sb.from('marketing_boards').insert(payload).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } state.marketingBoards.push(mapMarketingBoardFromDb(data)); }
+    render(); toast(b?'Board updated':'Board created','success'); return true;
+  }, { saveLabel: b?'Save':'Create' });
+}
+function openMarketingListModal(boardId, id){
+  if(!canManageMarketing()) return; const l=id?(state.marketingLists||[]).find(x=>x.id===id):null; const bid=l?l.boardId:boardId;
+  const body=`<div class="space-y-4"><div><label class="label">List name *</label><input id="mkt-l-name" class="input" value="${l?escapeHTML(l.name):''}" placeholder="e.g. To do / In progress / Published"></div><div><label class="label">Colour</label>${mktColorField('mkt-l-color', l?l.color:MKT_COLORS[0])}</div></div>`;
+  openModal(l?'Edit list':'New list', body, async ()=>{
+    const name=$('#mkt-l-name')?.value.trim(); if(!name){ toast('Enter a list name','error'); return false; }
+    const payload=marketingListToDb({ boardId:bid, name, color:$('#mkt-l-color')?.value, createdBy:currentEmployee()?.id, sortOrder: l?l.sortOrder:mktListsOf(bid).length });
+    if(l){ const { data, error } = await sb.from('marketing_lists').update(payload).eq('id',l.id).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(l, mapMarketingListFromDb(data)); }
+    else { const { data, error } = await sb.from('marketing_lists').insert(payload).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } state.marketingLists.push(mapMarketingListFromDb(data)); }
+    render(); toast(l?'List updated':'List created','success'); return true;
+  }, { saveLabel: l?'Save':'Create' });
+}
+function openMarketingItemModal(listId){
+  if(!canManageMarketing()) return;
+  const body=`<div class="space-y-4"><div><label class="label">Item title *</label><input id="mkt-i-title" class="input" placeholder="e.g. Draft launch email"></div><div class="grid grid-cols-2 gap-3"><div><label class="label">Priority</label><select id="mkt-i-priority" class="input">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${k==='normal'?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div><div><label class="label">Due date</label><input id="mkt-i-due" type="date" class="input"></div></div><div><label class="label">Notes</label><textarea id="mkt-i-notes" class="input" rows="2" placeholder="Optional"></textarea></div></div>`;
+  openModal('New item', body, async ()=>{
+    const title=$('#mkt-i-title')?.value.trim(); if(!title){ toast('Enter a title','error'); return false; }
+    const payload=marketingItemToDb({ listId, title, priority:$('#mkt-i-priority')?.value||'normal', dueDate:$('#mkt-i-due')?.value||null, description:$('#mkt-i-notes')?.value.trim()||null, createdBy:currentEmployee()?.id, sortOrder:mktItemsOf(listId).length });
+    const { data, error } = await sb.from('marketing_items').insert(payload).select().single();
+    if(error){ toast(humanizeError(error),'error'); return false; }
+    state.marketingItems.push(mapMarketingItemFromDb(data)); render(); toast('Item added','success'); return true;
+  }, { saveLabel:'Add item' });
+}
+// ---- deletes (DB CASCADEs children; mirror in local state) ----
+async function mktDeleteProject(id){
+  if(!confirm('Delete this project and everything in it (boards, lists, items)?')) return;
+  const { error } = await sb.from('marketing_projects').delete().eq('id',id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  const boardIds=new Set(mktBoardsOf(id).map(b=>b.id));
+  const listIds=new Set((state.marketingLists||[]).filter(l=>boardIds.has(l.boardId)).map(l=>l.id));
+  const itemIds=new Set((state.marketingItems||[]).filter(i=>listIds.has(i.listId)).map(i=>i.id));
+  state.marketingProjects=state.marketingProjects.filter(p=>p.id!==id);
+  state.marketingBoards=state.marketingBoards.filter(b=>b.projectId!==id);
+  state.marketingLists=state.marketingLists.filter(l=>!boardIds.has(l.boardId));
+  state.marketingItems=state.marketingItems.filter(i=>!listIds.has(i.listId));
+  state.marketingItemMembers=state.marketingItemMembers.filter(m=>!itemIds.has(m.itemId));
+  _mktProjectId=null; _mktBoardId=null; render(); toast('Project deleted','success');
+}
+async function mktDeleteBoard(id){
+  if(!confirm('Delete this board and its lists and items?')) return;
+  const { error } = await sb.from('marketing_boards').delete().eq('id',id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  const listIds=new Set(mktListsOf(id).map(l=>l.id));
+  const itemIds=new Set((state.marketingItems||[]).filter(i=>listIds.has(i.listId)).map(i=>i.id));
+  state.marketingBoards=state.marketingBoards.filter(b=>b.id!==id);
+  state.marketingLists=state.marketingLists.filter(l=>l.boardId!==id);
+  state.marketingItems=state.marketingItems.filter(i=>!listIds.has(i.listId));
+  state.marketingItemMembers=state.marketingItemMembers.filter(m=>!itemIds.has(m.itemId));
+  _mktBoardId=null; render(); toast('Board deleted','success');
+}
+async function mktDeleteList(id){
+  if(!confirm('Delete this list and its items?')) return;
+  const { error } = await sb.from('marketing_lists').delete().eq('id',id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  const itemIds=new Set((state.marketingItems||[]).filter(i=>i.listId===id).map(i=>i.id));
+  state.marketingLists=state.marketingLists.filter(l=>l.id!==id);
+  state.marketingItems=state.marketingItems.filter(i=>i.listId!==id);
+  state.marketingItemMembers=state.marketingItemMembers.filter(m=>!itemIds.has(m.itemId));
+  render(); toast('List deleted','success');
+}
+// ---- drill-down nav ----
+function mktBackHome(){ _mktProjectId=null; _mktBoardId=null; render(); }
+function mktBackToProject(){ _mktBoardId=null; render(); }
+function mktOpenProject(id){ _mktProjectId=id; _mktBoardId=null; render(); }
+function mktOpenBoard(id){ const b=mktBoard(id); if(b) _mktProjectId=b.projectId; _mktBoardId=id; render(); }
+
 /* -------------------- DEDUCTIONS -------------------- */
 // Admin/HR registers a deduction the day an incident happens; it is
 // auto-applied to the chosen month's payroll run, itemised on the
@@ -21875,6 +22294,7 @@ function closeModal() {
   if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
   if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
+  if (typeof _mktItemModalId !== 'undefined') _mktItemModalId = null;
   if (typeof _sigPad !== 'undefined') _sigPad = null;
   if (typeof _invCsvRows !== 'undefined') _invCsvRows = null;
   if (_modalTrapHandler) {
@@ -24158,6 +24578,7 @@ function renderMain() {
     case 'dashboard':    content = renderRoleDashboard(); break;
     case 'my_work':      content = renderMyWork(); break;
     case 'work_management': content = hasRole('admin','operations') ? renderWorkManagement() : renderRoleDashboard(); break;
+    case 'marketing':    content = canManageMarketing() ? renderMarketing() : renderRoleDashboard(); break;
     case 'employees':    content = canManagePeople() ? renderEmployees() : renderRoleDashboard(); break;
     case 'employee':     content = canManagePeople() ? renderEmployeeProfile(getRouteParam()) : renderRoleDashboard(); break;
     case 'attendance':   content = renderAttendance(); break;
