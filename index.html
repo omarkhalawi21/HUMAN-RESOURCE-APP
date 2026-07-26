@@ -939,6 +939,44 @@ function openPrintWindow(html) {
   return win;
 }
 
+/* In-app print PREVIEW — shows the print HTML inside an isolated iframe modal
+   with a Print button, instead of spawning a popup (which can be pop-up-blocked
+   and jumps straight toward the print dialog). The iframe sandboxes the doc's
+   own <style> so it can't leak into the app; Print prints just the iframe. */
+function openPrintPreview(html, title='Preview') {
+  document.getElementById('preview-root')?.remove();
+  const root = el(`
+    <div id="preview-root" class="fixed inset-0 z-50 flex flex-col p-3 md:p-6 modal-backdrop fade-in" role="dialog" aria-modal="true" aria-label="${escapeHTML(title)}">
+      <div class="bg-white rounded-2xl shadow-pop w-full max-w-4xl mx-auto flex flex-col min-h-0" style="height:92vh">
+        <div class="flex items-center justify-between gap-3 p-4 border-b border-slate-100">
+          <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(title)}</h3>
+          <div class="flex gap-2">
+            <button onclick="printPreviewFrame()" class="btn btn-primary btn-sm">${icon('file','w-4 h-4')} Print / Save as PDF</button>
+            <button onclick="closePrintPreview()" class="btn btn-ghost btn-sm">${escapeHTML(t('close'))}</button>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 bg-slate-100 rounded-b-2xl overflow-hidden">
+          <iframe id="preview-frame" title="${escapeHTML(title)}" class="w-full h-full" style="border:0;background:#fff"></iframe>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(root);
+  root.addEventListener('click', e => { if (e.target === root) closePrintPreview(); });
+  const frame = document.getElementById('preview-frame');
+  if (frame) frame.srcdoc = html;
+  _printPreviewEsc = e => { if (e.key === 'Escape') closePrintPreview(); };
+  document.addEventListener('keydown', _printPreviewEsc);
+}
+let _printPreviewEsc = null;
+function closePrintPreview() {
+  document.getElementById('preview-root')?.remove();
+  if (_printPreviewEsc) { document.removeEventListener('keydown', _printPreviewEsc); _printPreviewEsc = null; }
+}
+function printPreviewFrame() {
+  const f = document.getElementById('preview-frame');
+  if (f && f.contentWindow) { try { f.contentWindow.focus(); } catch(_) {} f.contentWindow.print(); }
+}
+
 function logoURL() {
   // Absolute URL so it loads correctly inside a popup window with about:blank
   try { return new URL('logo.png', window.location.href).href; }
@@ -6492,7 +6530,7 @@ function generatePayrollReport(period) {
     <div class="doc-footer">Payroll report for ${escapeHTML(monthName)} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  if (!openPrintWindow(html)) return;
+  openPrintPreview(html, `Payroll report — ${monthName}`);
 }
 function openPayslip(payrollId) {
   const p = state.payroll.find(x => x.id===payrollId);
@@ -6559,7 +6597,7 @@ function openPayslip(payrollId) {
     <div class="doc-footer">Payslip number PS-${escapeHTML(p.id.slice(-6).toUpperCase())} &middot; Computer-generated, signature not required</div>
   </div>
   </body></html>`;
-  if (!openPrintWindow(html)) return;
+  openPrintPreview(html, `Payslip — ${fullName}, ${periodLabel}`);
 }
 
 // Transient: per-employee manual adjustment lines entered in the Run
