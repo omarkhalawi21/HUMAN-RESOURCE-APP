@@ -119,6 +119,11 @@
   .btn-success { background: #047857; color: white; }
   .btn-success:hover { background: #036647; }
   .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+  /* Marketing board drag-and-drop */
+  .mkt-drop-active { outline: 2px dashed #6d28d9; outline-offset: -4px; background: #faf5ff; border-radius: 12px; }
+  .mkt-card.mkt-dragging { opacity: 0.4; }
+  .mkt-card { cursor: grab; }
+  .mkt-card:active { cursor: grabbing; }
   .clock-tile {
     background: linear-gradient(135deg, #6b0f20 0%, #a8172e 45%, #df3247 100%);
     color: white;
@@ -13453,12 +13458,24 @@ function renderMarketingProjectView(p){
 function mktItemCard(it){
   const subs=mktSubitems(it.id); const subDone=subs.filter(s=>s.status==='done').length;
   const pr=TASK_PRIORITIES[it.priority]||TASK_PRIORITIES.normal;
-  return `<div onclick="openMarketingItemDetail('${it.id}')" class="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-card transition-shadow">
+  const meta=[];
+  meta.push(mktStatusPill(it.status));
+  if(it.priority!=='normal') meta.push(`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`);
+  const due=mktDueBadge(it); if(due) meta.push(due);
+  if(it.description) meta.push(`<span class="text-slate-400 inline-flex items-center" title="Has notes">${icon('file','w-3 h-3')}</span>`);
+  if(subs.length) meta.push(`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5" title="Subitems">${icon('check','w-3 h-3')}${subDone}/${subs.length}</span>`);
+  // draggable card: click opens detail, drag moves it between/within lists.
+  // dropping ON a card inserts the dragged item before it.
+  return `<div data-item="${it.id}" draggable="true"
+      ondragstart="mktDragStart(event,'${it.id}')" ondragend="mktDragEnd(event)"
+      ondragover="mktDragOver(event)" ondrop="mktDropBeforeCard(event,'${it.id}')"
+      onclick="openMarketingItemDetail('${it.id}')"
+      class="mkt-card bg-white rounded-lg border border-slate-200 p-3 hover:shadow-card transition-shadow">
     <div class="flex items-start gap-2">
       <span class="w-1 self-stretch rounded shrink-0" style="background:${(TASK_STATUSES[it.status]||TASK_STATUSES.todo).solid}"></span>
       <div class="min-w-0 flex-1">
         <div class="text-sm font-medium ${it.status==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.title)}</div>
-        <div class="flex items-center gap-1.5 flex-wrap mt-2">${mktStatusPill(it.status)}${it.priority!=='normal'?`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`:''}${mktDueBadge(it)}${subs.length?`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5">${icon('check','w-3 h-3')}${subDone}/${subs.length}</span>`:''}</div>
+        <div class="flex items-center gap-1.5 flex-wrap mt-2">${meta.join('')}</div>
         ${mktMembers(it.id).length?`<div class="mt-2">${mktMemberAvatars(it.id)}</div>`:''}
       </div>
     </div></div>`;
@@ -13474,7 +13491,11 @@ function renderMarketingBoard(b){
         <button onclick="openMarketingListModal('${b.id}','${l.id}')" class="text-slate-400 hover:text-slate-600 p-0.5" title="Edit list">${icon('edit','w-3.5 h-3.5')}</button>
         <button onclick="mktDeleteList('${l.id}')" class="text-slate-400 hover:text-rose-600 p-0.5" title="Delete list">${icon('trash','w-3.5 h-3.5')}</button>
       </div>
-      <div class="p-2 space-y-2 overflow-y-auto flex-1">${items.map(mktItemCard).join('') || '<div class="text-xs text-slate-400 text-center py-4">No items yet</div>'}</div>
+      <div class="p-2 space-y-2 overflow-y-auto flex-1"
+           ondragover="mktDragOver(event)"
+           ondragenter="this.classList.add('mkt-drop-active')"
+           ondragleave="if(event.target===this)this.classList.remove('mkt-drop-active')"
+           ondrop="mktDropOnList(event,'${l.id}')">${items.map(mktItemCard).join('') || '<div class="text-xs text-slate-400 text-center py-6 pointer-events-none">Drop or add items here</div>'}</div>
       <button onclick="openMarketingItemModal('${l.id}')" class="m-2 mt-0 text-sm text-slate-500 hover:text-brand-700 hover:bg-white rounded-lg py-1.5 text-center border border-dashed border-slate-300">+ Add item</button>
     </div>`; };
   return `
@@ -13704,6 +13725,39 @@ function mktBackHome(){ _mktProjectId=null; _mktBoardId=null; render(); }
 function mktBackToProject(){ _mktBoardId=null; render(); }
 function mktOpenProject(id){ _mktProjectId=id; _mktBoardId=null; render(); }
 function mktOpenBoard(id){ const b=mktBoard(id); if(b) _mktProjectId=b.projectId; _mktBoardId=id; render(); }
+
+// ---- drag & drop (Trello-style) ----
+// Only top-level cards are draggable. Dropping ON a card inserts the dragged
+// item before it; dropping on a list's empty space appends. list_id +
+// sort_order are renumbered for the target list and persisted.
+let _mktDragItemId = null;
+function mktDragStart(e, id){ _mktDragItemId=id; try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', id); }catch(_){} const c=e.currentTarget; if(c) c.classList.add('mkt-dragging'); }
+function mktDragEnd(e){ _mktDragItemId=null; document.querySelectorAll('.mkt-dragging').forEach(el=>el.classList.remove('mkt-dragging')); document.querySelectorAll('.mkt-drop-active').forEach(el=>el.classList.remove('mkt-drop-active')); }
+function mktDragOver(e){ e.preventDefault(); try{ e.dataTransfer.dropEffect='move'; }catch(_){} }
+function mktDropOnList(e, listId){ e.preventDefault(); const el=e.currentTarget; if(el) el.classList.remove('mkt-drop-active'); if(_mktDragItemId) mktMoveItem(_mktDragItemId, listId, null); }
+function mktDropBeforeCard(e, targetItemId){ e.preventDefault(); e.stopPropagation(); const dragId=_mktDragItemId; if(!dragId || dragId===targetItemId) return; const target=mktItem(targetItemId); if(!target) return; mktMoveItem(dragId, target.listId, targetItemId); }
+async function mktMoveItem(dragId, targetListId, beforeItemId){
+  const drag=mktItem(dragId); if(!drag) return;
+  const fromList=drag.listId;
+  // Build the target list's new top-level order (excluding the dragged card).
+  let ordered=mktItemsOf(targetListId).filter(i=>i.id!==dragId);
+  let at = beforeItemId ? ordered.findIndex(i=>i.id===beforeItemId) : ordered.length;
+  if(at<0) at=ordered.length;
+  ordered.splice(at, 0, drag);
+  // No-op guard: same list and already in this exact position.
+  if(fromList===targetListId && ordered.every((it,i)=>it.sortOrder===i)) return;
+  // Optimistic local update, then persist only the rows that changed.
+  const updates=[];
+  ordered.forEach((it,i)=>{
+    const listChanged = it.id===dragId && it.listId!==targetListId;
+    if(it.sortOrder!==i || listChanged){ updates.push({ id:it.id, sort_order:i, list_id:targetListId }); }
+    it.sortOrder=i; if(it.id===dragId) it.listId=targetListId;
+  });
+  render();
+  const results=await Promise.all(updates.map(u=> sb.from('marketing_items').update({ sort_order:u.sort_order, list_id:u.list_id, updated_at:new Date().toISOString() }).eq('id',u.id)));
+  const failed=results.find(r=>r.error);
+  if(failed){ toast(humanizeError(failed.error),'error'); }
+}
 
 /* -------------------- DEDUCTIONS -------------------- */
 // Admin/HR registers a deduction the day an incident happens; it is
