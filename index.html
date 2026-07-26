@@ -119,6 +119,11 @@
   .btn-success { background: #047857; color: white; }
   .btn-success:hover { background: #036647; }
   .btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+  /* Marketing board drag-and-drop */
+  .mkt-drop-active { outline: 2px dashed #6d28d9; outline-offset: -4px; background: rgba(255,255,255,0.55); border-radius: 12px; }
+  .mkt-card.mkt-dragging { opacity: 0.4; }
+  .mkt-card { cursor: grab; }
+  .mkt-card:active { cursor: grabbing; }
   .clock-tile {
     background: linear-gradient(135deg, #6b0f20 0%, #a8172e 45%, #df3247 100%);
     color: white;
@@ -769,6 +774,7 @@ function emptyState() {
     marketingLists: [],    // lists (columns) within a marketing board
     marketingItems: [],    // cards; parentId set = subitem
     marketingItemMembers: [], // [{ itemId, employeeId }] multi-assignee join
+    marketingAttachments: [], // [{ id, itemId, name, mime, size }] metadata only (data_url fetched on demand)
     marketingItemEventsCache: {}, // on-demand per itemId: [{ ...event }]
     checklists: [],     // catalog: [{ id, department, title, items:[{id,text}], active, sortOrder }] — Work Management checklist templates
     checklistRunsCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, checklistId, runDate, state, note }] }
@@ -1446,11 +1452,15 @@ function marketingProjectToDb(p) {
 function mapMarketingBoardFromDb(r) {
   return {
     id: r.id, projectId: r.project_id||null, name: r.name||'', color: r.color||'#6d28d9',
+    labels: Array.isArray(r.labels) ? r.labels : [],
     sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null, createdAt: r.created_at,
   };
 }
 function marketingBoardToDb(b) {
   return { project_id: b.projectId||null, name: b.name||null, color: b.color||'#6d28d9', sort_order: Number(b.sortOrder)||0, created_by: b.createdBy||null };
+}
+function mapMarketingAttachmentFromDb(r) {
+  return { id: r.id, itemId: r.item_id, name: r.name||'', mime: r.mime||'', size: Number(r.size)||0, dataUrl: r.data_url||null, createdBy: r.created_by||null, createdAt: r.created_at };
 }
 function mapMarketingListFromDb(r) {
   return {
@@ -1466,6 +1476,7 @@ function mapMarketingItemFromDb(r) {
     id: r.id, listId: r.list_id||null, parentId: r.parent_id||null,
     title: r.title||'', description: r.description||'',
     status: r.status||'todo', priority: r.priority||'normal',
+    labelIds: Array.isArray(r.label_ids) ? r.label_ids : [],
     startDate: r.start_date||null, dueDate: r.due_date||null, completedAt: r.completed_at||null,
     sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null,
     createdAt: r.created_at, updatedAt: r.updated_at,
@@ -2150,7 +2161,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2285,6 +2296,9 @@ async function loadAll() {
       sb.from('marketing_lists').select('*').order('sort_order', { ascending: true }),
       sb.from('marketing_items').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }).limit(2000),
       sb.from('marketing_item_members').select('*'),
+      // Attachment METADATA only — the heavy base64 data_url is fetched on
+      // demand at download time (mktDownloadAttachment), never bulk-loaded.
+      sb.from('marketing_item_attachments').select('id, item_id, name, mime, size, created_by, created_at').limit(3000),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2355,6 +2369,7 @@ async function loadAll() {
     state.marketingLists     = (mktListsR?.data || []).map(mapMarketingListFromDb);
     state.marketingItems     = (mktItemsR?.data || []).map(mapMarketingItemFromDb);
     state.marketingItemMembers = (mktItemMembersR?.data || []).map(mapMarketingItemMemberFromDb);
+    state.marketingAttachments = (mktAttachmentsR?.data || []).map(mapMarketingAttachmentFromDb);
     state.suppliers          = (suppliersR.data    || []).map(mapSupplierFromDb);
     state.assets             = (assetsR.data       || []).map(mapAssetFromDb);
     state.maintenance        = (maintenanceR.data  || []).map(mapMaintenanceFromDb);
@@ -13411,13 +13426,9 @@ function mktColorField(hiddenId, current){ const cur=current||MKT_COLORS[0]; ret
 // ---- routing / render ----
 function renderMarketing(){
   if(!canManageMarketing()) return renderRoleDashboard();
-  if(_mktBoardId && !mktBoard(_mktBoardId)) _mktBoardId=null;
   if(_mktProjectId && !mktProject(_mktProjectId)){ _mktProjectId=null; _mktBoardId=null; }
-  const board=_mktBoardId?mktBoard(_mktBoardId):null;
-  if(board && mktProject(board.projectId)){ _mktProjectId=board.projectId; return renderMarketingBoard(board); }
   const project=_mktProjectId?mktProject(_mktProjectId):null;
-  if(project) return renderMarketingProjectView(project);
-  return renderMarketingHome();
+  return project ? renderMarketingWorkspace(project) : renderMarketingHome();
 }
 function renderMarketingHome(){
   const projects=(state.marketingProjects||[]).slice().sort(_mktSort);
@@ -13436,37 +13447,61 @@ function renderMarketingHome(){
       ${archived.length?`<h3 class="text-sm font-semibold text-slate-500 mt-8 mb-3 uppercase tracking-wider">Archived</h3><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${archived.map(card).join('')}</div>`:''}
     ` : mktEmpty('No projects yet','Create your first marketing project to start building boards and tasks.',`<button onclick="openMarketingProjectModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New project</button>`)}`;
 }
-function renderMarketingProjectView(p){
+// Project workspace: board TABS + the active board's kanban lists inline —
+// no separate "open board" step. This is the Trello-style single view.
+function renderMarketingWorkspace(p){
   const boards=mktBoardsOf(p.id);
-  const bcard=b=>{ const pr=mktProgress(mktItemsUnderBoard(b.id));
-    return `<button onclick="mktOpenBoard('${b.id}')" class="text-left bg-white rounded-2xl shadow-card p-5 hover:shadow-pop transition-all hover:-translate-y-0.5 block w-full">
-      <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full shrink-0" style="background:${b.color}"></span><h3 class="font-display font-semibold text-slate-900 truncate">${escapeHTML(b.name)}</h3></div>
-      <div class="mt-4 flex items-center justify-between text-xs text-slate-500"><span>${mktListsOf(b.id).length} lists</span><span>${pr.done}/${pr.total} done · ${pr.pct}%</span></div>
-      <div class="mt-2">${mktProgressBar(pr.pct,b.color)}</div></button>`; };
-  return `
-    ${mktHeaderBar([{label:'Marketing',onclick:'mktBackHome()'},{label:p.name}], `
-      <button onclick="openMarketingProjectModal('${p.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Edit</button>
-      <button onclick="mktDeleteProject('${p.id}')" class="btn btn-ghost btn-sm text-rose-600" title="Delete project">${icon('trash','w-4 h-4')}</button>
-      <button onclick="openMarketingBoardModal('${p.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} New board</button>`)}
-    ${boards.length ? `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${boards.map(bcard).join('')}</div>` : mktEmpty('No boards yet','Add a board to organise this project into lists.',`<button onclick="openMarketingBoardModal('${p.id}')" class="btn btn-primary">${icon('plus','w-4 h-4')} New board</button>`)}`;
+  let active = (_mktBoardId && boards.find(b=>b.id===_mktBoardId)) ? mktBoard(_mktBoardId) : (boards[0]||null);
+  if(active) _mktBoardId=active.id;
+  const tab=b=>`<button onclick="mktOpenBoard('${b.id}')" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${active&&b.id===active.id?'bg-white shadow-card text-slate-900':'text-slate-500 hover:bg-white/60'}"><span class="w-2.5 h-2.5 rounded-full" style="background:${b.color}"></span>${escapeHTML(b.name)}</button>`;
+  const head = mktHeaderBar([{label:'Marketing',onclick:'mktBackHome()'},{label:p.name}], `
+      <button onclick="openMarketingProjectModal('${p.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Edit project</button>
+      <button onclick="mktDeleteProject('${p.id}')" class="btn btn-ghost btn-sm text-rose-600" title="Delete project">${icon('trash','w-4 h-4')}</button>`);
+  const tabbar = `<div class="flex items-center gap-1.5 flex-wrap mb-4 bg-slate-100 rounded-xl p-1.5">
+      ${boards.map(tab).join('')}
+      <button onclick="openMarketingBoardModal('${p.id}')" class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-slate-500 hover:bg-white/60">${icon('plus','w-4 h-4')} Board</button>
+    </div>`;
+  if(!active) return `${head}${tabbar}${mktEmpty('No boards yet','Add a board to start building lists and cards.',`<button onclick="openMarketingBoardModal('${p.id}')" class="btn btn-primary">${icon('plus','w-4 h-4')} New board</button>`)}`;
+  return `${head}${tabbar}${renderMarketingKanban(active)}`;
 }
-function mktItemCard(it){
+function mktLabelChips(it, labelMap){
+  const ids=it.labelIds||[]; if(!ids.length) return '';
+  const chips=ids.map(id=>labelMap[id]).filter(Boolean);
+  if(!chips.length) return '';
+  return `<div class="flex flex-wrap gap-1 mb-1.5">${chips.map(l=>`<span class="inline-block text-[10px] font-semibold text-white px-1.5 py-0.5 rounded" style="background:${l.color}" title="${escapeHTML(l.name)}">${escapeHTML(l.name)}</span>`).join('')}</div>`;
+}
+function mktItemCard(it, labelMap){
   const subs=mktSubitems(it.id); const subDone=subs.filter(s=>s.status==='done').length;
   const pr=TASK_PRIORITIES[it.priority]||TASK_PRIORITIES.normal;
-  return `<div onclick="openMarketingItemDetail('${it.id}')" class="bg-white rounded-lg border border-slate-200 p-3 cursor-pointer hover:shadow-card transition-shadow">
+  const atts=mktAttachmentsOf(it.id);
+  const meta=[mktStatusPill(it.status)];
+  if(it.priority!=='normal') meta.push(`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`);
+  const due=mktDueBadge(it); if(due) meta.push(due);
+  if(it.description) meta.push(`<span class="text-slate-400 inline-flex items-center" title="Has notes">${icon('file','w-3 h-3')}</span>`);
+  if(atts.length) meta.push(`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5" title="Attachments">${icon('upload','w-3 h-3')}${atts.length}</span>`);
+  if(subs.length) meta.push(`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5" title="Subitems">${icon('check','w-3 h-3')}${subDone}/${subs.length}</span>`);
+  return `<div data-item="${it.id}" draggable="true"
+      ondragstart="mktDragStart(event,'${it.id}')" ondragend="mktDragEnd(event)"
+      ondragover="mktDragOver(event)" ondrop="mktDropBeforeCard(event,'${it.id}')"
+      onclick="openMarketingItemDetail('${it.id}')"
+      class="mkt-card bg-white rounded-lg border border-slate-200 p-3 hover:shadow-card transition-shadow">
+    ${mktLabelChips(it, labelMap||{})}
     <div class="flex items-start gap-2">
       <span class="w-1 self-stretch rounded shrink-0" style="background:${(TASK_STATUSES[it.status]||TASK_STATUSES.todo).solid}"></span>
       <div class="min-w-0 flex-1">
         <div class="text-sm font-medium ${it.status==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.title)}</div>
-        <div class="flex items-center gap-1.5 flex-wrap mt-2">${mktStatusPill(it.status)}${it.priority!=='normal'?`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`:''}${mktDueBadge(it)}${subs.length?`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5">${icon('check','w-3 h-3')}${subDone}/${subs.length}</span>`:''}</div>
+        <div class="flex items-center gap-1.5 flex-wrap mt-2">${meta.join('')}</div>
         ${mktMembers(it.id).length?`<div class="mt-2">${mktMemberAvatars(it.id)}</div>`:''}
       </div>
     </div></div>`;
 }
-function renderMarketingBoard(b){
-  const project=mktProject(b.projectId); const lists=mktListsOf(b.id);
+// The kanban board itself — colored backdrop from the board colour, lists as
+// columns, drag-and-drop between/within lists.
+function renderMarketingKanban(b){
+  const lists=mktListsOf(b.id);
+  const labelMap=mktLabelMap(b);
   const column=l=>{ const items=mktItemsOf(l.id);
-    return `<div class="w-72 shrink-0 bg-slate-50 rounded-xl border border-slate-200 flex flex-col max-h-[calc(100vh-16rem)]">
+    return `<div class="w-72 shrink-0 rounded-xl border border-white/40 flex flex-col max-h-[calc(100vh-18rem)]" style="background:rgba(255,255,255,0.92)">
       <div class="p-3 flex items-center gap-2 border-b border-slate-200">
         <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${l.color}"></span>
         <h4 class="font-semibold text-sm text-slate-800 flex-1 truncate">${escapeHTML(l.name)}</h4>
@@ -13474,16 +13509,23 @@ function renderMarketingBoard(b){
         <button onclick="openMarketingListModal('${b.id}','${l.id}')" class="text-slate-400 hover:text-slate-600 p-0.5" title="Edit list">${icon('edit','w-3.5 h-3.5')}</button>
         <button onclick="mktDeleteList('${l.id}')" class="text-slate-400 hover:text-rose-600 p-0.5" title="Delete list">${icon('trash','w-3.5 h-3.5')}</button>
       </div>
-      <div class="p-2 space-y-2 overflow-y-auto flex-1">${items.map(mktItemCard).join('') || '<div class="text-xs text-slate-400 text-center py-4">No items yet</div>'}</div>
-      <button onclick="openMarketingItemModal('${l.id}')" class="m-2 mt-0 text-sm text-slate-500 hover:text-brand-700 hover:bg-white rounded-lg py-1.5 text-center border border-dashed border-slate-300">+ Add item</button>
+      <div class="p-2 space-y-2 overflow-y-auto flex-1"
+           ondragover="mktDragOver(event)"
+           ondragenter="this.classList.add('mkt-drop-active')"
+           ondragleave="if(event.target===this)this.classList.remove('mkt-drop-active')"
+           ondrop="mktDropOnList(event,'${l.id}')">${items.map(it=>mktItemCard(it,labelMap)).join('') || '<div class="text-xs text-slate-400 text-center py-6 pointer-events-none">Drop or add items here</div>'}</div>
+      <button onclick="openMarketingItemModal('${l.id}')" class="m-2 mt-0 text-sm text-slate-600 hover:text-brand-700 hover:bg-white rounded-lg py-1.5 text-center border border-dashed border-slate-300">+ Add a card</button>
     </div>`; };
-  return `
-    ${mktHeaderBar([{label:'Marketing',onclick:'mktBackHome()'},{label:project?project.name:'Project',onclick:'mktBackToProject()'},{label:b.name}], `
-      <button onclick="openMarketingBoardModal('${b.projectId}','${b.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Edit</button>
+  const boardActions = `<div class="flex items-center gap-2 mb-3">
+      <button onclick="openMarketingLabelsModal('${b.id}')" class="btn btn-ghost btn-sm">${icon('star','w-4 h-4')} Labels</button>
+      <button onclick="openMarketingBoardModal('${b.projectId}','${b.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} Edit board</button>
       <button onclick="mktDeleteBoard('${b.id}')" class="btn btn-ghost btn-sm text-rose-600" title="Delete board">${icon('trash','w-4 h-4')}</button>
-      <button onclick="openMarketingListModal('${b.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} New list</button>`)}
-    ${lists.length ? `<div class="flex gap-4 overflow-x-auto pb-4">${lists.map(column).join('')}<button onclick="openMarketingListModal('${b.id}')" class="w-72 shrink-0 h-12 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:text-brand-700 hover:border-brand-300 text-sm">+ Add list</button></div>`
-      : mktEmpty('No lists yet','Add a list (column) to start adding items to this board.',`<button onclick="openMarketingListModal('${b.id}')" class="btn btn-primary">${icon('plus','w-4 h-4')} New list</button>`)}`;
+      <button onclick="openMarketingListModal('${b.id}')" class="btn btn-primary btn-sm ml-auto">${icon('plus','w-4 h-4')} New list</button>
+    </div>`;
+  const body = lists.length
+    ? `<div class="flex gap-4 overflow-x-auto pb-2">${lists.map(column).join('')}<button onclick="openMarketingListModal('${b.id}')" class="w-72 shrink-0 h-12 rounded-xl border border-dashed border-white/60 text-white/90 hover:bg-white/10 text-sm">+ Add another list</button></div>`
+    : `<div class="bg-white/90 rounded-xl p-10 text-center"><div class="text-slate-800 font-semibold">No lists yet</div><div class="text-sm text-slate-500 mt-1 mb-4">Add a list (column) to start adding cards.</div><button onclick="openMarketingListModal('${b.id}')" class="btn btn-primary">${icon('plus','w-4 h-4')} New list</button></div>`;
+  return `${boardActions}<div class="rounded-2xl p-4" style="background:linear-gradient(135deg, ${b.color}, ${b.color}bb)">${body}</div>`;
 }
 
 // ---- item detail modal ----
@@ -13513,6 +13555,10 @@ function mktItemBodyHTML(id){
       <div><label class="label">Start date</label><input type="date" class="input" value="${it.startDate||''}" onchange="mktUpdateItem('${id}',{start_date:this.value||null})"></div>
       <div><label class="label">Due date</label><input type="date" class="input" value="${it.dueDate||''}" onchange="mktUpdateItem('${id}',{due_date:this.value||null})"></div>
     </div>
+    ${(()=>{ const board=mktBoardOfItem(it); const bl=(board&&board.labels)||[]; const on=new Set(it.labelIds||[]);
+      return `<div class="mb-4"><div class="flex items-center justify-between mb-1"><label class="label !mb-0">Labels</label>${board?`<button class="text-xs text-brand-700 hover:underline" onclick="openMarketingLabelsModal('${board.id}')">Manage labels</button>`:''}</div>
+        <div class="flex flex-wrap gap-1.5">${bl.length?bl.map(l=>`<button onclick="mktToggleItemLabel('${id}','${l.id}')" class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded ${on.has(l.id)?'text-white':'text-slate-600'}" style="${on.has(l.id)?`background:${l.color}`:'background:#f1f5f9'}">${on.has(l.id)?icon('check','w-3 h-3'):''}${escapeHTML(l.name)}</button>`).join(''):'<span class="text-xs text-slate-400">No labels on this board yet.</span>'}</div>
+      </div>`; })()}
     <div class="mb-4">
       <label class="label">Assigned to</label>
       <div class="flex items-center gap-2 flex-wrap">${members.map(e=>`<span class="inline-flex items-center gap-1 bg-slate-100 rounded-full pl-1 pr-2 py-0.5 text-xs">${avatarHTML(e,20)}<span>${escapeHTML(mktEmpName(e.id))}</span><button onclick="mktRemoveMember('${id}','${e.id}')" class="text-slate-400 hover:text-rose-600" title="Remove">${icon('close','w-3 h-3')}</button></span>`).join('') || '<span class="text-xs text-slate-400">No one assigned</span>'}</div>
@@ -13523,6 +13569,12 @@ function mktItemBodyHTML(id){
       <textarea id="mkt-notes-${id}" class="input" rows="3" placeholder="Add details, links, the brief…">${escapeHTML(it.description||'')}</textarea>
       <div class="mt-1 text-right"><button class="btn btn-ghost btn-sm" onclick="mktUpdateItem('${id}',{description:(document.getElementById('mkt-notes-${id}').value||'').trim()})">Save notes</button></div>
     </div>
+    ${(()=>{ const atts=mktAttachmentsOf(id);
+      return `<div class="mb-4"><label class="label">Attachments ${atts.length?`<span class="text-slate-400 font-normal">· ${atts.length}</span>`:''}</label>
+        <div class="space-y-1.5">${atts.map(a=>`<div class="flex items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5"><span class="text-slate-400">${icon('file','w-4 h-4')}</span><button class="flex-1 text-left truncate text-slate-700 hover:text-brand-700 hover:underline" onclick="mktDownloadAttachment('${a.id}')" title="Download">${escapeHTML(a.name)}</button><span class="text-[11px] text-slate-400">${mktHumanSize(a.size)}</span><button onclick="mktDeleteAttachment('${id}','${a.id}')" class="text-slate-300 hover:text-rose-600" title="Delete">${icon('trash','w-3.5 h-3.5')}</button></div>`).join('')}</div>
+        <label class="btn btn-ghost btn-sm mt-2 cursor-pointer inline-flex">${icon('upload','w-4 h-4')} Add attachment<input type="file" class="hidden" onchange="mktUploadAttachment('${id}', this)"></label>
+        <span class="text-[11px] text-slate-400 ml-2">Max 5 MB</span>
+      </div>`; })()}
     <div class="mb-4">
       <label class="label">Subitems ${subs.length?`<span class="text-slate-400 font-normal">· ${subDone}/${subs.length} done</span>`:''}</label>
       <div class="space-y-1.5">${subs.map(s=>`<div class="flex items-center gap-2 text-sm"><input type="checkbox" ${s.status==='done'?'checked':''} onchange="mktToggleSubitem('${s.id}')"><span class="flex-1 ${s.status==='done'?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(s.title)}</span><button onclick="mktDeleteItem('${s.id}')" class="text-slate-300 hover:text-rose-600" title="Delete">${icon('trash','w-3.5 h-3.5')}</button></div>`).join('')}</div>
@@ -13703,7 +13755,85 @@ async function mktDeleteList(id){
 function mktBackHome(){ _mktProjectId=null; _mktBoardId=null; render(); }
 function mktBackToProject(){ _mktBoardId=null; render(); }
 function mktOpenProject(id){ _mktProjectId=id; _mktBoardId=null; render(); }
-function mktOpenBoard(id){ const b=mktBoard(id); if(b) _mktProjectId=b.projectId; _mktBoardId=id; render(); }
+function mktOpenBoard(id){ const b=mktBoard(id); if(b){ _mktProjectId=b.projectId; _mktBoardId=id; render(); } }
+
+// ---- labels + attachments + drag-and-drop helpers ----
+function mktUid(){ try{ return crypto.randomUUID(); }catch(_){ return 'l'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); } }
+function mktBoardOfItem(it){ if(!it) return null; const l=(state.marketingLists||[]).find(x=>x.id===it.listId); return l?mktBoard(l.boardId):null; }
+function mktLabelMap(board){ const m={}; ((board&&board.labels)||[]).forEach(l=>{ m[l.id]=l; }); return m; }
+function mktAttachmentsOf(id){ return (state.marketingAttachments||[]).filter(a=>a.itemId===id); }
+function mktHumanSize(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+
+// Labels are stored as a jsonb array on the board; cards reference them by id.
+async function mktSaveBoardLabels(boardId, labels){ const b=mktBoard(boardId); if(!b) return false; const { data, error } = await sb.from('marketing_boards').update({ labels }).eq('id',boardId).select().single(); if(error){ toast(humanizeError(error),'error'); return false; } Object.assign(b, mapMarketingBoardFromDb(data)); return true; }
+function openMarketingLabelsModal(boardId){ if(!canManageMarketing()) return; if(!mktBoard(boardId)) return; openModal('Board labels', `<div id="mkt-labels-body">${mktLabelsBodyHTML(boardId)}</div>`, ()=>true, { saveLabel: t('close') }); }
+function refreshMktLabels(boardId){ const el=document.getElementById('mkt-labels-body'); if(el) el.innerHTML=mktLabelsBodyHTML(boardId); }
+function mktLabelsBodyHTML(boardId){ const b=mktBoard(boardId); if(!b) return ''; const labels=b.labels||[];
+  return `<p class="text-xs text-slate-500 mb-3">Labels are shared across this board. Add them to any card from the card&#39;s detail view.</p>
+    <div class="space-y-2 mb-4">${labels.length?labels.map(l=>`<div class="flex items-center gap-2"><span class="w-5 h-5 rounded shrink-0" style="background:${l.color}"></span><input class="input flex-1 !py-1" value="${escapeHTML(l.name)}" maxlength="40" onchange="mktRenameLabel('${boardId}','${l.id}',this.value)"><div class="flex gap-1 flex-wrap">${MKT_COLORS.map(c=>`<button type="button" onclick="mktRecolorLabel('${boardId}','${l.id}','${c}')" class="w-5 h-5 rounded-full" style="background:${c};${l.color===c?'outline:2px solid #0f172a;outline-offset:1px;':''}"></button>`).join('')}</div><button onclick="mktDeleteLabel('${boardId}','${l.id}')" class="text-slate-400 hover:text-rose-600 p-1 shrink-0" title="Delete label">${icon('trash','w-4 h-4')}</button></div>`).join(''):'<div class="text-sm text-slate-400">No labels yet.</div>'}</div>
+    <div class="border-t border-slate-100 pt-3"><label class="label">New label</label><div class="flex gap-2"><input id="mkt-newlabel-name" class="input flex-1" placeholder="e.g. Priority" maxlength="40"><button class="btn btn-primary btn-sm" onclick="mktAddLabel('${boardId}')">${icon('plus','w-4 h-4')} Add</button></div></div>`;
+}
+async function mktAddLabel(boardId){ const b=mktBoard(boardId); if(!b) return; const name=(document.getElementById('mkt-newlabel-name')?.value||'').trim(); if(!name){ toast('Enter a label name','error'); return; } const labels=[...(b.labels||[]), { id:mktUid(), name, color: MKT_COLORS[(b.labels||[]).length % MKT_COLORS.length] }]; if(await mktSaveBoardLabels(boardId, labels)){ refreshMktLabels(boardId); render(); } }
+async function mktRenameLabel(boardId, id, name){ const b=mktBoard(boardId); if(!b) return; const labels=(b.labels||[]).map(l=>l.id===id?{...l, name:(name||'').trim()||l.name}:l); if(await mktSaveBoardLabels(boardId, labels)){ refreshMktLabels(boardId); render(); } }
+async function mktRecolorLabel(boardId, id, color){ const b=mktBoard(boardId); if(!b) return; const labels=(b.labels||[]).map(l=>l.id===id?{...l, color}:l); if(await mktSaveBoardLabels(boardId, labels)){ refreshMktLabels(boardId); render(); } }
+async function mktDeleteLabel(boardId, id){ const b=mktBoard(boardId); if(!b) return; if(!confirm('Delete this label? It will be removed from cards that use it.')) return; const labels=(b.labels||[]).filter(l=>l.id!==id); if(await mktSaveBoardLabels(boardId, labels)){ refreshMktLabels(boardId); render(); } }
+async function mktToggleItemLabel(itemId, labelId){ const it=mktItem(itemId); if(!it) return; const has=(it.labelIds||[]).includes(labelId); const next = has ? (it.labelIds||[]).filter(x=>x!==labelId) : [...(it.labelIds||[]), labelId]; const { data, error } = await sb.from('marketing_items').update({ label_ids: next }).eq('id',itemId).select().single(); if(error){ toast(humanizeError(error),'error'); return; } Object.assign(it, mapMarketingItemFromDb(data)); render(); refreshMarketingItemDetail(itemId); }
+
+// Attachments: stored as a base64 data_url; metadata kept in state, the
+// heavy data_url is fetched only when downloading.
+async function mktUploadAttachment(itemId, input){
+  const f=input.files&&input.files[0]; if(!f) return;
+  if(f.size>5*1024*1024){ toast('File too large (max 5 MB)','error'); input.value=''; return; }
+  const reader=new FileReader();
+  reader.onload=async()=>{
+    const { data, error } = await sb.from('marketing_item_attachments')
+      .insert({ item_id:itemId, name:f.name, mime:f.type||null, size:f.size, data_url:reader.result, created_by:currentEmployee()?.id })
+      .select('id, item_id, name, mime, size, created_by, created_at').single();
+    if(error){ toast(humanizeError(error),'error'); return; }
+    state.marketingAttachments.push(mapMarketingAttachmentFromDb(data));
+    render(); refreshMarketingItemDetail(itemId); toast('Attachment added','success');
+  };
+  reader.onerror=()=>toast('Could not read file','error');
+  reader.readAsDataURL(f); input.value='';
+}
+async function mktDownloadAttachment(id){
+  const a=(state.marketingAttachments||[]).find(x=>x.id===id); if(!a) return;
+  const { data, error } = await sb.from('marketing_item_attachments').select('data_url,name').eq('id',id).single();
+  if(error||!data?.data_url){ toast('Could not fetch attachment','error'); return; }
+  const link=document.createElement('a'); link.href=data.data_url; link.download=a.name||'attachment';
+  document.body.appendChild(link); link.click(); link.remove();
+}
+async function mktDeleteAttachment(itemId, id){
+  if(!confirm('Delete this attachment?')) return;
+  const { error } = await sb.from('marketing_item_attachments').delete().eq('id',id);
+  if(error){ toast(humanizeError(error),'error'); return; }
+  state.marketingAttachments = state.marketingAttachments.filter(a=>a.id!==id);
+  render(); refreshMarketingItemDetail(itemId);
+}
+
+// Drag & drop (Trello-style). Only top-level cards drag; dropping ON a card
+// inserts before it, on empty list space appends. list_id + sort_order persist.
+let _mktDragItemId = null;
+function mktDragStart(e, id){ _mktDragItemId=id; try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', id); }catch(_){} const c=e.currentTarget; if(c) c.classList.add('mkt-dragging'); }
+function mktDragEnd(e){ _mktDragItemId=null; document.querySelectorAll('.mkt-dragging').forEach(el=>el.classList.remove('mkt-dragging')); document.querySelectorAll('.mkt-drop-active').forEach(el=>el.classList.remove('mkt-drop-active')); }
+function mktDragOver(e){ e.preventDefault(); try{ e.dataTransfer.dropEffect='move'; }catch(_){} }
+function mktDropOnList(e, listId){ e.preventDefault(); const el=e.currentTarget; if(el) el.classList.remove('mkt-drop-active'); if(_mktDragItemId) mktMoveItem(_mktDragItemId, listId, null); }
+function mktDropBeforeCard(e, targetItemId){ e.preventDefault(); e.stopPropagation(); const dragId=_mktDragItemId; if(!dragId || dragId===targetItemId) return; const target=mktItem(targetItemId); if(!target) return; mktMoveItem(dragId, target.listId, targetItemId); }
+async function mktMoveItem(dragId, targetListId, beforeItemId){
+  const drag=mktItem(dragId); if(!drag) return;
+  const fromList=drag.listId;
+  let ordered=mktItemsOf(targetListId).filter(i=>i.id!==dragId);
+  let at = beforeItemId ? ordered.findIndex(i=>i.id===beforeItemId) : ordered.length;
+  if(at<0) at=ordered.length;
+  ordered.splice(at, 0, drag);
+  if(fromList===targetListId && ordered.every((it,i)=>it.sortOrder===i)) return;
+  const updates=[];
+  ordered.forEach((it,i)=>{ const listChanged=it.id===dragId && it.listId!==targetListId; if(it.sortOrder!==i || listChanged){ updates.push({ id:it.id, sort_order:i, list_id:targetListId }); } it.sortOrder=i; if(it.id===dragId) it.listId=targetListId; });
+  render();
+  const results=await Promise.all(updates.map(u=> sb.from('marketing_items').update({ sort_order:u.sort_order, list_id:u.list_id, updated_at:new Date().toISOString() }).eq('id',u.id)));
+  const failed=results.find(r=>r.error);
+  if(failed) toast(humanizeError(failed.error),'error');
+}
 
 /* -------------------- DEDUCTIONS -------------------- */
 // Admin/HR registers a deduction the day an incident happens; it is
