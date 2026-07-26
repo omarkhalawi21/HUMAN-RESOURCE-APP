@@ -939,6 +939,44 @@ function openPrintWindow(html) {
   return win;
 }
 
+/* In-app print PREVIEW — shows the print HTML inside an isolated iframe modal
+   with a Print button, instead of spawning a popup (which can be pop-up-blocked
+   and jumps straight toward the print dialog). The iframe sandboxes the doc's
+   own <style> so it can't leak into the app; Print prints just the iframe. */
+function openPrintPreview(html, title='Preview') {
+  document.getElementById('preview-root')?.remove();
+  const root = el(`
+    <div id="preview-root" class="fixed inset-0 z-50 flex flex-col p-3 md:p-6 modal-backdrop fade-in" role="dialog" aria-modal="true" aria-label="${escapeHTML(title)}">
+      <div class="bg-white rounded-2xl shadow-pop w-full max-w-4xl mx-auto flex flex-col min-h-0" style="height:92vh">
+        <div class="flex items-center justify-between gap-3 p-4 border-b border-slate-100">
+          <h3 class="font-display text-lg font-semibold text-slate-900">${escapeHTML(title)}</h3>
+          <div class="flex gap-2">
+            <button onclick="printPreviewFrame()" class="btn btn-primary btn-sm">${icon('file','w-4 h-4')} Print / Save as PDF</button>
+            <button onclick="closePrintPreview()" class="btn btn-ghost btn-sm">${escapeHTML(t('close'))}</button>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 bg-slate-100 rounded-b-2xl overflow-hidden">
+          <iframe id="preview-frame" title="${escapeHTML(title)}" class="w-full h-full" style="border:0;background:#fff"></iframe>
+        </div>
+      </div>
+    </div>`);
+  document.body.appendChild(root);
+  root.addEventListener('click', e => { if (e.target === root) closePrintPreview(); });
+  const frame = document.getElementById('preview-frame');
+  if (frame) frame.srcdoc = html;
+  _printPreviewEsc = e => { if (e.key === 'Escape') closePrintPreview(); };
+  document.addEventListener('keydown', _printPreviewEsc);
+}
+let _printPreviewEsc = null;
+function closePrintPreview() {
+  document.getElementById('preview-root')?.remove();
+  if (_printPreviewEsc) { document.removeEventListener('keydown', _printPreviewEsc); _printPreviewEsc = null; }
+}
+function printPreviewFrame() {
+  const f = document.getElementById('preview-frame');
+  if (f && f.contentWindow) { try { f.contentWindow.focus(); } catch(_) {} f.contentWindow.print(); }
+}
+
 function logoURL() {
   // Absolute URL so it loads correctly inside a popup window with about:blank
   try { return new URL('logo.png', window.location.href).href; }
@@ -1306,6 +1344,8 @@ function mapAdvanceFromDb(r) {
     installmentsPaid: Number(r.installments_paid)||0,
     kind: r.kind||'advance',
     installmentMonths: r.installment_months != null ? Number(r.installment_months) : null,
+    monthlyRepayment: r.monthly_repayment != null ? Number(r.monthly_repayment) : null,
+    amountRecovered: Number(r.amount_recovered)||0,
     decidedBy: r.decided_by, decidedAt: r.decided_at, repaidAt: r.repaid_at,
   };
 }
@@ -1316,6 +1356,7 @@ function advanceToDb(a) {
     deduct_from_payroll: a.deductFromPayroll||'none',
     kind: a.kind||'advance',
     installment_months: a.installmentMonths != null ? Number(a.installmentMonths) : null,
+    monthly_repayment: a.monthlyRepayment != null && a.monthlyRepayment !== '' ? Number(a.monthlyRepayment) : null,
   };
 }
 function mapDeductionFromDb(r) {
@@ -6492,7 +6533,7 @@ function generatePayrollReport(period) {
     <div class="doc-footer">Payroll report for ${escapeHTML(monthName)} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
   </div>
   </body></html>`;
-  if (!openPrintWindow(html)) return;
+  openPrintPreview(html, `Payroll report — ${monthName}`);
 }
 function openPayslip(payrollId) {
   const p = state.payroll.find(x => x.id===payrollId);
@@ -6559,7 +6600,7 @@ function openPayslip(payrollId) {
     <div class="doc-footer">Payslip number PS-${escapeHTML(p.id.slice(-6).toUpperCase())} &middot; Computer-generated, signature not required</div>
   </div>
   </body></html>`;
-  if (!openPrintWindow(html)) return;
+  openPrintPreview(html, `Payslip — ${fullName}, ${periodLabel}`);
 }
 
 // Transient: per-employee manual adjustment lines entered in the Run
@@ -6709,8 +6750,20 @@ function calcPayroll(ym) {
         if (installment > 0) advanceItems.push({ kind:'deduction', label:`Loan repayment${reason?': '+reason:''} (installment ${newPaid}/${months})`, amount: installment });
         advanceUpdates.set(a.id, { installmentsPaid: newPaid, repaid: newPaid >= months });
       } else {
-        if (total > 0) advanceItems.push({ kind:'deduction', label:`Advance repayment${reason?': '+reason:''}`, amount: total });
-        advanceUpdates.set(a.id, { installmentsPaid: 1, repaid: true });
+        // Advance. Default = recover IN FULL this run (unchanged). If a
+        // monthly_repayment cap is set, recover at most that per run and
+        // track amount_recovered until the advance is cleared.
+        const recovered = Math.round((Number(a.amountRecovered) || 0) * 100) / 100;
+        const remaining = Math.round((total - recovered) * 100) / 100;
+        if (remaining <= 0) { advanceUpdates.set(a.id, { installmentsPaid: (Number(a.installmentsPaid)||0), amountRecovered: recovered, repaid: true }); return; }
+        const cap  = Math.round((Number(a.monthlyRepayment) || 0) * 100) / 100;
+        const take = cap > 0 ? Math.min(cap, remaining) : remaining;
+        const left = Math.round((remaining - take) * 100) / 100;
+        if (take > 0) advanceItems.push({ kind:'deduction',
+          label:`Advance repayment${reason?': '+reason:''}${cap>0 ? ` (${fmtMoney(take)}${left>0?`, ${fmtMoney(left)} left`:''})` : ''}`,
+          amount: take });
+        const newRecovered = Math.round((recovered + take) * 100) / 100;
+        advanceUpdates.set(a.id, { installmentsPaid: (Number(a.installmentsPaid)||0) + 1, amountRecovered: newRecovered, repaid: newRecovered >= total - 0.001 });
       }
     });
     const base = e.salary;
@@ -6817,6 +6870,7 @@ function runPayroll() {
       const u = calc.advanceUpdates.get(aid);
       if (!a || !u) return;
       const updates = { installments_paid: u.installmentsPaid };
+      if (u.amountRecovered != null) updates.amount_recovered = u.amountRecovered;
       if (u.repaid && !a.repaidAt) updates.repaid_at = todayISO();
       const { data, error } = await sb.from('advances').update(updates).eq('id', aid).select().single();
       if (error) {
@@ -10917,6 +10971,9 @@ function advanceTypeChanged() {
   const kind = document.getElementById('adv-kind')?.value === 'loan' ? 'loan' : 'advance';
   const wrap = document.getElementById('adv-months-wrap');
   if (wrap) wrap.classList.toggle('hidden', kind !== 'loan');
+  // Monthly-repayment cap is an advance-only option (loans already use installments).
+  const monthlyWrap = document.getElementById('adv-monthly-wrap');
+  if (monthlyWrap) monthlyWrap.classList.toggle('hidden', kind !== 'advance');
   const cap = kind === 'advance' ? salary*0.5 : salary;
   const hint = document.getElementById('adv-cap-hint');
   if (hint) hint.textContent = salary > 0
@@ -10925,7 +10982,7 @@ function advanceTypeChanged() {
   const note = document.getElementById('adv-note');
   if (note) note.innerHTML = kind === 'loan'
     ? `${icon('warning','w-4 h-4 inline')} Once approved, the loan is repaid in equal installments over the chosen period (max 2 months), deducted automatically each payroll run until cleared.`
-    : `${icon('warning','w-4 h-4 inline')} Once approved, the full amount is automatically deducted from the employee's next payroll run.`;
+    : `${icon('warning','w-4 h-4 inline')} Once approved, the amount is deducted from the employee's next payroll run — or spread across runs if a monthly repayment is set above.`;
   const ack = document.getElementById('adv-ack-label');
   if (ack) ack.textContent = kind === 'loan'
     ? 'I understand and agree that this loan will be repaid in equal monthly installments over the selected period.'
@@ -10967,13 +11024,18 @@ function openAdvanceModal() {
         <input id="adv-amt" class="input" type="number" min="50" step="50" placeholder="500" required>
         <div class="text-xs text-slate-500 mt-1" id="adv-cap-hint">${initCapHint}</div>
       </div>
+      <div class="col-span-2" id="adv-monthly-wrap">
+        <label class="label">Monthly repayment (optional)</label>
+        <input id="adv-monthly" class="input" type="number" min="0" step="50" placeholder="Leave blank to deduct the full amount at once">
+        <div class="text-xs text-slate-500 mt-1">If set, at most this much is deducted each payroll run until the advance is cleared (e.g. 500/month).</div>
+      </div>
       <div class="col-span-2">
         <label class="label label-required">Reason</label>
         <textarea id="adv-reason" class="input" rows="3" placeholder="Briefly describe what this is for..." required></textarea>
       </div>
     </div>
     <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 mt-4" id="adv-note">
-      ${icon('warning','w-4 h-4 inline')} Once approved, the full amount is automatically deducted from the employee's next payroll run.
+      ${icon('warning','w-4 h-4 inline')} Once approved, the amount is deducted from the employee's next payroll run — or spread across runs if a monthly repayment is set above.
     </div>
     <label class="flex items-start gap-2 mt-3 text-sm text-slate-700 cursor-pointer">
       <input type="checkbox" id="adv-ack" class="mt-0.5 shrink-0">
@@ -10987,7 +11049,11 @@ function openAdvanceModal() {
     const amount = Number($('#adv-amt').value)||0;
     const reason = $('#adv-reason').value.trim();
     const months = kind === 'loan' ? Math.min(2, Math.max(1, Number($('#adv-months')?.value)||1)) : null;
+    // Advance-only optional monthly cap (>0 = installment-style; blank = full recovery).
+    const monthlyRaw = kind === 'advance' ? Number($('#adv-monthly')?.value) : NaN;
+    const monthlyRepayment = (kind === 'advance' && monthlyRaw > 0) ? monthlyRaw : null;
     if (amount <= 0) { toast('Enter a valid amount', 'error'); return false; }
+    if (monthlyRepayment != null && monthlyRepayment > amount) { toast('Monthly repayment cannot exceed the advance amount', 'error'); return false; }
     if (!reason) { toast('Please provide a reason', 'error'); return false; }
     if (!$('#adv-ack')?.checked) { toast('Please confirm you understand the repayment terms', 'error'); return false; }
     // Hard caps: advance ≤ 50% of salary, loan ≤ one month's salary.
@@ -10999,7 +11065,7 @@ function openAdvanceModal() {
         return false;
       }
     }
-    const payload = advanceToDb({ employeeId: empId, amount, reason, status: 'pending', deductFromPayroll: 'next', kind, installmentMonths: months });
+    const payload = advanceToDb({ employeeId: empId, amount, reason, status: 'pending', deductFromPayroll: 'next', kind, installmentMonths: months, monthlyRepayment });
     const { data, error } = await sb.from('advances').insert(payload).select().single();
     if (error) { toast(humanizeError(error), 'error'); return false; }
     const saved = mapAdvanceFromDb(data);
