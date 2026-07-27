@@ -13879,7 +13879,7 @@ function renderMarketingCalendar(){
     // title, with the FULL notes in the hover tooltip alongside the title.
     const notes=(it.description||'').trim();
     const tip=escapeHTML(it.title)+(overdue?' · overdue':'')+(notes?'\n\n'+escapeHTML(notes):'');
-    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-tight text-slate-500 truncate">${escapeHTML(notes)}</span>`:''}</button>`; };
+    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button>`; };
   const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg min-h-[92px]"></div>`;
     const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=(byDay[ds]||[]); const isToday=ds===today;
     const shown=list.slice(0,3); const extra=list.length-shown.length;
