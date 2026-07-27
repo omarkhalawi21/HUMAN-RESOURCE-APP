@@ -13875,7 +13875,11 @@ function renderMarketingCalendar(){
   // rose accent; done cards are muted + struck through.
   const chip=it=>{ const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
     const overdue=it.status!=='done' && it.dueDate<today; const done=it.status==='done';
-    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md text-[11px] truncate ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${escapeHTML(it.title)}${overdue?' · overdue':''}"><span class="block truncate ${done?'line-through':''}">${escapeHTML(it.title)}</span></button>`; };
+    // The card's Notes (item.description). Shown as a one-line snippet under the
+    // title, with the FULL notes in the hover tooltip alongside the title.
+    const notes=(it.description||'').trim();
+    const tip=escapeHTML(it.title)+(overdue?' · overdue':'')+(notes?'\n\n'+escapeHTML(notes):'');
+    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-tight text-slate-500 truncate">${escapeHTML(notes)}</span>`:''}</button>`; };
   const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg min-h-[92px]"></div>`;
     const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=(byDay[ds]||[]); const isToday=ds===today;
     const shown=list.slice(0,3); const extra=list.length-shown.length;
