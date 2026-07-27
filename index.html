@@ -21038,11 +21038,73 @@ function printWeeklyInventoryReport() {
   if (!openPrintWindow(html)) return;
 }
 
-// Faisaliyah cafe pickup was removed (2026-07-24): the cafe takes beans off
-// the roaster shelf, but the owner logs that as a Log transfer, so a separate
-// pickup action was redundant. The 'pickup' MOVEMENT_TYPE label and its
-// history styling are kept on purpose so existing pickup movements in the
-// live ledger still render correctly.
+// Shelf → bar pickup. The most common roaster-to-cafe action: the bar/display
+// takes stock straight off the roaster shelf, WITHIN the same branch. This is
+// deliberately NOT a Log transfer — transfers are branch-to-branch and refuse a
+// same-branch move ("Source and destination must differ"). A pickup logs a
+// single movement type='pickup', negative qty, branch taken FROM THE ITEM so it
+// works at any branch (Faisaliyah/Khobar/Rayyan) and can never be cross-branch.
+// Covers both roasted shelf beans (beans_roast) and packaged retail bags
+// (retail_packaged) — anything the roaster hands to the bar. For sending beans
+// to a different branch, use Log transfer instead.
+const PICKUP_CATEGORIES = ['beans_roast', 'retail_packaged'];
+function openPickupModal() {
+  const items = (state.inventory||[])
+    .filter(i => PICKUP_CATEGORIES.includes(i.category))
+    .slice()
+    .sort((a,b) => (a.branch||'').localeCompare(b.branch||'') || (a.name||'').localeCompare(b.name||''));
+  if (items.length === 0) {
+    toast('Nothing on the roasted shelf or retail display to pick up yet.', 'error');
+    return;
+  }
+  const today = todayISO();
+  const form = `
+    <div class="space-y-4">
+      <div class="bg-purple-50 border border-purple-100 rounded-xl p-3 text-xs text-purple-800">
+        ${icon('cash','w-4 h-4 inline')} Use this when the bar/display takes stock off the roaster shelf <strong>within the same branch</strong>. To send beans to another branch (Khobar/Rayyan), use Log transfer instead.
+      </div>
+      <div>
+        <label class="label">Item</label>
+        <select id="pk-item" class="input">
+          ${items.map(i => `<option value="${i.id}">${escapeHTML(i.name)}${i.branch?' &middot; '+escapeHTML(i.branch):''} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')} on shelf)</option>`).join('')}
+        </select>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="label">Quantity picked</label>
+          <input id="pk-qty" type="number" min="0" step="0.01" class="input" placeholder="0.00">
+        </div>
+        <div>
+          <label class="label">Date</label>
+          <input id="pk-date" type="date" class="input" value="${today}">
+        </div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="pk-notes" class="input" rows="2" placeholder="to bar/display, grinder refill, who picked, etc."></textarea>
+      </div>
+    </div>
+  `;
+  openModal('Log shelf → bar pickup', form, async () => {
+    const itemId = $('#pk-item').value;
+    const qty    = parseFloat($('#pk-qty').value);
+    const date   = $('#pk-date').value;
+    const notes  = $('#pk-notes').value.trim();
+    if (!itemId)                { toast('Pick an item', 'error');             return false; }
+    if (isNaN(qty) || qty <= 0) { toast('Enter a positive quantity', 'error'); return false; }
+    const it = (state.inventory||[]).find(i => i.id === itemId);
+    const m = await logInventoryMovement(itemId, -qty, {
+      type: 'pickup',
+      branch: it?.branch || null,
+      occurredAt: date,
+      notes,
+    });
+    if (!m) return false;
+    render();
+    toast('Pickup logged', 'success');
+    return true;
+  }, { saveLabel: 'Log pickup' });
+}
 
 function openLogMovementModal(prefilledItemId) {
   const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
@@ -21453,6 +21515,7 @@ function renderRoaster() {
           <button onclick="printWeeklyInventoryReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Weekly report</button>
           <button onclick="openShelfCountModal()" class="btn btn-ghost">${icon('check','w-4 h-4')} Count shelf</button>
           <button onclick="openPackagedCountModal()" class="btn btn-ghost">${icon('box','w-4 h-4')} Weekly count</button>
+          <button onclick="openPickupModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log pickup</button>
           <button onclick="openTransferModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log transfer</button>
           <button onclick="openRoastBatchModal()" class="btn btn-ghost">${icon('cash','w-4 h-4')} Log roast</button>
           <button onclick="openLogMovementModal()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Log entry</button>
