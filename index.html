@@ -12528,7 +12528,18 @@ function taskDetailBodyHTML(taskId) {
       <button type="submit" class="btn btn-primary btn-sm self-end">${icon('plus','w-4 h-4')} ${escapeHTML(t('add'))}</button>
     </form>` : '';
 
+  // Edit affordance — the detail modal is otherwise read-only for the title/
+  // priority/assignee/due, and openTaskModal(id) (the full editor) had no UI
+  // entry point, so an existing task could never be renamed after creation.
+  // Gated to admin/operations, mirroring openTaskModal's own role check. It
+  // replaces this modal in place (openModal closes the current one first).
+  const editRow = hasRole('admin','operations') ? `
+    <div class="flex justify-end -mt-1 mb-3">
+      <button type="button" onclick="openTaskModal('${tk.id}')" class="btn btn-ghost btn-sm">${icon('edit','w-4 h-4')} ${escapeHTML(t('edit'))}</button>
+    </div>` : '';
+
   return `
+    ${editRow}
     ${meta}
     ${desc}
     <div class="flex items-center gap-2 mb-3">
