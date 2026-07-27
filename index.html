@@ -379,6 +379,7 @@ const I18N = {
     inventory: "Inventory",
     roaster: "Roaster",
     maintenance: "Maintenance",
+    marketing: "Marketing",
     documents: "Documents",
     iqama: "IQAMA",
     baladiya: "Baladiya",
@@ -445,6 +446,8 @@ const I18N = {
     res_empty_upload_cta: "Upload your first resource",
     // My Work page
     my_work_intro: "Tasks assigned to you. Move a task forward by changing its status — it saves instantly.",
+    assigned_to_you: "Also assigned to you",
+    assigned_to_you_sub: "Marketing cards and maintenance tickets assigned to you. Tap one to open it.",
     needs_action: "Needs your action",
     needs_action_sub: "Pending requests waiting on you. Each item clears once you approve, reject, or resolve it.",
     hide_reminder: "Hide this reminder",
@@ -602,6 +605,7 @@ const I18N = {
     inventory: "المخزون",
     roaster: "محمصة",
     maintenance: "الصيانة",
+    marketing: "التسويق",
     documents: "المستندات",
     iqama: "الإقامة",
     baladiya: "البلدية",
@@ -666,6 +670,8 @@ const I18N = {
     res_empty_upload_cta: "ارفع أول مورد",
     // My Work page
     my_work_intro: "المهام الموكلة إليك. غيّر الحالة لتحريك المهمة — يتم الحفظ فورًا.",
+    assigned_to_you: "موكّلة إليك أيضًا",
+    assigned_to_you_sub: "بطاقات التسويق وطلبات الصيانة الموكّلة إليك. اضغط لفتحها.",
     needs_action: "بحاجة إلى إجراء منك",
     needs_action_sub: "طلبات معلّقة بانتظارك. يختفي كل عنصر بمجرد الموافقة عليه أو رفضه أو معالجته.",
     hide_reminder: "إخفاء هذا التذكير",
@@ -12972,13 +12978,93 @@ function renderMyWork() {
     }
   }
 
+  // "Also assigned to you" — work assigned to this person that lives OUTSIDE
+  // the Work-Management task board, gathered here so My Work shows everything
+  // assigned to them in one place (owner request 2026-07-27):
+  //   • Marketing cards where they're a member (marketing_items is world-
+  //     readable, so this works for any assignee incl. floor staff).
+  //   • Maintenance tickets assigned to them. Tickets can only be assigned to
+  //     admin/maintenance roles (see openMaintenanceModal's assignableEmps),
+  //     and those roles already read all maintenance under RLS — so no policy
+  //     change is needed and the openMaintenanceModal link always works.
+  // Done/resolved/cancelled items are excluded — this is a live "what's on me"
+  // list, mirroring the task board which also drops done from the List view.
+  const _ymd = todayISO();
+  const assignedCards = [];
+  (state.marketingItemMembers||[])
+    .filter(m => m.employeeId === me.id)
+    .forEach(m => {
+      const it = mktItem(m.itemId);
+      if (!it || it.status === 'done') return;
+      const list  = (state.marketingLists||[]).find(l => l.id === it.listId);
+      const board = list ? mktBoard(list.boardId) : null;
+      const proj  = board ? mktProject(board.projectId) : null;
+      assignedCards.push({
+        sort: '1' + (it.dueDate || '9999'),
+        onclick: `openMarketingItemDetail('${it.id}')`,
+        // Marketing brand violet — inline hex (matches the marketing UI, which
+        // uses #6d28d9 inline) so no new Tailwind utility classes are needed.
+        icon: 'report', tone: '', toneStyle: 'color:#6d28d9;background:#f3edff',
+        badge: t('marketing'), badgeCls: '', badgeStyle: 'color:#6d28d9;background:#f3edff',
+        title: it.title || '—',
+        context: [proj && proj.name, board && board.name].filter(Boolean).join(' · '),
+        statusPill: mktStatusPill(it.status),
+        due: it.dueDate || null,
+        overdue: !!(it.dueDate && it.dueDate < _ymd),
+      });
+    });
+  (state.maintenance||[])
+    .filter(r => r.assignedTo === me.id && r.status !== 'resolved' && r.status !== 'cancelled')
+    .forEach(r => {
+      const st = MAINT_STATUSES[r.status] || MAINT_STATUSES.open;
+      assignedCards.push({
+        sort: '0' + (r.priority === 'urgent' ? '0' : '5'),
+        onclick: `openMaintenanceModal('${r.id}')`,
+        icon: 'wrench', tone: 'text-blue-600 bg-blue-50', toneStyle: '',
+        badge: t('maintenance'), badgeCls: 'bg-blue-50 text-blue-700', badgeStyle: '',
+        title: r.title || '—',
+        context: [r.branch, r.location].filter(Boolean).join(' · '),
+        statusPill: `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${st.pill}">${escapeHTML(st.label)}</span>`,
+        due: null,
+        overdue: false,
+      });
+    });
+  let assignedSection = '';
+  if (assignedCards.length) {
+    assignedCards.sort((a,b) => (b.overdue?1:0)-(a.overdue?1:0) || String(a.sort).localeCompare(String(b.sort)));
+    const aCard2 = c => `
+      <div class="bg-white rounded-xl border ${c.overdue?'border-rose-200':'border-slate-200'} shadow-sm p-3 flex flex-col gap-2">
+        <button type="button" onclick="${c.onclick}" class="text-start flex items-start gap-2 min-w-0">
+          <span class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${c.tone}"${c.toneStyle?` style="${c.toneStyle}"`:''}>${icon(c.icon,'w-3.5 h-3.5')}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-medium text-slate-800 truncate">${escapeHTML(c.title)}</span>
+            ${c.context ? `<span class="block text-xs text-slate-500 truncate">${escapeHTML(c.context)}</span>` : ''}
+          </span>
+        </button>
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${c.badgeCls}"${c.badgeStyle?` style="${c.badgeStyle}"`:''}>${escapeHTML(c.badge)}</span>
+          <span class="flex items-center gap-2">${c.due ? `<span class="text-xs ${c.overdue?'text-rose-600 font-medium':'text-slate-500'} whitespace-nowrap">${c.overdue?escapeHTML(t('overdue'))+' · ':''}${fmtDate(c.due)}</span>` : ''}${c.statusPill}</span>
+        </div>
+      </div>`;
+    assignedSection = `
+      <div class="mb-6">
+        <div class="flex items-center gap-2 mb-1">
+          <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('assigned_to_you'))}</h3>
+          <span class="text-xs text-slate-400">${assignedCards.length}</span>
+        </div>
+        <p class="text-xs text-slate-500 mb-3">${escapeHTML(t('assigned_to_you_sub'))}</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">${assignedCards.map(aCard2).join('')}</div>
+      </div>`;
+  }
+
   if (mine.length === 0) {
-    return header + actionSection + (clSection || todoSection ? (clSection + todoSection) : (actionSection ? '' : `
+    const extras = actionSection + assignedSection + clSection + todoSection;
+    return header + (extras || `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('check','w-8 h-8')}</div>
         <div class="font-display text-lg font-semibold text-slate-900">${escapeHTML(t('nothing_assigned'))}</div>
         <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">${escapeHTML(t('nothing_assigned_sub'))}</div>
-      </div>`));
+      </div>`);
   }
 
   // Pre-translate strings used inside `rows = list => list.map(tk => …)`
@@ -13033,6 +13119,7 @@ function renderMyWork() {
   return header
     + actionSection
     + myWorkBoardHTML(mine)
+    + assignedSection
     + clSection
     + todoSection;
 }
