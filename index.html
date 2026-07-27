@@ -276,6 +276,7 @@ const ICONS = {
   minus:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
   wrench:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
   grip:     `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>`,
+  copy:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
 };
 
 // Wraps the SVG in inline-block so width/height classes (w-4 h-4 etc) apply.
@@ -14048,6 +14049,7 @@ function renderMarketingKanban(b){
         <h4 class="font-semibold text-sm text-slate-800 flex-1 truncate">${escapeHTML(l.name)}</h4>
         <span class="text-xs text-slate-400">${items.length}</span>
         <button onclick="openMarketingListModal('${b.id}','${l.id}')" class="text-slate-400 hover:text-slate-600 p-0.5" title="Edit list">${icon('edit','w-3.5 h-3.5')}</button>
+        <button onclick="mktDuplicateList('${l.id}')" class="text-slate-400 hover:text-brand-600 p-0.5" title="Duplicate list">${icon('copy','w-3.5 h-3.5')}</button>
         <button onclick="mktDeleteList('${l.id}')" class="text-slate-400 hover:text-rose-600 p-0.5" title="Delete list">${icon('trash','w-3.5 h-3.5')}</button>
       </div>
       <div class="p-2 space-y-2 overflow-y-auto flex-1"
@@ -14291,6 +14293,46 @@ async function mktDeleteList(id){
   state.marketingItems=state.marketingItems.filter(i=>i.listId!==id);
   state.marketingItemMembers=state.marketingItemMembers.filter(m=>!itemIds.has(m.itemId));
   render(); toast('List deleted','success');
+}
+// Duplicate a list (column) with all its cards — for reusing a recurring set
+// (e.g. a weekly Instagram column). Copies the list, then each top-level card
+// faithfully (title/notes/status/priority/dates/labels), plus each card's
+// assignees and subitems. Attachments are NOT copied (heavy file blobs). Order
+// is preserved. Inserts are gated by canManageMarketing() + the block-94 RLS.
+async function mktDuplicateList(id){
+  if(!canManageMarketing()) return;
+  const src=(state.marketingLists||[]).find(x=>x.id===id); if(!src) return;
+  const tops=mktItemsOf(id); // top-level cards, already sorted
+  const withCards = tops.length ? ` and its ${tops.length} card${tops.length===1?'':'s'}` : '';
+  if(!confirm(`Duplicate the list "${src.name}"${withCards}?`)) return;
+  const me=currentEmployee();
+  // 1) the list itself
+  const li = await sb.from('marketing_lists').insert(marketingListToDb({ boardId:src.boardId, name:(src.name||'List')+' (copy)', color:src.color, createdBy:me?.id, sortOrder:mktListsOf(src.boardId).length })).select().single();
+  if(li.error){ toast(humanizeError(li.error),'error'); return; }
+  const newList=mapMarketingListFromDb(li.data); state.marketingLists.push(newList);
+  // 2) top-level cards, each with its members + subitems
+  const cardPayload=(it, listId, parentId, sort)=>({ ...marketingItemToDb({ listId, parentId:parentId||null, title:it.title, description:it.description, status:it.status, priority:it.priority, startDate:it.startDate, dueDate:it.dueDate, completedAt:it.completedAt, createdBy:me?.id, sortOrder:sort }), label_ids: Array.isArray(it.labelIds)?it.labelIds:[] });
+  let copied=0;
+  for(let idx=0; idx<tops.length; idx++){
+    const it=tops[idx];
+    const ci = await sb.from('marketing_items').insert(cardPayload(it, newList.id, null, idx)).select().single();
+    if(ci.error) continue;
+    const newCard=mapMarketingItemFromDb(ci.data); state.marketingItems.push(newCard); copied++;
+    // assignees
+    const mems=(state.marketingItemMembers||[]).filter(m=>m.itemId===it.id);
+    for(const m of mems){
+      const mi = await sb.from('marketing_item_members').insert({ item_id:newCard.id, employee_id:m.employeeId }).select().single();
+      if(!mi.error) state.marketingItemMembers.push(mapMarketingItemMemberFromDb(mi.data));
+    }
+    // subitems (checklist)
+    const subs=mktSubitems(it.id);
+    for(let s=0; s<subs.length; s++){
+      const si = await sb.from('marketing_items').insert(cardPayload(subs[s], newList.id, newCard.id, s)).select().single();
+      if(!si.error) state.marketingItems.push(mapMarketingItemFromDb(si.data));
+    }
+  }
+  render();
+  toast(`List duplicated${copied?` — ${copied} card${copied===1?'':'s'} copied`:''}`, 'success');
 }
 // ---- drill-down nav ----
 function mktBackHome(){ _mktProjectId=null; _mktBoardId=null; render(); }
