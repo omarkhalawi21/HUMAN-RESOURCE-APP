@@ -14016,7 +14016,8 @@ function mktItemCard(it, labelMap){
   const meta=[mktCardStatusSelect(it)];
   if(it.priority!=='normal') meta.push(`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`);
   const due=mktDueBadge(it); if(due) meta.push(due);
-  if(it.description) meta.push(`<span class="text-slate-400 inline-flex items-center" title="Has notes">${icon('file','w-3 h-3')}</span>`);
+  // The card's Notes (item.description) are previewed inline below the title
+  // (see notesLine), so the old "Has notes" file icon is dropped as redundant.
   if(atts.length) meta.push(`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5" title="Attachments">${icon('upload','w-3 h-3')}${atts.length}</span>`);
   if(subs.length) meta.push(`<span class="text-[11px] text-slate-400 inline-flex items-center gap-0.5" title="Subitems">${icon('check','w-3 h-3')}${subDone}/${subs.length}</span>`);
   return `<div data-item="${it.id}" draggable="true"
@@ -14029,6 +14030,7 @@ function mktItemCard(it, labelMap){
       <span class="w-1 self-stretch rounded shrink-0" style="background:${(TASK_STATUSES[it.status]||TASK_STATUSES.todo).solid}"></span>
       <div class="min-w-0 flex-1">
         <div class="text-sm font-medium ${it.status==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.title)}</div>
+        ${(it.description||'').trim()?`<div class="text-xs text-slate-500 mt-1 line-clamp-2" title="${escapeHTML(it.description.trim())}">${escapeHTML(it.description.trim())}</div>`:''}
         <div class="flex items-center gap-1.5 flex-wrap mt-2">${meta.join('')}</div>
         ${mktMembers(it.id).length?`<div class="mt-2">${mktMemberAvatars(it.id)}</div>`:''}
       </div>
