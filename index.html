@@ -12666,11 +12666,15 @@ function myWorkDragEnd(e) {
   _mwDragTaskId = null;
 }
 function myWorkDragOver(e) { e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch(_) {} }
-function myWorkColEnter(e) { e.currentTarget.style.background = '#efe9df'; }
-function myWorkColLeave(e) { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.style.background = ''; }
+// The columns carry an inline translucent-white background (kanban look), so
+// the drop highlight tints to a light blue on enter and restores that white on
+// leave/drop — resetting to '' would blank the column against the panel.
+const MW_COL_BG = 'rgba(255,255,255,0.92)';
+function myWorkColEnter(e) { e.currentTarget.style.background = '#e8f0fb'; }
+function myWorkColLeave(e) { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.style.background = MW_COL_BG; }
 function myWorkDrop(e, status) {
   e.preventDefault();
-  e.currentTarget.style.background = '';
+  e.currentTarget.style.background = MW_COL_BG;
   const id = _mwDragTaskId || (e.dataTransfer ? e.dataTransfer.getData('text/plain') : '');
   _mwDragTaskId = null;
   if (id) changeTaskStatus(id, status);
@@ -12692,28 +12696,35 @@ function myWorkBoardHTML(mine) {
     const cards = list.map(tk => {
       const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
       const over = taskOverdue(tk);
+      const notes = (tk.description||'').trim();
       return `<div draggable="true" ondragstart="myWorkDragStart(event,'${tk.id}')" ondragend="myWorkDragEnd(event)"
           onclick="openTaskDetail('${tk.id}')" title="Open details"
-          class="bg-white rounded-xl border ${over?'border-rose-200':'border-slate-200'} p-3 mb-2 shadow-sm hover:shadow-pop transition-all" style="cursor:grab">
-        <div class="text-sm font-medium text-slate-900">${escapeHTML(tk.title)}</div>
-        ${tk.description ? `<div class="text-xs text-slate-500 mt-1 truncate">${escapeHTML(tk.description)}</div>` : ''}
-        <div class="flex items-center gap-2 mt-2 flex-wrap">
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
-          ${tk.dueDate ? `<span class="text-[11px] ${over?'text-rose-600 font-medium':'text-slate-500'}">${over?'Overdue · ':''}${escapeHTML(fmtDate(tk.dueDate))}</span>` : ''}
-          ${tk.department ? `<span class="text-[11px] text-slate-400">${escapeHTML(tk.department)}</span>` : ''}
+          class="bg-white rounded-lg border ${over?'border-rose-200':'border-slate-200'} p-3 mb-2 shadow-sm hover:shadow-pop transition-all" style="cursor:grab">
+        <div class="flex items-start gap-2">
+          <span class="w-1 self-stretch rounded shrink-0" style="background:${meta.solid}"></span>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium ${key==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(tk.title)}</div>
+            ${notes ? `<div class="text-xs text-slate-500 mt-1 line-clamp-2" title="${escapeHTML(notes)}">${escapeHTML(notes)}</div>` : ''}
+            <div class="flex items-center gap-1.5 mt-2 flex-wrap">
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
+              ${tk.dueDate ? `<span class="text-[11px] ${over?'text-rose-600 font-medium':'text-slate-500'}">${over?'Overdue · ':''}${escapeHTML(fmtDate(tk.dueDate))}</span>` : ''}
+              ${tk.department ? `<span class="text-[11px] text-slate-400">${escapeHTML(tk.department)}</span>` : ''}
+            </div>
+          </div>
         </div>
       </div>`;
-    }).join('') || `<div class="text-xs text-slate-300 text-center py-6">—</div>`;
-    return `<div class="flex-1 bg-slate-50 rounded-2xl p-3" style="min-width:240px"
+    }).join('') || `<div class="text-xs text-slate-400 text-center py-6">—</div>`;
+    return `<div class="flex-1 rounded-xl p-2 flex flex-col" style="min-width:240px;background:${MW_COL_BG}"
         ondragover="myWorkDragOver(event)" ondragenter="myWorkColEnter(event)" ondragleave="myWorkColLeave(event)" ondrop="myWorkDrop(event,'${key}')">
-      <div class="flex items-center gap-2 mb-3 px-1">
-        <span class="text-sm font-semibold text-slate-700">${escapeHTML(meta.label)}</span>
+      <div class="flex items-center gap-2 p-2 border-b border-slate-200 mb-2">
+        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${meta.solid}"></span>
+        <span class="font-semibold text-sm text-slate-800 flex-1 truncate">${escapeHTML(meta.label)}</span>
         <span class="text-xs text-slate-400 tabular-nums">${mine.filter(tk=>(tk.status||'todo')===key).length}</span>
       </div>
-      <div>${cards}</div>
+      <div class="overflow-y-auto flex-1 px-1">${cards}</div>
     </div>`;
   }).join('');
-  return `<div class="mb-6"><div class="flex gap-3 overflow-x-auto pb-2">${cols}</div></div>`;
+  return `<div class="mb-6 rounded-2xl p-4" style="background:linear-gradient(135deg, #4a7fc4, #3a63a8)"><div class="flex gap-3 overflow-x-auto pb-1">${cols}</div></div>`;
 }
 
 function renderMyWork() {
