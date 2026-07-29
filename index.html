@@ -449,6 +449,9 @@ const I18N = {
     my_work_intro: "Tasks assigned to you. Move a task forward by changing its status — it saves instantly.",
     assigned_to_you: "Also assigned to you",
     assigned_to_you_sub: "Marketing cards and maintenance tickets assigned to you. Tap one to open it.",
+    your_tasks: "Your tasks",
+    no_open_tasks: "No open tasks — nice work.",
+    see_work_mgmt: "see Work Management for history",
     needs_action: "Needs your action",
     needs_action_sub: "Pending requests waiting on you. Each item clears once you approve, reject, or resolve it.",
     hide_reminder: "Hide this reminder",
@@ -673,6 +676,9 @@ const I18N = {
     my_work_intro: "المهام الموكلة إليك. غيّر الحالة لتحريك المهمة — يتم الحفظ فورًا.",
     assigned_to_you: "موكّلة إليك أيضًا",
     assigned_to_you_sub: "بطاقات التسويق وطلبات الصيانة الموكّلة إليك. اضغط لفتحها.",
+    your_tasks: "مهامك",
+    no_open_tasks: "لا مهام مفتوحة — أحسنت.",
+    see_work_mgmt: "راجع إدارة العمل للسجل",
     needs_action: "بحاجة إلى إجراء منك",
     needs_action_sub: "طلبات معلّقة بانتظارك. يختفي كل عنصر بمجرد الموافقة عليه أو رفضه أو معالجته.",
     hide_reminder: "إخفاء هذا التذكير",
@@ -12651,80 +12657,52 @@ function setMyWorkTaskView(v) {
   render();
 }
 
-// Kanban drag-and-drop (HTML5 native, desktop). Dropping a card on a column
-// calls changeTaskStatus — the same path the List view's status dropdown uses,
-// so the board and list stay in sync. Touch devices don't fire HTML5 drag
-// events; those users keep using the List view's status dropdown.
-let _mwDragTaskId = null;
-function myWorkDragStart(e, id) {
-  _mwDragTaskId = id;
-  try { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; } catch(_) {}
-  if (e.currentTarget && e.currentTarget.style) e.currentTarget.style.opacity = '0.5';
-}
-function myWorkDragEnd(e) {
-  if (e.currentTarget && e.currentTarget.style) e.currentTarget.style.opacity = '';
-  _mwDragTaskId = null;
-}
-function myWorkDragOver(e) { e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch(_) {} }
-// The columns carry an inline translucent-white background (kanban look), so
-// the drop highlight tints to a light blue on enter and restores that white on
-// leave/drop — resetting to '' would blank the column against the panel.
-const MW_COL_BG = 'rgba(255,255,255,0.92)';
-function myWorkColEnter(e) { e.currentTarget.style.background = '#e8f0fb'; }
-function myWorkColLeave(e) { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.style.background = MW_COL_BG; }
-function myWorkDrop(e, status) {
-  e.preventDefault();
-  e.currentTarget.style.background = MW_COL_BG;
-  const id = _mwDragTaskId || (e.dataTransfer ? e.dataTransfer.getData('text/plain') : '');
-  _mwDragTaskId = null;
-  if (id) changeTaskStatus(id, status);
-}
-
-// Kanban board for the caller's tasks (`mine`): one column per TASK_STATUS,
-// cards draggable between columns. The Done column is capped at the 20 most
-// recent so a long history doesn't balloon it — this is the only place
-// completed tasks surface on My Work (the List view no longer lists them).
-function myWorkBoardHTML(mine) {
+// Compact task list for the caller's tasks (`mine`) — replaces the old kanban
+// board (owner request). Open tasks (not done) render as small tiles with an
+// inline status control so a task can still be moved forward; overdue sorts
+// first, then priority, then due date. Done tasks aren't listed — the Done stat
+// tile shows the count and Work Management holds the full history.
+function myWorkTaskListHTML(mine){
   const prioRank = { urgent:0, high:1, normal:2, low:3 };
-  const cols = Object.entries(TASK_STATUSES).map(([key, meta]) => {
-    let list = mine.filter(tk => (tk.status||'todo') === key);
-    if (key === 'done') {
-      list = list.slice().sort((a,b)=>(b.completedAt||b.updatedAt||'').localeCompare(a.completedAt||a.updatedAt||'')).slice(0, 20);
-    } else {
-      list = list.slice().sort((a,b)=> (prioRank[a.priority]??2)-(prioRank[b.priority]??2) || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
-    }
-    const cards = list.map(tk => {
-      const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
-      const over = taskOverdue(tk);
-      const notes = (tk.description||'').trim();
-      return `<div draggable="true" ondragstart="myWorkDragStart(event,'${tk.id}')" ondragend="myWorkDragEnd(event)"
-          onclick="openTaskDetail('${tk.id}')" title="Open details"
-          class="bg-white rounded-lg border ${over?'border-rose-200':'border-slate-200'} p-3 mb-2 shadow-sm hover:shadow-pop transition-all" style="cursor:grab">
-        <div class="flex items-start gap-2">
-          <span class="w-1 self-stretch rounded shrink-0" style="background:${meta.solid}"></span>
-          <div class="min-w-0 flex-1">
-            <div class="text-sm font-medium ${key==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(tk.title)}</div>
-            ${notes ? `<div class="text-xs text-slate-500 mt-1 line-clamp-2" title="${escapeHTML(notes)}">${escapeHTML(notes)}</div>` : ''}
-            <div class="flex items-center gap-1.5 mt-2 flex-wrap">
-              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
-              ${tk.dueDate ? `<span class="text-[11px] ${over?'text-rose-600 font-medium':'text-slate-500'}">${over?'Overdue · ':''}${escapeHTML(fmtDate(tk.dueDate))}</span>` : ''}
-              ${tk.department ? `<span class="text-[11px] text-slate-400">${escapeHTML(tk.department)}</span>` : ''}
-            </div>
-          </div>
+  const open = mine.filter(tk => (tk.status||'todo')!=='done')
+    .sort((a,b)=> (taskOverdue(b)?1:0)-(taskOverdue(a)?1:0)
+      || (prioRank[a.priority]??2)-(prioRank[b.priority]??2)
+      || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+  const doneCount = mine.length - open.length;
+  if(!open.length && !doneCount) return '';
+  const statusOpts = tk => Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${tk.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('');
+  const tile = tk => {
+    const meta = TASK_STATUSES[tk.status] || TASK_STATUSES.todo;
+    const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal;
+    const over = taskOverdue(tk);
+    const notes = (tk.description||'').trim();
+    return `<div class="bg-white rounded-lg border ${over?'border-rose-200':'border-slate-200'} shadow-sm p-2.5 flex items-start gap-2 min-w-0 hover:shadow-pop transition-all">
+      <span class="w-1 self-stretch rounded shrink-0" style="background:${meta.solid}"></span>
+      <div class="min-w-0 flex-1">
+        <button type="button" onclick="openTaskDetail('${tk.id}')" title="${escapeHTML(t('view'))}" class="block text-start w-full min-w-0">
+          <span class="block text-sm font-medium text-slate-800 truncate">${escapeHTML(tk.title)}</span>
+          ${notes?`<span class="block text-[11px] text-slate-500 truncate">${escapeHTML(notes)}</span>`:''}
+        </button>
+        <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
+          <select onchange="changeTaskStatus('${tk.id}', this.value)" class="input !py-1 !px-2 text-xs !w-auto">${statusOpts(tk)}</select>
+          <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
+          ${tk.dueDate?`<span class="text-[11px] ${over?'text-rose-600 font-medium':'text-slate-500'}">${over?'Overdue · ':''}${escapeHTML(fmtDate(tk.dueDate))}</span>`:''}
+          ${tk.department?`<span class="text-[11px] text-slate-400">${escapeHTML(tk.department)}</span>`:''}
         </div>
-      </div>`;
-    }).join('') || `<div class="text-xs text-slate-400 text-center py-6">—</div>`;
-    return `<div class="flex-1 rounded-xl p-2 flex flex-col" style="min-width:240px;background:${MW_COL_BG}"
-        ondragover="myWorkDragOver(event)" ondragenter="myWorkColEnter(event)" ondragleave="myWorkColLeave(event)" ondrop="myWorkDrop(event,'${key}')">
-      <div class="flex items-center gap-2 p-2 border-b border-slate-200 mb-2">
-        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${meta.solid}"></span>
-        <span class="font-semibold text-sm text-slate-800 flex-1 truncate">${escapeHTML(meta.label)}</span>
-        <span class="text-xs text-slate-400 tabular-nums">${mine.filter(tk=>(tk.status||'todo')===key).length}</span>
       </div>
-      <div class="overflow-y-auto flex-1 px-1">${cards}</div>
     </div>`;
-  }).join('');
-  return `<div class="mb-6 rounded-2xl p-4" style="background:linear-gradient(135deg, #4a7fc4, #3a63a8)"><div class="flex gap-3 overflow-x-auto pb-1">${cols}</div></div>`;
+  };
+  const grid = open.length
+    ? `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">${open.map(tile).join('')}</div>`
+    : `<div class="text-sm text-slate-400 py-2">${escapeHTML(t('no_open_tasks'))}</div>`;
+  const doneNote = doneCount ? `<div class="text-xs text-slate-400 mt-2">${doneCount} ${escapeHTML(t('done').toLowerCase())} · ${escapeHTML(t('see_work_mgmt'))}</div>` : '';
+  return `<div class="mb-6">
+    <div class="flex items-center gap-2 mb-2">
+      <h3 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('your_tasks'))}</h3>
+      <span class="text-xs text-slate-400">${open.length}</span>
+    </div>
+    <div class="bg-slate-50 rounded-2xl border border-slate-200 p-3">${grid}${doneNote}</div>
+  </div>`;
 }
 
 function renderMyWork() {
@@ -13141,7 +13119,7 @@ function renderMyWork() {
   // below as private Trello-style boards (owner-only, unchanged RLS).
   return header
     + actionSection
-    + myWorkBoardHTML(mine)
+    + myWorkTaskListHTML(mine)
     + assignedSection
     + clSection
     + todoSection;
