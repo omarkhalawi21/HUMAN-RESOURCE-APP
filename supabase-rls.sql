@@ -5459,6 +5459,13 @@ BEGIN
   END LOOP;
 END $$;
 
+-- 99. TASKS — sub-task checklist
+-- Adds a per-task checklist stored inline as jsonb: [{id,text,done}]. Managed
+-- from the task detail modal (add / tick / delete). No RLS change: the existing
+-- tasks UPDATE policy already lets the assignee + admin/operations write, and
+-- the checklist is just another column on tasks. Idempotent.
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS checklist jsonb NOT NULL DEFAULT '[]'::jsonb;
+
 -- =============================================================
 -- DONE.
 --
