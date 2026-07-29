@@ -11755,6 +11755,55 @@ async function setTodoItemStatus(listId, itemId, status) {
   render();
 }
 
+// Merge an arbitrary field patch into one item and persist. Items are free-form
+// jsonb, so extra fields (priority/dueDate/notes) need no schema change. Returns
+// true on success so the caller can render/toast.
+async function updateTodoItem(listId, itemId, patch) {
+  const list = (state.todoLists||[]).find(l=>l.id===listId);
+  if (!list) return false;
+  const base = todoEffectiveItems(list);
+  const newItems = base.map(it => it.id===itemId ? { ...it, ...patch } : it);
+  const { data, error } = await sb.from('personal_todo_lists')
+    .update(todoListUpdatePayload(list, newItems))
+    .eq('id', listId).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return false; }
+  Object.assign(list, mapTodoListFromDb(data));
+  return true;
+}
+
+// Expandable detail popup for a My Work board item (owner request) — mirrors the
+// Marketing card modal minus assignee (these boards are private). Title +
+// status + priority + due date + notes, all editable, saved in one write.
+function openTodoItemModal(listId, itemId) {
+  const list = (state.todoLists||[]).find(l=>l.id===listId);
+  const it = list && todoEffectiveItems(list).find(x=>x.id===itemId);
+  if (!it) return;
+  const st = todoItemStatus(it);
+  const pr = it.priority || 'normal';
+  const body = `
+    <div class="space-y-4">
+      <div><label class="label">Title</label><input id="td-title" class="input" value="${escapeHTML(it.text||'')}" maxlength="500"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Status</label><select id="td-status" class="input">${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${st===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+        <div><label class="label">Priority</label><select id="td-prio" class="input">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${pr===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+      </div>
+      <div><label class="label">Due date (optional)</label><input id="td-due" type="date" class="input" value="${escapeHTML(it.dueDate||'')}"></div>
+      <div><label class="label">Notes</label><textarea id="td-notes" class="input" rows="3" maxlength="2000" placeholder="Add details…">${escapeHTML(it.notes||'')}</textarea></div>
+    </div>`;
+  openModal(it.text||'Item', body, async () => {
+    const title = $('#td-title').value.trim();
+    if (!title) { toast('Title is required', 'error'); return false; }
+    const status = $('#td-status').value;
+    const done = status === 'done';
+    const ok = await updateTodoItem(listId, itemId, {
+      text: title, status, done, doneAt: done ? (it.doneAt || new Date().toISOString()) : null,
+      priority: $('#td-prio').value, dueDate: $('#td-due').value || null, notes: $('#td-notes').value.trim() || null,
+    });
+    if (!ok) return false;
+    render(); toast('Saved', 'success'); return true;
+  }, { saveLabel: 'Save changes' });
+}
+
 // Side-effect background pass: for every owned recurring list whose
 // last_reset_date is stale relative to the current period anchor, push
 // an UPDATE that unchecks all items and stamps last_reset_date=today.
@@ -13026,12 +13075,21 @@ function renderMyWork() {
       const itemCard = (listId, it) => {
         const st = todoItemStatus(it);
         const done = st === 'done';
+        // Detail indicators — priority (non-normal), due date (overdue in rose),
+        // and a notes glyph. Tapping the text opens the expandable detail popup.
+        const pr = TASK_PRIORITIES[it.priority];
+        const over = it.dueDate && st !== 'done' && it.dueDate < todayISO();
+        const meta = [];
+        if (it.priority && it.priority !== 'normal' && pr) meta.push(`<span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>`);
+        if (it.dueDate) meta.push(`<span class="text-[10px] ${over?'text-rose-600 font-medium':'text-slate-400'}">${over?escapeHTML(t('overdue'))+' · ':''}${escapeHTML(fmtDate(it.dueDate))}</span>`);
+        if ((it.notes||'').trim()) meta.push(`<span class="text-slate-300 inline-flex items-center" title="Has notes">${icon('file','w-3 h-3')}</span>`);
         return `<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-2.5 mb-2 hover:shadow-pop transition-all">
           <div class="flex items-start gap-2">
             <button type="button" onclick="setTodoItemStatus('${listId}','${it.id}','${done?'todo':'done'}')" title="${escapeHTML(done?td_mark_undone:td_mark_done)}" aria-label="${escapeHTML(done?td_mark_undone:td_mark_done)}" class="w-5 h-5 rounded border ${done?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white hover:border-emerald-400'} flex items-center justify-center shrink-0 mt-0.5">${done?icon('check','w-3.5 h-3.5'):''}</button>
-            <span class="text-sm flex-1 ${done?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.text||'')}</span>
+            <button type="button" onclick="openTodoItemModal('${listId}','${it.id}')" title="Open details" class="text-sm flex-1 text-start min-w-0 ${done?'line-through text-slate-400':'text-slate-800 hover:text-brand-700'}">${escapeHTML(it.text||'')}</button>
             <button onclick="deleteTodoItem('${listId}','${it.id}')" title="${escapeHTML(td_delete)}" class="text-slate-300 hover:text-rose-600 shrink-0 p-1">${icon('trash','w-3.5 h-3.5')}</button>
           </div>
+          ${meta.length ? `<div class="flex items-center gap-1.5 flex-wrap mt-1.5" style="padding-inline-start:1.75rem">${meta.join('')}</div>` : ''}
           <div class="mt-2">${taskStatusControl({status: st}, `setTodoItemStatus('${listId}','${it.id}', this.value)`)}</div>
         </div>`;
       };
