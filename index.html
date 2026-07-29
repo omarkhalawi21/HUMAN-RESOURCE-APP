@@ -457,6 +457,8 @@ const I18N = {
     see_work_mgmt: "see Work Management for history",
     checklist: "Checklist",
     add_checklist_item: "Add a checklist item…",
+    mark_done: "Mark done",
+    mark_undone: "Mark not done",
     needs_action: "Needs your action",
     needs_action_sub: "Pending requests waiting on you. Each item clears once you approve, reject, or resolve it.",
     hide_reminder: "Hide this reminder",
@@ -689,6 +691,8 @@ const I18N = {
     see_work_mgmt: "راجع إدارة العمل للسجل",
     checklist: "قائمة المهام",
     add_checklist_item: "أضف عنصرًا للقائمة…",
+    mark_done: "تحديد كمنجز",
+    mark_undone: "إلغاء الإنجاز",
     needs_action: "بحاجة إلى إجراء منك",
     needs_action_sub: "طلبات معلّقة بانتظارك. يختفي كل عنصر بمجرد الموافقة عليه أو رفضه أو معالجته.",
     hide_reminder: "إخفاء هذا التذكير",
@@ -13011,19 +13015,21 @@ function renderMyWork() {
       const td_add_task_ph    = t('add_a_task');
       const td_add            = t('add');
       const td_drag           = t('drag_reorder');
+      const td_mark_done      = t('mark_done');
+      const td_mark_undone    = t('mark_undone');
       // Drag-to-reorder only makes sense with 2+ lists; hide the grip for one.
       const canDrag           = myLists.length > 1;
-      // No per-item delete: users either check items off (done items
-      // collapse via todoShowDone) or delete the whole list. Keeps the
-      // row dense and mirrors how the checklist UI handles "remove".
-      // Each personal list renders as a private Trello column of cards.
-      // A card = the item text + a monday-style status dropdown (change status,
-      // not a checkbox) + a small delete.
+      // Each personal list renders as a private Trello column of cards. A card =
+      // a done CHECKBOX + the item text + a small delete, with the monday-style
+      // status dropdown kept below for the Working-on-it / Stuck states. The
+      // checkbox toggles the item between 'done' and 'todo' via setTodoItemStatus.
       const itemCard = (listId, it) => {
         const st = todoItemStatus(it);
+        const done = st === 'done';
         return `<div class="bg-white rounded-xl border border-slate-200 shadow-sm p-2.5 mb-2 hover:shadow-pop transition-all">
           <div class="flex items-start gap-2">
-            <span class="text-sm flex-1 ${st==='done'?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.text||'')}</span>
+            <button type="button" onclick="setTodoItemStatus('${listId}','${it.id}','${done?'todo':'done'}')" title="${escapeHTML(done?td_mark_undone:td_mark_done)}" aria-label="${escapeHTML(done?td_mark_undone:td_mark_done)}" class="w-5 h-5 rounded border ${done?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white hover:border-emerald-400'} flex items-center justify-center shrink-0 mt-0.5">${done?icon('check','w-3.5 h-3.5'):''}</button>
+            <span class="text-sm flex-1 ${done?'line-through text-slate-400':'text-slate-800'}">${escapeHTML(it.text||'')}</span>
             <button onclick="deleteTodoItem('${listId}','${it.id}')" title="${escapeHTML(td_delete)}" class="text-slate-300 hover:text-rose-600 shrink-0 p-1">${icon('trash','w-3.5 h-3.5')}</button>
           </div>
           <div class="mt-2">${taskStatusControl({status: st}, `setTodoItemStatus('${listId}','${it.id}', this.value)`)}</div>
