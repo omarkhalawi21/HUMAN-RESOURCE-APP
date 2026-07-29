@@ -455,6 +455,8 @@ const I18N = {
     your_tasks: "Your tasks",
     no_open_tasks: "No open tasks — nice work.",
     see_work_mgmt: "see Work Management for history",
+    checklist: "Checklist",
+    add_checklist_item: "Add a checklist item…",
     needs_action: "Needs your action",
     needs_action_sub: "Pending requests waiting on you. Each item clears once you approve, reject, or resolve it.",
     hide_reminder: "Hide this reminder",
@@ -685,6 +687,8 @@ const I18N = {
     your_tasks: "مهامك",
     no_open_tasks: "لا مهام مفتوحة — أحسنت.",
     see_work_mgmt: "راجع إدارة العمل للسجل",
+    checklist: "قائمة المهام",
+    add_checklist_item: "أضف عنصرًا للقائمة…",
     needs_action: "بحاجة إلى إجراء منك",
     needs_action_sub: "طلبات معلّقة بانتظارك. يختفي كل عنصر بمجرد الموافقة عليه أو رفضه أو معالجته.",
     hide_reminder: "إخفاء هذا التذكير",
@@ -1428,6 +1432,10 @@ function mapTaskFromDb(r) {
     priority: r.priority||'normal', status: r.status||'todo',
     dueDate: r.due_date||null, completedAt: r.completed_at||null,
     groupId: r.group_id||null,
+    // Sub-task checklist (SQL block 99): [{id,text,done}]. Managed via the
+    // task detail modal's dedicated add/toggle/delete helpers, NOT taskToDb —
+    // so editing a task never wipes its checklist.
+    checklist: Array.isArray(r.checklist) ? r.checklist : [],
     createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -12281,11 +12289,14 @@ function renderWorkTasks() {
     const e = getEmployee(tk.assignedTo);
     const isOver = taskOverdue(tk);
     const s = TASK_STATUSES[tk.status] || TASK_STATUSES.todo;
+    const cl = Array.isArray(tk.checklist) ? tk.checklist : [];
+    const clDoneN = cl.filter(c=>c.done).length;
     return `<div draggable="true" ondragstart="tgDragStart(event,'${tk.id}')" ondragend="tgDragEnd(event)" onclick="openTaskDetail('${tk.id}')"
         class="bg-white rounded-xl border ${isOver?'border-rose-200':'border-slate-200'} shadow-sm p-3 mb-2 hover:shadow-pop transition-all" style="cursor:grab">
       <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
         <span class="text-[10px] font-semibold px-2 py-0.5 rounded" style="background:${s.solid};color:${s.dark?'#3a3f4c':'#ffffff'}">${escapeHTML(s.label)}</span>
         ${isOver?`<span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-rose-100 text-rose-700">Overdue</span>`:''}
+        ${cl.length?`<span class="text-[10px] font-medium px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 ${clDoneN===cl.length?'bg-emerald-50 text-emerald-700':'bg-slate-100 text-slate-500'}" title="Checklist">${icon('check','w-3 h-3')}${clDoneN}/${cl.length}</span>`:''}
       </div>
       <div class="text-sm font-medium text-slate-900">${escapeHTML(tk.title)}</div>
       ${tk.description?`<div class="text-xs text-slate-500 mt-1 truncate">${escapeHTML(tk.description)}</div>`:''}
@@ -12517,6 +12528,33 @@ function taskDetailBodyHTML(taskId) {
   const desc = tk.description
     ? `<div class="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 mb-4 whitespace-pre-wrap">${escapeHTML(tk.description)}</div>` : '';
 
+  // Checklist (sub-tasks) — tick items off; progress bar + count. Add/toggle/
+  // delete for collaborators (assignee + admin/ops). Hidden entirely for a
+  // non-collaborator with an empty checklist so it doesn't add noise.
+  const cl = Array.isArray(tk.checklist) ? tk.checklist : [];
+  const clDone = cl.filter(c=>c.done).length;
+  const clPct = cl.length ? Math.round(clDone/cl.length*100) : 0;
+  const checklistSection = (cl.length || canEdit) ? `
+    <div class="mb-4">
+      <div class="flex items-center gap-2 mb-2">
+        <h4 class="font-display text-base font-semibold text-slate-900">${escapeHTML(t('checklist'))}</h4>
+        ${cl.length ? `<span class="text-xs text-slate-400 tabular-nums">${clDone}/${cl.length}</span>` : ''}
+      </div>
+      ${cl.length ? `<div class="h-1.5 bg-slate-100 rounded-full mb-2 overflow-hidden"><div class="h-full ${clPct===100?'bg-emerald-500':'bg-brand-500'}" style="width:${clPct}%"></div></div>` : ''}
+      <div class="space-y-1">
+        ${cl.map(c=>`
+          <div class="flex items-center gap-2 group">
+            <button type="button" ${canEdit?`onclick="toggleTaskChecklistItem('${tk.id}','${c.id}')"`:'disabled'} class="w-5 h-5 rounded border ${c.done?'bg-emerald-500 border-emerald-500 text-white':'border-slate-300 bg-white'} flex items-center justify-center shrink-0">${c.done?icon('check','w-3.5 h-3.5'):''}</button>
+            <span class="flex-1 text-sm ${c.done?'line-through text-slate-400':'text-slate-700'}">${escapeHTML(c.text)}</span>
+            ${canEdit?`<button type="button" onclick="deleteTaskChecklistItem('${tk.id}','${c.id}')" title="${escapeHTML(t('delete'))}" aria-label="${escapeHTML(t('delete'))}" class="p-1 rounded text-slate-300 hover:text-rose-600 hover:bg-slate-100 opacity-0 group-hover:opacity-100">${icon('trash','w-3.5 h-3.5')}</button>`:''}
+          </div>`).join('')}
+      </div>
+      ${canEdit ? `<form class="mt-2 flex gap-2" onsubmit="event.preventDefault(); const i=this.querySelector('input'); addTaskChecklistItem('${tk.id}', i.value); i.value='';">
+        <input class="input flex-1 !py-1.5 text-sm" maxlength="300" placeholder="${escapeHTML(t('add_checklist_item'))}" />
+        <button type="submit" class="btn btn-ghost btn-sm self-end">${icon('plus','w-4 h-4')} ${escapeHTML(t('add'))}</button>
+      </form>` : ''}
+    </div>` : '';
+
   // Timeline: synthesize a "created" entry, then the stored events, ascending.
   const timeline = [];
   timeline.push({ kind:'created', actorId: tk.createdBy, createdAt: tk.createdAt });
@@ -12572,6 +12610,7 @@ function taskDetailBodyHTML(taskId) {
     ${editRow}
     ${meta}
     ${desc}
+    ${checklistSection}
     <div class="flex items-center gap-2 mb-3">
       <h4 class="font-display text-base font-semibold text-slate-900">Activity</h4>
       ${durationLine ? `<span class="text-xs">· ${durationLine}</span>` : ''}
@@ -12585,6 +12624,31 @@ async function addTaskComment(taskId, body) {
   const ev = await logTaskEvent(taskId, 'comment', { body: text });
   if (!ev) { toast('Could not post comment', 'error'); return; }
   refreshTaskDetailBody(taskId);
+}
+// ---- Task checklist (sub-tasks) — block 99 `checklist` jsonb column ----
+// Persisted by updating ONLY the checklist column (never taskToDb, which would
+// wipe it). The tasks UPDATE RLS already lets the assignee + admin/ops write, so
+// no policy change is needed. Collaborators = taskCanCollaborate.
+function taskChecklistGenId(){ try{ if(crypto&&crypto.randomUUID) return crypto.randomUUID(); }catch(_){} return 'ck_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+async function _saveTaskChecklist(taskId, nextArr){
+  const tk=(state.tasks||[]).find(x=>x.id===taskId); if(!tk) return;
+  const { data, error } = await sb.from('tasks').update({ checklist: nextArr, updated_at: new Date().toISOString() }).eq('id', taskId).select().single();
+  if(error){ toast(humanizeError(error),'error'); return; }
+  Object.assign(tk, mapTaskFromDb(data));
+  render(); refreshTaskDetailBody(taskId);
+}
+async function addTaskChecklistItem(taskId, text){
+  const t2=(text||'').trim(); if(!t2) return;
+  const tk=(state.tasks||[]).find(x=>x.id===taskId); if(!tk||!taskCanCollaborate(tk)) return;
+  await _saveTaskChecklist(taskId, [...(Array.isArray(tk.checklist)?tk.checklist:[]), { id:taskChecklistGenId(), text:t2, done:false }]);
+}
+async function toggleTaskChecklistItem(taskId, itemId){
+  const tk=(state.tasks||[]).find(x=>x.id===taskId); if(!tk||!taskCanCollaborate(tk)) return;
+  await _saveTaskChecklist(taskId, (Array.isArray(tk.checklist)?tk.checklist:[]).map(c=>c.id===itemId?{...c, done:!c.done}:c));
+}
+async function deleteTaskChecklistItem(taskId, itemId){
+  const tk=(state.tasks||[]).find(x=>x.id===taskId); if(!tk||!taskCanCollaborate(tk)) return;
+  await _saveTaskChecklist(taskId, (Array.isArray(tk.checklist)?tk.checklist:[]).filter(c=>c.id!==itemId));
 }
 async function deleteTask(id) {
   if (!hasRole('admin','operations')) return;
@@ -12709,6 +12773,7 @@ function myWorkTaskListHTML(mine){
         <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
           <select onchange="changeTaskStatus('${tk.id}', this.value)" class="input !py-1 !px-2 text-xs !w-auto">${statusOpts(tk)}</select>
           <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
+          ${(()=>{ const cl=Array.isArray(tk.checklist)?tk.checklist:[]; if(!cl.length) return ''; const d=cl.filter(c=>c.done).length; return `<span class="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${d===cl.length?'bg-emerald-50 text-emerald-700':'bg-slate-100 text-slate-500'}" title="Checklist">${icon('check','w-3 h-3')}${d}/${cl.length}</span>`; })()}
           ${tk.dueDate?`<span class="text-[11px] ${over?'text-rose-600 font-medium':'text-slate-500'}">${over?'Overdue · ':''}${escapeHTML(fmtDate(tk.dueDate))}</span>`:''}
           ${tk.department?`<span class="text-[11px] text-slate-400">${escapeHTML(tk.department)}</span>`:''}
         </div>
