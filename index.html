@@ -338,6 +338,9 @@ const I18N = {
     notif_leave_rejected: "Leave request rejected",
     notif_advance_approved: "Advance request approved",
     notif_advance_rejected: "Advance request rejected",
+    notifications: "Notifications",
+    notif_new: "New",
+    notif_all_caught_up: "You're all caught up.",
     notif_travel_ticket: "Flight ticket to upload",
     notif_travel_visa: "Exit visa to upload",
     pending: "Pending",
@@ -565,6 +568,9 @@ const I18N = {
     notif_warning_sign: "إنذار بانتظار توقيعك",
     notif_leave_approved: "تمت الموافقة على طلب الإجازة",
     notif_leave_rejected: "تم رفض طلب الإجازة",
+    notifications: "الإشعارات",
+    notif_new: "جديد",
+    notif_all_caught_up: "لا جديد لديك.",
     notif_travel_ticket: "تذكرة طيران بانتظار الرفع",
     notif_travel_visa: "تأشيرة خروج بانتظار الرفع",
     notif_advance_approved: "تمت الموافقة على طلب السلفة",
@@ -3617,6 +3623,10 @@ function globalSearch(q) {
    is resolved (leave approved, task done, doc renewed…). */
 const NOTIF_SEEN_KEY = 'hcr_notif_seen_v1';
 let notifOpen = false;
+// Keys that were UNSEEN at the moment the panel was last opened — the panel
+// tags these "New" for this viewing. Opening marks everything seen (so the bell
+// badge clears), so we snapshot the unseen set first; closing clears it.
+let _notifNew = new Set();
 function getNotifSeen() {
   try { return new Set(JSON.parse(localStorage.getItem(NOTIF_SEEN_KEY) || '[]')); }
   catch(_) { return new Set(); }
@@ -3737,8 +3747,14 @@ function toggleNotifications() {
   notifOpen = !notifOpen;
   if (notifOpen) {
     const seen = getNotifSeen();
-    buildNotifications().forEach(n=>seen.add(n.key));
+    const list = buildNotifications();
+    // Snapshot which are NEW (unseen) BEFORE marking them seen, so the panel
+    // can tag them for this viewing while the bell badge still clears.
+    _notifNew = new Set(list.filter(n=>!seen.has(n.key)).map(n=>n.key));
+    list.forEach(n=>seen.add(n.key));
     setNotifSeen(seen);
+  } else {
+    _notifNew = new Set();
   }
   render();
 }
@@ -3747,26 +3763,33 @@ function notifGo(href) {
   if (href) location.hash = href; else render();
 }
 function notifPanelHTML(lang, prebuilt) {
-  const list = prebuilt || buildNotifications();
   const toneCls = { red:'text-rose-600 bg-rose-50', amber:'text-amber-600 bg-amber-50', blue:'text-blue-600 bg-blue-50' };
+  const isNew = n => _notifNew.has(n.key);
+  // NEW (was-unseen-on-open) items float to the top so they're seen first.
+  const list = (prebuilt || buildNotifications()).slice()
+    .sort((a,b)=> (isNew(b)?1:0)-(isNew(a)?1:0));
+  const newCount = list.filter(isNew).length;
+  const newPill = `<span class="ms-1.5 shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-rose-500 text-white">${escapeHTML(t('notif_new'))}</span>`;
   return `
     <div class="notif-backdrop" onclick="notifOpen=false; render();" style="position:fixed;inset:0;z-index:39;"></div>
     <div class="absolute mt-2 bg-white rounded-xl shadow-pop border border-slate-200 z-40 overflow-hidden"
          style="top:100%; ${lang==='ar'?'left:0':'right:0'}; width:20rem; max-width:90vw;">
       <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-        <div class="font-semibold text-slate-900 text-sm">Notifications</div>
-        <span class="text-xs text-slate-400">${list.length}</span>
+        <div class="font-semibold text-slate-900 text-sm">${escapeHTML(t('notifications'))}</div>
+        ${newCount
+          ? `<span class="text-[11px] font-semibold text-rose-600">${newCount} ${escapeHTML(t('notif_new').toLowerCase())}</span>`
+          : `<span class="text-xs text-slate-400">${list.length}</span>`}
       </div>
       <div style="max-height:24rem; overflow-y:auto;">
-        ${list.length===0 ? `<div class="px-4 py-8 text-center text-sm text-slate-400">You're all caught up.</div>` :
-          list.map(n=>`
-          <button type="button" onclick="notifGo('${n.href||''}')" class="w-full text-start px-4 py-3 flex items-start gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0">
+        ${list.length===0 ? `<div class="px-4 py-8 text-center text-sm text-slate-400">${escapeHTML(t('notif_all_caught_up'))}</div>` :
+          list.map(n=>{ const nu=isNew(n); return `
+          <button type="button" onclick="notifGo('${n.href||''}')" class="w-full text-start px-4 py-3 flex items-start gap-3 hover:bg-slate-50 border-b border-slate-50 last:border-0"${nu?' style="border-inline-start:3px solid #df3247;background:#fff5f6"':''}>
             <span class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${toneCls[n.tone]||'text-slate-600 bg-slate-100'}">${icon(n.icon,'w-4 h-4')}</span>
-            <span class="min-w-0">
-              <span class="block text-sm font-medium text-slate-800">${n.title}</span>
+            <span class="min-w-0 flex-1">
+              <span class="flex items-center"><span class="block text-sm font-medium text-slate-800 truncate">${n.title}</span>${nu?newPill:''}</span>
               <span class="block text-xs text-slate-500 truncate">${n.detail}</span>
             </span>
-          </button>`).join('')}
+          </button>`; }).join('')}
       </div>
     </div>`;
 }
