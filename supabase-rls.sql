@@ -5466,6 +5466,44 @@ END $$;
 -- the checklist is just another column on tasks. Idempotent.
 ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS checklist jsonb NOT NULL DEFAULT '[]'::jsonb;
 
+-- 100. MEETINGS — minutes + attendees; action items are real tasks
+-- A meeting logs its minutes (notes), date and attendees. Duties assigned in a
+-- meeting are ordinary rows in `tasks` linked back via tasks.meeting_id, so they
+-- flow into the assignee's My Work / Work Management with due dates, status and
+-- bell reminders -- no parallel duty tracker. Managers (admin/operations/hr) own
+-- the meeting record; assignees see their duties through the tasks RLS already.
+CREATE TABLE IF NOT EXISTS public.meetings (
+  id           uuid primary key default gen_random_uuid(),
+  title        text not null,
+  meeting_date date not null default current_date,
+  attendees    jsonb not null default '[]'::jsonb,   -- array of employee ids
+  notes        text not null default '',             -- minutes
+  created_by   uuid references public.employees(id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS meetings_date_idx ON public.meetings(meeting_date DESC);
+
+-- Link a task to the meeting that spawned it. SET NULL so deleting a meeting
+-- never deletes the assigned tasks. Not in taskToDb() -> editing a task in the
+-- Work Management editor can't wipe the link.
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS meeting_id uuid REFERENCES public.meetings(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS tasks_meeting_idx ON public.tasks(meeting_id);
+
+ALTER TABLE public.meetings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "meetings_select" ON public.meetings;
+CREATE POLICY "meetings_select" ON public.meetings FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','hr']));
+DROP POLICY IF EXISTS "meetings_insert" ON public.meetings;
+CREATE POLICY "meetings_insert" ON public.meetings FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','hr']));
+DROP POLICY IF EXISTS "meetings_update" ON public.meetings;
+CREATE POLICY "meetings_update" ON public.meetings FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','hr'])) WITH CHECK (public.has_role(ARRAY['admin','operations','hr']));
+DROP POLICY IF EXISTS "meetings_delete" ON public.meetings;
+CREATE POLICY "meetings_delete" ON public.meetings FOR DELETE TO authenticated
+  USING (public.is_admin());
+
 -- =============================================================
 -- DONE.
 --

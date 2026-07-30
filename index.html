@@ -793,7 +793,8 @@ function emptyState() {
     warnings: [],       // [{ id, employeeId, severity, type, date, reason, notes, issuedBy, issuedAt, fileData }]
     advances: [],       // [{ id, employeeId, amount, reason, requestedAt, status, decidedBy, decidedAt, repaidAt, deductFromPayroll }]
     deductions: [],     // [{ id, employeeId, amount, reason, details, incidentDate, period, status, appliedAt, createdBy, createdAt }] — admin-registered payroll deductions
-    tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, groupId, createdBy, createdAt, updatedAt }] — Work Management board
+    tasks: [],          // [{ id, title, description, department, assignedTo, priority, status, dueDate, completedAt, groupId, meetingId, createdBy, createdAt, updatedAt }] — Work Management board
+    meetings: [],       // [{ id, title, meetingDate, attendees:[empId], notes, createdBy, ... }] — Meetings (block 100); action items are tasks with meetingId
     taskGroups: [],     // [{ id, name, color, boardId, sortOrder, createdBy, createdAt }] — lists within a board (block 91/92)
     taskBoards: [],     // [{ id, name, color, sortOrder, createdBy, createdAt }] — Trello-style boards (block 92)
     marketingProjects: [], // Marketing Dashboard (block 94): top-level campaigns/projects
@@ -1440,7 +1441,26 @@ function mapTaskFromDb(r) {
     // task detail modal's dedicated add/toggle/delete helpers, NOT taskToDb —
     // so editing a task never wipes its checklist.
     checklist: Array.isArray(r.checklist) ? r.checklist : [],
+    // Link to the meeting that spawned this action item (block 100). Set only at
+    // creation, never via taskToDb — so editing the task can't wipe it.
+    meetingId: r.meeting_id || null,
     createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function mapMeetingFromDb(r) {
+  return {
+    id: r.id, title: r.title || '', meetingDate: r.meeting_date || null,
+    attendees: Array.isArray(r.attendees) ? r.attendees : [],
+    notes: r.notes || '', createdBy: r.created_by || null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+function meetingToDb(m) {
+  return {
+    title: m.title || null, meeting_date: m.meetingDate || null,
+    attendees: Array.isArray(m.attendees) ? m.attendees : [],
+    notes: m.notes || '', created_by: m.createdBy || null,
+    updated_at: new Date().toISOString(),
   };
 }
 function taskToDb(t) {
@@ -2218,7 +2238,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2358,6 +2378,8 @@ async function loadAll() {
       sb.from('marketing_item_attachments').select('id, item_id, name, mime, size, created_by, created_at').limit(3000),
       sb.from('marketing_budget_lines').select('*').order('sort_order', { ascending: true }).order('created_at', { ascending: true }),
       sb.from('marketing_expenses').select('*').order('spent_on', { ascending: false }).limit(5000),
+      // Meetings (block 100) — low-volume but grows; cap to recent 300.
+      sb.from('meetings').select('*').order('meeting_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2410,6 +2432,7 @@ async function loadAll() {
     state.advances     = (advancesR.data     || []).map(mapAdvanceFromDb);
     state.deductions   = (deductionsR.data   || []).map(mapDeductionFromDb);
     state.tasks        = (tasksR.data        || []).map(mapTaskFromDb);
+    state.meetings     = (meetingsR?.data     || []).map(mapMeetingFromDb);
     state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
     state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
     state.applications = (applicationsR.data || []).map(mapApplicationFromDb);
@@ -3066,7 +3089,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -3364,6 +3387,7 @@ function renderShell(routeContent) {
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
     { key:'my_work',      icon:'check',     label:'My Work',         show:true,  group:'main' },
     { key:'work_management', icon:'check',  label:'Work Management',  show:hasRole('admin','operations'), group:'main' },
+    { key:'meetings',     icon:'calendar',  label:'Meetings',         show:hasRole('admin','operations','hr'), group:'main' },
     { key:'marketing',    icon:'report',    label:'Marketing',        show:canManageMarketing(), group:'main' },
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
@@ -12714,6 +12738,181 @@ async function deleteTask(id) {
   render();
   toast('Task deleted', 'success');
 }
+
+/* -------------------- MEETINGS (block 100) --------------------
+   Log minutes + attendees; each action item is a real task (tasks.meetingId)
+   so duties flow into the assignee's My Work with due dates + reminders. Gated
+   to admin/operations/hr. */
+let _meetingDetailId = null;
+function meetingEmpName(id) { const e = getEmployee(id); return e ? (e.firstName + ' ' + (e.lastName || '')).trim() : '—'; }
+function renderMeetings() {
+  const meetings = (state.meetings || []).slice().sort((a, b) => (b.meetingDate || '').localeCompare(a.meetingDate || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const header = `
+    <div class="flex items-start justify-between gap-3 mb-5 flex-wrap">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('calendar', 'w-3.5 h-3.5')} Meetings</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Meetings</h2>
+        <p class="text-slate-500 mt-1 text-sm max-w-xl">Log the minutes and assign duties. Each action item becomes a task in that person's My Work — with a due date and reminder.</p>
+      </div>
+      <button onclick="openMeetingModal()" class="btn btn-primary">${icon('plus', 'w-4 h-4')} New meeting</button>
+    </div>`;
+  if (!meetings.length) return header + `
+    <div class="bg-white rounded-2xl shadow-card p-12 text-center">
+      <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('calendar', 'w-8 h-8')}</div>
+      <div class="font-display text-lg font-semibold text-slate-900">No meetings yet</div>
+      <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">Log your first meeting, record the minutes, and assign action items to your team.</div>
+      <button onclick="openMeetingModal()" class="btn btn-primary mt-4">${icon('plus', 'w-4 h-4')} New meeting</button>
+    </div>`;
+  const cards = meetings.map(mt => {
+    const items = (state.tasks || []).filter(t => t.meetingId === mt.id);
+    const doneN = items.filter(t => t.status === 'done').length;
+    const pct = items.length ? Math.round(doneN / items.length * 100) : 0;
+    return `<button type="button" onclick="openMeetingDetail('${mt.id}')" class="bg-white rounded-2xl shadow-card p-5 text-start hover:shadow-pop transition-all block w-full">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="font-display text-lg font-semibold text-slate-900 truncate">${escapeHTML(mt.title)}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${escapeHTML(fmtDate(mt.meetingDate))} · ${mt.attendees.length} attendee${mt.attendees.length === 1 ? '' : 's'}</div>
+        </div>
+        <span class="badge ${items.length && doneN === items.length ? 'badge-green' : 'badge-slate'} shrink-0">${items.length ? `${doneN}/${items.length} done` : 'no items'}</span>
+      </div>
+      ${mt.notes ? `<div class="text-sm text-slate-600 mt-2 line-clamp-2">${escapeHTML(mt.notes)}</div>` : ''}
+      ${items.length ? `<div class="h-1.5 bg-slate-100 rounded-full mt-3 overflow-hidden"><div class="h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-brand-500'}" style="width:${pct}%"></div></div>` : ''}
+    </button>`;
+  }).join('');
+  return header + `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${cards}</div>`;
+}
+function openMeetingModal(id) {
+  if (!hasRole('admin', 'operations', 'hr')) return;
+  const editing = id ? (state.meetings || []).find(m => m.id === id) : null;
+  const emps = (state.employees || []).filter(isActiveEmployee).slice().sort((a, b) => ((a.firstName || '') + ' ' + (a.lastName || '')).localeCompare((b.firstName || '') + ' ' + (b.lastName || '')));
+  const sel = new Set(editing?.attendees || []);
+  const body = `
+    <div class="space-y-4">
+      <div><label class="label label-required">Title</label><input id="mt-title" class="input" value="${escapeHTML(editing?.title || '')}" placeholder="e.g. Weekly operations sync"></div>
+      <div><label class="label">Date</label><input id="mt-date" type="date" class="input" value="${escapeHTML(editing?.meetingDate || todayISO())}"></div>
+      <div>
+        <label class="label">Attendees</label>
+        <div class="max-h-44 overflow-y-auto border border-slate-200 rounded-xl p-2 grid grid-cols-1 sm:grid-cols-2 gap-0.5">
+          ${emps.map(e => `<label class="flex items-center gap-2 text-sm text-slate-700 px-1 py-0.5"><input type="checkbox" class="mt-att" value="${e.id}" ${sel.has(e.id) ? 'checked' : ''}> ${escapeHTML((e.firstName + ' ' + (e.lastName || '')).trim())}</label>`).join('') || '<div class="text-xs text-slate-400 p-2">No active employees.</div>'}
+        </div>
+      </div>
+      <div><label class="label">Minutes / notes</label><textarea id="mt-notes" class="input" rows="5" placeholder="What was discussed, decisions made…">${escapeHTML(editing?.notes || '')}</textarea></div>
+    </div>`;
+  openModal(editing ? 'Edit meeting' : 'New meeting', body, async () => {
+    const title = $('#mt-title').value.trim();
+    if (!title) { toast('Title is required', 'error'); return false; }
+    const attendees = [...document.querySelectorAll('.mt-att:checked')].map(c => c.value);
+    const me = currentEmployee();
+    const row = meetingToDb({ title, meetingDate: $('#mt-date').value || todayISO(), attendees, notes: $('#mt-notes').value.trim(), createdBy: editing?.createdBy || me?.id });
+    if (editing) {
+      const { data, error } = await sb.from('meetings').update(row).eq('id', editing.id).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      Object.assign(editing, mapMeetingFromDb(data));
+      render(); toast('Meeting updated', 'success'); return true;
+    }
+    const { data, error } = await sb.from('meetings').insert(row).select().single();
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    const mt = mapMeetingFromDb(data); state.meetings.unshift(mt);
+    openMeetingDetail(mt.id); // land on detail to add action items (replaces this modal)
+    return false;             // don't let submitModal close the detail we just opened
+  }, { saveLabel: editing ? 'Save changes' : 'Create meeting' });
+}
+function openMeetingDetail(id) {
+  const mt = (state.meetings || []).find(m => m.id === id); if (!mt) return;
+  openModal(mt.title || 'Meeting', `<div id="meeting-detail-body">${meetingDetailBodyHTML(id)}</div>`, () => true, { saveLabel: t('close') });
+  _meetingDetailId = id; // AFTER openModal — its internal closeModal() nulls this
+}
+function refreshMeetingDetail(id) { if (_meetingDetailId !== id) return; const el = document.getElementById('meeting-detail-body'); if (el) el.innerHTML = meetingDetailBodyHTML(id); }
+async function meetingItemStatus(taskId, status, meetingId) { await changeTaskStatus(taskId, status); refreshMeetingDetail(meetingId); }
+function meetingDetailBodyHTML(id) {
+  const mt = (state.meetings || []).find(m => m.id === id); if (!mt) return '';
+  const canEdit = hasRole('admin', 'operations', 'hr');
+  const attendees = mt.attendees.map(getEmployee).filter(Boolean);
+  const items = (state.tasks || []).filter(t => t.meetingId === id)
+    .sort((a, b) => (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+  const doneN = items.filter(t => t.status === 'done').length;
+  return `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <div class="text-sm text-slate-500">${escapeHTML(fmtDate(mt.meetingDate))}</div>
+        ${canEdit ? `<div class="flex gap-2">
+          <button type="button" onclick="openMeetingModal('${id}')" class="btn btn-ghost btn-sm">${icon('edit', 'w-4 h-4')} ${escapeHTML(t('edit'))}</button>
+          ${isAdmin() ? `<button type="button" onclick="deleteMeeting('${id}')" class="btn btn-ghost btn-sm text-rose-600">${icon('trash', 'w-4 h-4')} ${escapeHTML(t('delete'))}</button>` : ''}
+        </div>` : ''}
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Attendees</div>
+        ${attendees.length ? `<div class="flex flex-wrap gap-1.5">${attendees.map(e => `<span class="badge badge-slate">${escapeHTML(meetingEmpName(e.id))}</span>`).join('')}</div>` : '<div class="text-sm text-slate-400">None recorded.</div>'}
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Minutes</div>
+        <div class="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 whitespace-pre-wrap">${mt.notes ? escapeHTML(mt.notes) : '<span class="text-slate-400">No notes.</span>'}</div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <h4 class="font-display text-base font-semibold text-slate-900">Action items</h4>
+          ${items.length ? `<span class="text-xs text-slate-400 tabular-nums">${doneN}/${items.length}</span>` : ''}
+        </div>
+        <div class="space-y-2">
+          ${items.map(tk => { const pr = TASK_PRIORITIES[tk.priority] || TASK_PRIORITIES.normal; const over = taskOverdue(tk); return `
+            <div class="border border-slate-200 rounded-xl p-2.5 ${over ? 'bg-rose-50/40' : ''}">
+              <div class="flex items-start gap-2">
+                <div class="min-w-0 flex-1">
+                  <button type="button" onclick="openTaskDetail('${tk.id}')" class="text-sm font-medium text-start hover:text-brand-700 ${tk.status === 'done' ? 'line-through text-slate-400' : 'text-slate-800'}">${escapeHTML(tk.title)}</button>
+                  <div class="flex items-center gap-1.5 flex-wrap mt-1">
+                    <span class="text-[11px] text-slate-500">${escapeHTML(taskEmpName(tk.assignedTo))}</span>
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
+                    ${tk.dueDate ? `<span class="text-[11px] ${over ? 'text-rose-600 font-medium' : 'text-slate-400'}">${over ? escapeHTML(t('overdue')) + ' · ' : ''}${escapeHTML(fmtDate(tk.dueDate))}</span>` : ''}
+                  </div>
+                </div>
+                <select onchange="meetingItemStatus('${tk.id}', this.value, '${id}')" class="input !py-1 !px-2 text-xs !w-auto shrink-0">${Object.entries(TASK_STATUSES).map(([k, v]) => `<option value="${k}" ${tk.status === k ? 'selected' : ''}>${escapeHTML(v.label)}</option>`).join('')}</select>
+              </div>
+            </div>`; }).join('') || '<div class="text-sm text-slate-400">No action items yet.</div>'}
+        </div>
+        ${canEdit ? `<button type="button" onclick="openMeetingActionItemModal('${id}')" class="btn btn-ghost btn-sm mt-2">${icon('plus', 'w-4 h-4')} Add action item</button>` : ''}
+      </div>
+    </div>`;
+}
+function openMeetingActionItemModal(meetingId) {
+  if (!hasRole('admin', 'operations', 'hr')) return;
+  if (!(state.meetings || []).some(m => m.id === meetingId)) return;
+  const emps = (state.employees || []).filter(isActiveEmployee).slice().sort((a, b) => ((a.firstName || '') + ' ' + (a.lastName || '')).localeCompare((b.firstName || '') + ' ' + (b.lastName || '')));
+  const body = `
+    <div class="space-y-4">
+      <div><label class="label label-required">What needs doing</label><input id="ai-title" class="input" placeholder="e.g. Send the supplier next month's order"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Assign to</label><select id="ai-emp" class="input"><option value="">— Unassigned —</option>${emps.map(e => `<option value="${e.id}">${escapeHTML((e.firstName + ' ' + (e.lastName || '')).trim())}</option>`).join('')}</select></div>
+        <div><label class="label">Priority</label><select id="ai-prio" class="input">${Object.entries(TASK_PRIORITIES).map(([k, v]) => `<option value="${k}" ${k === 'normal' ? 'selected' : ''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+      </div>
+      <div><label class="label">Due date (optional)</label><input id="ai-due" type="date" class="input"></div>
+      <div><label class="label">Details (optional)</label><textarea id="ai-desc" class="input" rows="2" placeholder="Any context…"></textarea></div>
+    </div>`;
+  openModal('Add action item', body, async () => {
+    const title = $('#ai-title').value.trim();
+    if (!title) { toast('Enter what needs doing', 'error'); return false; }
+    const me = currentEmployee();
+    const data = { title, description: $('#ai-desc').value.trim(), assignedTo: $('#ai-emp').value || null, priority: $('#ai-prio').value, status: 'todo', dueDate: $('#ai-due').value || null, createdBy: me?.id };
+    const row = { ...taskToDb(data), meeting_id: meetingId };
+    const { data: t2, error } = await sb.from('tasks').insert(row).select().single();
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    state.tasks.unshift(mapTaskFromDb(t2));
+    render(); toast('Action item assigned', 'success');
+    openMeetingDetail(meetingId); // back to the meeting (replaces this modal)
+    return false;
+  }, { saveLabel: 'Assign' });
+}
+async function deleteMeeting(id) {
+  if (!isAdmin()) return;
+  const mt = (state.meetings || []).find(m => m.id === id);
+  const n = (state.tasks || []).filter(t => t.meetingId === id).length;
+  if (!confirm(`Delete meeting "${mt?.title || ''}"?\n\nIts ${n} action-item task${n === 1 ? '' : 's'} will be KEPT (just unlinked from this meeting).`)) return;
+  const { error } = await sb.from('meetings').delete().eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  state.meetings = state.meetings.filter(m => m.id !== id);
+  (state.tasks || []).forEach(t => { if (t.meetingId === id) t.meetingId = null; }); // ON DELETE SET NULL
+  closeModal(); render(); toast('Meeting deleted', 'success');
+}
+
 function tasksSnapshotHTML() {
   if (!hasRole('admin','operations')) return '';
   const all = (state.tasks||[]);
@@ -23378,6 +23577,7 @@ function closeModal() {
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
   if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
   if (typeof _mktItemModalId !== 'undefined') _mktItemModalId = null;
+  if (typeof _meetingDetailId !== 'undefined') _meetingDetailId = null;
   if (typeof _mktExpLineId !== 'undefined') _mktExpLineId = null;
   if (typeof _sigPad !== 'undefined') _sigPad = null;
   if (typeof _invCsvRows !== 'undefined') _invCsvRows = null;
@@ -25666,6 +25866,7 @@ function renderMain() {
     case 'dashboard':    content = renderRoleDashboard(); break;
     case 'my_work':      content = renderMyWork(); break;
     case 'work_management': content = hasRole('admin','operations') ? renderWorkManagement() : renderRoleDashboard(); break;
+    case 'meetings':     content = hasRole('admin','operations','hr') ? renderMeetings() : renderRoleDashboard(); break;
     case 'marketing':    content = canManageMarketing() ? renderMarketing() : renderRoleDashboard(); break;
     case 'employees':    content = canManagePeople() ? renderEmployees() : renderRoleDashboard(); break;
     case 'employee':     content = canManagePeople() ? renderEmployeeProfile(getRouteParam()) : renderRoleDashboard(); break;
