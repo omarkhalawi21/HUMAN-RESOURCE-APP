@@ -11848,8 +11848,14 @@ async function syncRecurringTodoResets() {
   if (stale.length === 0) return false;
   let anyChanged = false;
   for (const list of stale) {
+    // Must clear `status` too, not just the legacy `done`/`doneAt` — items gained
+    // a monday-style status field, and todoItemStatus() reads `status` first. If
+    // we leave status:'done' here, this write persists it AND stamps
+    // last_reset_date=today, which stops the on-render virtual reset
+    // (todoEffectiveItems), so the item springs back to "done". Keep this in
+    // lockstep with todoEffectiveItems' reset.
     const newItems = (list.items || []).map(it => ({
-      ...it, done: false, doneAt: null,
+      ...it, done: false, doneAt: null, status: 'todo',
     }));
     const { error } = await sb.from('personal_todo_lists')
       .update({
