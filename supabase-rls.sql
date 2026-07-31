@@ -5504,6 +5504,17 @@ DROP POLICY IF EXISTS "meetings_delete" ON public.meetings;
 CREATE POLICY "meetings_delete" ON public.meetings FOR DELETE TO authenticated
   USING (public.is_admin());
 
+-- 101. MARKETING — recurring calendar events
+-- A card's due_date is the FIRST occurrence; `recurrence` repeats it on the
+-- marketing calendar (expanded virtually per month in the UI, so status, notes
+-- and assignees stay on the single card). `recurrence_until` optionally ends the
+-- series. No RLS change: the block-94 marketing_items policies already govern it.
+ALTER TABLE public.marketing_items
+  ADD COLUMN IF NOT EXISTS recurrence text NOT NULL DEFAULT 'none'
+    CHECK (recurrence IN ('none','daily','weekdays','weekly','biweekly','monthly'));
+ALTER TABLE public.marketing_items
+  ADD COLUMN IF NOT EXISTS recurrence_until date;
+
 -- =============================================================
 -- DONE.
 --

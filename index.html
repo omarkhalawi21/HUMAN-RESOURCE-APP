@@ -1555,6 +1555,7 @@ function mapMarketingItemFromDb(r) {
     status: r.status||'todo', priority: r.priority||'normal',
     labelIds: Array.isArray(r.label_ids) ? r.label_ids : [],
     startDate: r.start_date||null, dueDate: r.due_date||null, completedAt: r.completed_at||null,
+    recurrence: r.recurrence||'none', recurrenceUntil: r.recurrence_until||null,
     sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
@@ -1565,6 +1566,7 @@ function marketingItemToDb(i) {
     title: i.title||null, description: i.description||null,
     status: i.status||'todo', priority: i.priority||'normal',
     start_date: i.startDate||null, due_date: i.dueDate||null, completed_at: i.completedAt||null,
+    recurrence: i.recurrence||'none', recurrence_until: i.recurrenceUntil||null,
     sort_order: Number(i.sortOrder)||0, created_by: i.createdBy||null,
   };
 }
@@ -14200,6 +14202,38 @@ function mktCalItems(scope){
   if(scope && scope!=='all'){ const bs=new Set(mktBoardsOf(scope).map(b=>b.id)); const ls=new Set((state.marketingLists||[]).filter(l=>bs.has(l.boardId)).map(l=>l.id)); items=items.filter(i=>ls.has(i.listId)); }
   return items;
 }
+// ---- Recurring calendar events (SQL block 101) ----
+// A card's due_date is the FIRST occurrence; `recurrence` repeats it on the
+// marketing calendar. Occurrences are expanded VIRTUALLY per visible month —
+// no extra rows — so status/notes/assignees stay on the single card (same
+// philosophy as recurring To-Do lists). Date math in UTC to match the count
+// subsystem (mixing local Date + toISOString skews a day at UTC+3).
+const MKT_RECUR = [
+  ['none','Does not repeat'],
+  ['daily','Every day'],
+  ['weekdays','Every weekday (Sun–Thu)'],
+  ['weekly','Every week'],
+  ['biweekly','Every 2 weeks'],
+  ['monthly','Every month'],
+];
+function mktRecurLabel(r){ const f=MKT_RECUR.find(x=>x[0]===r); return f?f[1]:'Does not repeat'; }
+function mktIsRecurring(it){ return !!(it && it.recurrence && it.recurrence!=='none'); }
+function mktDowUTC(iso){ return new Date(iso+'T00:00:00Z').getUTCDay(); } // 0=Sun … 6=Sat
+function mktDayDiff(aISO,bISO){ return Math.round((Date.parse(bISO+'T00:00:00Z')-Date.parse(aISO+'T00:00:00Z'))/86400000); }
+// Does in-month day `ds` land on an occurrence of `anchor` under `rule`?
+// The anchor itself always shows; later days follow the cadence.
+function mktRuleHits(anchor, ds, rule){
+  if(ds===anchor) return true;
+  const diff=mktDayDiff(anchor,ds); if(diff<0) return false;
+  switch(rule){
+    case 'daily':    return true;
+    case 'weekdays': return mktDowUTC(ds)<=4;                                  // Sun(0)…Thu(4)
+    case 'weekly':   return diff%7===0;
+    case 'biweekly': return diff%14===0;
+    case 'monthly':  return Number(ds.slice(8,10))===Number(anchor.slice(8,10)); // same day-of-month; skips short months
+    default:         return false;
+  }
+}
 function renderMarketingCalendar(){
   const ym=(_mktCalMonth && /^\d{4}-\d{2}$/.test(_mktCalMonth)) ? _mktCalMonth : (todayISO().slice(0,7));
   _mktCalMonth=ym;
@@ -14209,8 +14243,19 @@ function renderMarketingCalendar(){
   const projects=(state.marketingProjects||[]).slice().sort(_mktSort);
   // Group this month's due cards by day-of-month.
   const items=mktCalItems(_mktCalScope);
-  const byDay={}; let undated=0;
-  items.forEach(it=>{ if((it.dueDate||'').slice(0,7)===ym){ (byDay[it.dueDate]=byDay[it.dueDate]||[]).push(it); } });
+  const daysInMonth=new Date(y,mo,0).getDate();
+  // byDay: date -> [{it, occ}] where occ=true is a repeated instance (not the anchor).
+  const byDay={};
+  items.forEach(it=>{
+    const anchor=it.dueDate; if(!anchor) return;
+    const rule=mktIsRecurring(it)?it.recurrence:'none';
+    if(rule==='none'){ if(anchor.slice(0,7)===ym){ (byDay[anchor]=byDay[anchor]||[]).push({it,occ:false}); } return; }
+    const until=it.recurrenceUntil||null;
+    for(let d=1; d<=daysInMonth; d++){ const ds=`${ym}-${String(d).padStart(2,'0')}`;
+      if(ds<anchor) continue; if(until && ds>until) continue;
+      if(mktRuleHits(anchor,ds,rule)) (byDay[ds]=byDay[ds]||[]).push({it, occ: ds!==anchor});
+    }
+  });
   const totalNoDue=(state.marketingItems||[]).filter(i=>!i.parentId && !i.dueDate && i.status!=='done').length;
   // Grid: Sun-first weeks.
   const startDow=new Date(y,mo-1,1).getDay();
@@ -14220,13 +14265,17 @@ function renderMarketingCalendar(){
   // Apple-style pastel event block, tinted from the card's PROJECT colour
   // (project colour at low alpha + a solid left accent). Overdue cards get a
   // rose accent; done cards are muted + struck through.
-  const chip=it=>{ const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
-    const overdue=it.status!=='done' && it.dueDate<today; const done=it.status==='done';
+  const chip=entry=>{ const it=entry.it, occ=entry.occ; const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
+    // Overdue/done reflect the single card's real state — only meaningful on the
+    // anchor date. Repeated instances (occ) render as plain scheduled chips.
+    const overdue=!occ && it.status!=='done' && it.dueDate<today; const done=!occ && it.status==='done';
+    const recurs=mktIsRecurring(it);
     // The card's Notes (item.description). Shown as a one-line snippet under the
     // title, with the FULL notes in the hover tooltip alongside the title.
     const notes=(it.description||'').trim();
-    const tip=escapeHTML(it.title)+(overdue?' · overdue':'')+(notes?'\n\n'+escapeHTML(notes):'');
-    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button>`; };
+    const tip=escapeHTML(it.title)+(recurs?' · '+mktRecurLabel(it.recurrence).toLowerCase():'')+(overdue?' · overdue':'')+(notes?'\n\n'+escapeHTML(notes):'');
+    const rep=recurs?`<span class="opacity-50" title="Repeats">↻ </span>`:'';
+    return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${rep}${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button>`; };
   const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg min-h-[92px]"></div>`;
     const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=(byDay[ds]||[]); const isToday=ds===today;
     const shown=list.slice(0,3); const extra=list.length-shown.length;
@@ -14251,7 +14300,7 @@ function renderMarketingCalendar(){
     <div class="bg-white rounded-2xl shadow-card p-4">
       <div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(x=>`<div class="text-[11px] font-semibold text-slate-400 text-center uppercase tracking-wider">${x}</div>`).join('')}</div>
       <div class="grid grid-cols-7 gap-1.5">${cells.map(cell).join('')}</div>
-      ${(()=>{ const ids=new Set(); Object.values(byDay).forEach(arr=>arr.forEach(it=>{ const b=mktBoardOfItem(it); if(b) ids.add(b.projectId); })); const legend=projects.filter(p=>ids.has(p.id)); return legend.length?`<div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap"><span class="text-slate-400">Projects:</span>${legend.map(p=>`<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:${p.color}"></span>${escapeHTML(p.name)}</span>`).join('')}<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#f15780"></span>Overdue</span></div>`:''; })()}
+      ${(()=>{ const ids=new Set(); Object.values(byDay).forEach(arr=>arr.forEach(e=>{ const b=mktBoardOfItem(e.it); if(b) ids.add(b.projectId); })); const legend=projects.filter(p=>ids.has(p.id)); return legend.length?`<div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap"><span class="text-slate-400">Projects:</span>${legend.map(p=>`<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:${p.color}"></span>${escapeHTML(p.name)}</span>`).join('')}<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#f15780"></span>Overdue</span></div>`:''; })()}
     </div>`;
 }
 // KPI + charts overview across the whole marketing workspace (Chart.js,
@@ -14443,7 +14492,10 @@ function mktItemBodyHTML(id){
       <div><label class="label">Priority</label><select class="input" onchange="mktUpdateItem('${id}',{priority:this.value})">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${it.priority===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
       <div><label class="label">Start date</label><input type="date" class="input" value="${it.startDate||''}" onchange="mktUpdateItem('${id}',{start_date:this.value||null})"></div>
       <div><label class="label">Due date</label><input type="date" class="input" value="${it.dueDate||''}" onchange="mktUpdateItem('${id}',{due_date:this.value||null})"></div>
+      <div><label class="label">Repeat</label><select class="input" onchange="mktUpdateItem('${id}',{recurrence:this.value})">${MKT_RECUR.map(([k,l])=>`<option value="${k}" ${(it.recurrence||'none')===k?'selected':''}>${escapeHTML(l)}</option>`).join('')}</select></div>
+      <div><label class="label">Repeat until ${mktIsRecurring(it)?'':'<span class="text-slate-400 font-normal">(optional)</span>'}</label><input type="date" class="input" value="${it.recurrenceUntil||''}" ${mktIsRecurring(it)?'':'disabled'} onchange="mktUpdateItem('${id}',{recurrence_until:this.value||null})"></div>
     </div>
+    ${mktIsRecurring(it)&&!it.dueDate?`<div class="mb-4 text-[11px] text-amber-600">${icon('calendar','w-3.5 h-3.5 inline')} Set a due date — it's the first occurrence this repeat starts from.</div>`:''}
     ${(()=>{ const board=mktBoardOfItem(it); const bl=(board&&board.labels)||[]; const on=new Set(it.labelIds||[]);
       return `<div class="mb-4"><div class="flex items-center justify-between mb-1"><label class="label !mb-0">Labels</label>${board?`<button class="text-xs text-brand-700 hover:underline" onclick="openMarketingLabelsModal('${board.id}')">Manage labels</button>`:''}</div>
         <div class="flex flex-wrap gap-1.5">${bl.length?bl.map(l=>`<button onclick="mktToggleItemLabel('${id}','${l.id}')" class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded ${on.has(l.id)?'text-white':'text-slate-600'}" style="${on.has(l.id)?`background:${l.color}`:'background:#f1f5f9'}">${on.has(l.id)?icon('check','w-3 h-3'):''}${escapeHTML(l.name)}</button>`).join(''):'<span class="text-xs text-slate-400">No labels on this board yet.</span>'}</div>
@@ -14594,10 +14646,10 @@ function openMarketingListModal(boardId, id){
 }
 function openMarketingItemModal(listId){
   if(!canManageMarketing()) return;
-  const body=`<div class="space-y-4"><div><label class="label">Item title *</label><input id="mkt-i-title" class="input" placeholder="e.g. Draft launch email"></div><div class="grid grid-cols-2 gap-3"><div><label class="label">Priority</label><select id="mkt-i-priority" class="input">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${k==='normal'?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div><div><label class="label">Due date</label><input id="mkt-i-due" type="date" class="input"></div></div><div><label class="label">Notes</label><textarea id="mkt-i-notes" class="input" rows="2" placeholder="Optional"></textarea></div></div>`;
+  const body=`<div class="space-y-4"><div><label class="label">Item title *</label><input id="mkt-i-title" class="input" placeholder="e.g. Draft launch email"></div><div class="grid grid-cols-2 gap-3"><div><label class="label">Priority</label><select id="mkt-i-priority" class="input">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${k==='normal'?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div><div><label class="label">Due date</label><input id="mkt-i-due" type="date" class="input"></div></div><div><label class="label">Repeat</label><select id="mkt-i-recur" class="input">${MKT_RECUR.map(([k,l])=>`<option value="${k}">${escapeHTML(l)}</option>`).join('')}</select><p class="text-[11px] text-slate-400 mt-1">Repeats on the marketing calendar from the due date.</p></div><div><label class="label">Notes</label><textarea id="mkt-i-notes" class="input" rows="2" placeholder="Optional"></textarea></div></div>`;
   openModal('New item', body, async ()=>{
     const title=$('#mkt-i-title')?.value.trim(); if(!title){ toast('Enter a title','error'); return false; }
-    const payload=marketingItemToDb({ listId, title, priority:$('#mkt-i-priority')?.value||'normal', dueDate:$('#mkt-i-due')?.value||null, description:$('#mkt-i-notes')?.value.trim()||null, createdBy:currentEmployee()?.id, sortOrder:mktItemsOf(listId).length });
+    const payload=marketingItemToDb({ listId, title, priority:$('#mkt-i-priority')?.value||'normal', dueDate:$('#mkt-i-due')?.value||null, recurrence:$('#mkt-i-recur')?.value||'none', description:$('#mkt-i-notes')?.value.trim()||null, createdBy:currentEmployee()?.id, sortOrder:mktItemsOf(listId).length });
     const { data, error } = await sb.from('marketing_items').insert(payload).select().single();
     if(error){ toast(humanizeError(error),'error'); return false; }
     state.marketingItems.push(mapMarketingItemFromDb(data)); render(); toast('Item added','success'); return true;
