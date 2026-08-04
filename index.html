@@ -3479,6 +3479,7 @@ function renderShell(routeContent) {
             }
             if (key === 'documents') {
               const n = state.employees.reduce((s,e)=>{
+                if (e.status!=='active' || e.systemRole==='branch_device') return s;
                 const x = getEmpExtras(e.id);
                 const i = daysUntil(x.iqama?.expiry); const b = daysUntil(x.baladiya?.expiry);
                 if (docNeedsReminder('IQAMA', i) || docNeedsReminder('Baladiya', b)) s++;
@@ -3855,6 +3856,9 @@ function renderDashboard() {
   const docExpiryItems = [];
   let docExpired = 0, docExp30 = 0, docExpSoon60 = 0;
   for (const e of (state.employees||[])) {
+    // Only active company members — skip branch devices and pending/terminated
+    // people, so the counts match the Documents list.
+    if (e.status!=='active' || e.systemRole==='branch_device') continue;
     const x = getEmpExtras(e.id);
     const checks = [
       { doc: 'IQAMA',    expiry: x.iqama?.expiry },
@@ -15385,8 +15389,12 @@ let docFilter = 'all'; // all | expiring | expired
 function renderDocuments() {
   const me = currentEmployee();
   const admin = canManagePeople();
-  // Build per-employee summary (admin) or self-only (employee)
-  const sources = admin ? state.employees : state.employees.filter(e => e.id===me.id);
+  // Build per-employee summary (admin) or self-only (employee). Only real,
+  // active company members carry IQAMA/Baladiya — exclude branch devices (kiosk
+  // accounts) and pending/terminated people who aren't part of the company.
+  const sources = admin
+    ? state.employees.filter(e => e.status==='active' && e.systemRole!=='branch_device')
+    : state.employees.filter(e => e.id===me.id);
   const rows = sources.map(e => {
     const x = getEmpExtras(e.id);
     const iqamaSt = expiryStatus(x.iqama?.expiry);
