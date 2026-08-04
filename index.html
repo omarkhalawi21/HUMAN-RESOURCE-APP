@@ -24466,6 +24466,18 @@ function invBuildDashboard(branch){
     a.training += s.wasteTraining||0; a.spillage += s.wasteSpillage||0; return a;
   }, { dialin:0, remakes:0, training:0, spillage:0 });
   wasteToday.total = wasteToday.dialin + wasteToday.remakes + wasteToday.training + wasteToday.spillage;
+  // Which beans that waste came from (per-line waste log). Null bean →
+  // "Unspecified" (legacy shift, or a line saved without a bean).
+  const wasteBean = {};
+  todayShifts.forEach(s => (s.wasteLog||[]).forEach(w=>{
+    const g = Number(w.grams)||0; if (!g) return;
+    const key = w.itemId || '_none';
+    (wasteBean[key] = wasteBean[key] || { grams:0 }).grams += g;
+  }));
+  wasteToday.byBean = Object.keys(wasteBean).map(k=>({
+    name: k==='_none' ? 'Unspecified' : (((state.dailyCountItems||[]).find(i=>i.id===k)||{}).name || 'Bean'),
+    grams: Math.round(wasteBean[k].grams),
+  })).sort((a,b)=>b.grams-a.grams);
   // Waste as a % of coffee actually used today (espresso + filter beans, in
   // grams) — the single "how leaky are we today" number. Non-coffee items
   // (milk / sweets / retail) are excluded so the ratio stays gram-vs-gram.
@@ -24656,6 +24668,11 @@ function invBuildDashboardHTML(branch){
         ${wTile('Spillage', d.wasteToday.spillage)}
         ${wTile('Total waste', d.wasteToday.total, true)}
       </div>
+      ${d.wasteToday.byBean && d.wasteToday.byBean.length ? `
+      <div class="flex items-center gap-1.5 flex-wrap mt-3 pt-3 border-t border-slate-100">
+        <span class="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mr-1">By bean</span>
+        ${d.wasteToday.byBean.map(b=>`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-600"><span class="font-medium text-slate-700">${escapeHTML(b.name)}</span> ${b.grams} g</span>`).join('')}
+      </div>` : ''}
     </div>
     <div class="bg-white rounded-2xl shadow-card p-4 mt-4 overflow-x-auto">
       <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
