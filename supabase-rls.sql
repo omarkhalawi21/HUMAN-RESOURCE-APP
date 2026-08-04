@@ -5515,6 +5515,51 @@ ALTER TABLE public.marketing_items
 ALTER TABLE public.marketing_items
   ADD COLUMN IF NOT EXISTS recurrence_until date;
 
+-- 102. INVENTORY WASTE LOG — per-bean attribution for shift waste
+-- The shift waste buckets (dial-in / remakes / training / spillage) were only a
+-- flat grams total on inventory_shifts. This adds per-line rows so each waste
+-- entry also records WHICH bean was consumed. The waste_*_g columns are kept and
+-- now hold the per-type SUM (a derived cache), so every dashboard/summary that
+-- reads them keeps working unchanged. item_id is nullable (bean unspecified /
+-- legacy re-save). Also: a staff/comp drink may now be logged with NO bean
+-- ("None"), so inventory_usage_log.item_id becomes nullable too.
+ALTER TABLE public.inventory_usage_log ALTER COLUMN item_id DROP NOT NULL;
+
+CREATE TABLE IF NOT EXISTS public.inventory_waste_log (
+  id          uuid primary key default gen_random_uuid(),
+  shift_id    uuid not null references public.inventory_shifts(id) ON DELETE CASCADE,
+  item_id     uuid references public.daily_count_items(id) ON DELETE SET NULL,
+  waste_type  text not null default 'dialin',
+  grams       numeric(10,2) not null default 0,
+  recorded_by uuid default auth.uid(),
+  created_at  timestamptz not null default now(),
+  CONSTRAINT inventory_waste_type_chk CHECK (waste_type IN ('dialin','remakes','training','spillage'))
+);
+CREATE INDEX IF NOT EXISTS inventory_waste_log_shift_idx ON public.inventory_waste_log(shift_id);
+
+ALTER TABLE public.inventory_waste_log ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='inventory_waste_log'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.inventory_waste_log', r.policyname); END LOOP;
+END $$;
+
+-- Branch-scoped via the parent shift (mirrors inventory_usage_log, block 85).
+CREATE POLICY "iwl_select_floor_ops_device" ON public.inventory_waste_log FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "iwl_insert_floor_ops_device" ON public.inventory_waste_log FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "iwl_update_floor_ops_device" ON public.inventory_waste_log FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id))
+  WITH CHECK (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+CREATE POLICY "iwl_delete_floor_ops_device" ON public.inventory_waste_log FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','head_barista','barista','branch_device']) AND public.shift_branch_ok(shift_id));
+-- Company owner read-only oversight (parity with block 98's inventory grants).
+CREATE POLICY "inventory_waste_log_select_owner" ON public.inventory_waste_log FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['owner']));
+
 -- =============================================================
 -- DONE.
 --
