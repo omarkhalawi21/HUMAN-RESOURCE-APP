@@ -24139,7 +24139,7 @@ function invWasteRowHTML(w){
   const beanOpts = `<option value="" ${!w.itemId?'selected':''}>— bean —</option>` + invBeanOptionsHTML('any', w.itemId||'');
   return `<div class="waste-row flex flex-wrap gap-1.5 items-center mb-2 pb-2 border-b border-slate-100">
     <div class="w-28"><select class="waste-type input w-full py-2 text-sm" title="Waste type">${typeOpts}</select></div>
-    <div class="flex-1 min-w-[8rem]"><select class="waste-bean input w-full py-2 text-sm" title="Bean">${beanOpts}</select></div>
+    <div class="flex-1 min-w-[10rem]"><select class="waste-bean input w-full py-2 text-sm" title="Bean">${beanOpts}</select></div>
     <div class="w-20"><input class="waste-grams input w-full py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="g" value="${w.grams!=null&&w.grams!==0?w.grams:''}"></div>
     <button type="button" onclick="this.closest('.waste-row').remove()" aria-label="Remove line" class="text-slate-400 hover:text-rose-600 text-lg leading-none px-1">&times;</button>
   </div>`;
@@ -24799,7 +24799,10 @@ function invRenderEntry(branch){
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
       <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold">Daily waste log <span class="text-slate-400 font-normal normal-case">· grams</span></div>
-        <button type="button" onclick="invWasteAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+        <div class="flex items-center gap-1">
+          ${hasRole('admin','head_barista') ? `<button type="button" onclick="invManageBeansModal()" class="btn btn-ghost btn-sm">Beans</button>` : ''}
+          <button type="button" onclick="invWasteAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+        </div>
       </div>
       <div class="text-[11px] text-slate-400 mb-2">Coffee lost to operations (no person). Per line: <span class="font-medium text-slate-500">type · bean · grams</span>. Calibration / dial-in goes here.</div>
       <div id="inv-waste-rows">${invWasteSeed(existing).map(invWasteRowHTML).join('')}</div>
@@ -24808,7 +24811,7 @@ function invRenderEntry(branch){
       <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold">Staff &amp; customer log</div>
         <div class="flex items-center gap-1">
-          ${hasRole('admin','head_barista') ? `<button type="button" onclick="openInventoryOwnersModal()" class="btn btn-ghost btn-sm">Owners</button><button type="button" onclick="openInventoryDrinksModal()" class="btn btn-ghost btn-sm">Drinks</button>` : ''}
+          ${hasRole('admin','head_barista') ? `<button type="button" onclick="openInventoryOwnersModal()" class="btn btn-ghost btn-sm">Owners</button><button type="button" onclick="openInventoryDrinksModal()" class="btn btn-ghost btn-sm">Drinks</button><button type="button" onclick="invManageBeansModal()" class="btn btn-ghost btn-sm">Beans</button>` : ''}
           <button type="button" onclick="invUsageAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
         </div>
       </div>
@@ -25063,6 +25066,72 @@ function invManageMixModal(){
 // every stock item across all categories, tap to edit (the item editor carries
 // the Active toggle + Delete), plus Add. Mirrors invManageMixModal but spans the
 // whole count list, not just the product-mix subset.
+// Fast bean editor — beans (the espresso + V60 items) rotate often, so instead
+// of the one-modal-per-item flow this edits them all inline in a single list:
+// rename, retype (Espresso ↔ V60), set the dose, toggle active, add or remove,
+// then Save once. Feeds both the waste-log and staff-log bean dropdowns.
+const INV_BEAN_CATS = [['espresso','Espresso'],['v60','V60 / Filter']];
+function invBeanEditRowHTML(it){
+  const id = it ? it.id : '';
+  const cat = it ? (it.category||'espresso') : 'espresso';
+  const unit = it ? (it.unit||'g') : 'g';
+  return `<div class="bean-row flex flex-wrap gap-1.5 items-center mb-1.5" data-id="${escapeHTML(id)}" data-unit="${escapeHTML(unit)}">
+    <div class="flex-1 min-w-[10rem]"><input class="bean-name input w-full py-2 text-sm" placeholder="Bean name" value="${it?escapeHTML(it.name):''}"></div>
+    <div class="w-32"><select class="bean-cat input w-full py-2 text-sm" title="Type">${INV_BEAN_CATS.map(([k,l])=>`<option value="${k}" ${cat===k?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="w-16"><input class="bean-dose input w-full py-2 text-sm text-right" type="number" inputmode="decimal" step="0.1" placeholder="g" value="${it&&it.doseG!=null?it.doseG:''}" title="Standard dose — g per shot/cup"></div>
+    <label class="flex items-center gap-1 text-[11px] text-slate-500 px-1" title="Active — untick to hide from the dropdowns (keeps history)"><input class="bean-active" type="checkbox" ${(!it||it.active!==false)?'checked':''}> on</label>
+    <button type="button" onclick="this.closest('.bean-row').remove()" aria-label="Remove bean" class="text-slate-400 hover:text-rose-600 text-lg leading-none px-1">&times;</button>
+  </div>`;
+}
+function invBeanAddRow(){
+  const c = document.getElementById('bean-rows');
+  if (c){ c.insertAdjacentHTML('beforeend', invBeanEditRowHTML(null)); const rows = c.querySelectorAll('.bean-name'); const last = rows[rows.length-1]; if (last) last.focus(); }
+}
+function invManageBeansModal(){
+  if (!hasRole('admin','head_barista')){ toast('Managers only', 'error'); return; }
+  const beans = (state.dailyCountItems||[]).filter(i=>i.category==='espresso'||i.category==='v60')
+    .slice().sort((a,b)=> (DC_CAT_ORDER.indexOf(a.category)-DC_CAT_ORDER.indexOf(b.category)) || (a.sortOrder-b.sortOrder) || a.name.localeCompare(b.name));
+  const head = `<div class="flex flex-wrap gap-1.5 items-center mb-1 px-0.5 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
+    <div class="flex-1 min-w-[10rem]">Bean</div><div class="w-32">Type</div><div class="w-16 text-right">Dose</div><div class="px-1">On</div><div class="w-6"></div>
+  </div>`;
+  const body = `<div>
+    <div class="text-xs text-slate-500 mb-3">Rename, switch Espresso ↔ V60, set the dose (g per shot/cup), or toggle a bean off — then <b>Save</b> once. Removing a row <b>deletes</b> that bean and its recorded counts (untick <b>On</b> instead to just hide it). These beans feed the waste-log and staff-log dropdowns.</div>
+    ${head}
+    <div id="bean-rows" class="max-h-80 overflow-y-auto pr-0.5">${beans.length?beans.map(invBeanEditRowHTML).join(''):''}</div>
+    <button type="button" onclick="invBeanAddRow()" class="btn btn-ghost btn-sm mt-2">${icon('plus','w-4 h-4')} Add bean</button>
+  </div>`;
+  openModal('Manage beans', body, async ()=>{
+    const rows = [...document.querySelectorAll('#bean-rows .bean-row')];
+    const seen = new Set(); const inserts = []; const updates = [];
+    let maxSort = beans.reduce((m,b)=>Math.max(m, b.sortOrder||0), 0);
+    for (const r of rows){
+      const name = r.querySelector('.bean-name').value.trim();
+      const id = r.getAttribute('data-id') || '';
+      if (!name){ if (!id) continue; toast('Every bean needs a name — or remove the row', 'error'); return false; }
+      const category = r.querySelector('.bean-cat').value;
+      const dose_g = dcNum(r.querySelector('.bean-dose').value);
+      const active = r.querySelector('.bean-active').checked;
+      const unit = r.getAttribute('data-unit') || 'g';
+      if (id){ seen.add(id); updates.push({ id, name, category, dose_g, active }); }
+      else { inserts.push({ name, category, dose_g, active, unit, tracks_waste:true, sort_order: ++maxSort }); }
+    }
+    // Existing beans whose row was removed → delete (cascades to their counts).
+    const dels = beans.filter(b=>!seen.has(b.id)).map(b=>b.id);
+    if (dels.length && !confirm(`Delete ${dels.length} bean${dels.length===1?'':'s'} and ${dels.length===1?'its':'their'} recorded counts? This cannot be undone.`)) return false;
+    try {
+      for (const u of updates){ const { id, ...patch } = u; const { error } = await sb.from('daily_count_items').update(patch).eq('id', id); if (error) throw error; }
+      if (inserts.length){ const { error } = await sb.from('daily_count_items').insert(inserts); if (error) throw error; }
+      if (dels.length){ const { error } = await sb.from('daily_count_items').delete().in('id', dels); if (error) throw error; }
+    } catch(e){ toast(humanizeError(e), 'error'); return false; }
+    // Reload the catalog and drop the count cache (deletes cascaded server-side).
+    const { data } = await sb.from('daily_count_items').select('*');
+    if (data) state.dailyCountItems = data.map(mapDailyCountItemFromDb);
+    state.dailyCountsCache = {};
+    toast('Beans updated', 'success');
+    render();
+    return true;
+  }, { saveLabel:'Save beans' });
+}
 function invManageCountItemsModal(){
   if (!hasRole('admin','head_barista')){ toast('Managers only', 'error'); return; }
   const sec = label => `<div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mt-4 mb-1">${escapeHTML(label)}</div>`;
