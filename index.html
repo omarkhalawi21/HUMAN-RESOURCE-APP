@@ -23968,8 +23968,14 @@ function mapInventoryShiftFromDb(r){
     note:r.note||'',
     counts:[],     // attached after the inventory_shift_counts query
     usage:[],      // attached after the inventory_usage_log query
+    wasteLog:[],   // attached after the inventory_waste_log query (per-bean waste)
     drinkSales:[], // attached after the inventory_drink_sales query (product mix)
   };
+}
+// One line of the shift waste log — grams of a specific bean lost to dial-in /
+// remakes / training / spillage. itemId may be null (bean unspecified / legacy).
+function mapInventoryWasteFromDb(r){
+  return { id:r.id, shiftId:r.shift_id, itemId:r.item_id||null, wasteType:r.waste_type||'dialin', grams: r.grams==null ? 0 : Number(r.grams) };
 }
 function mapDrinkSaleFromDb(r){
   return { id:r.id, shiftId:r.shift_id, drinkId:r.drink_id, qtySold: r.qty_sold==null ? 0 : Number(r.qty_sold) };
@@ -24054,9 +24060,12 @@ function invUsageWhatOptions(u){
 // The bean select, scoped to the selected drink's category: an espresso drink
 // → Colombia/Guji only; a V60 drink → V60 beans; "Manual Espresso" (any) →
 // all 12. Updated live by invUsageDrinkChanged when the drink changes.
-function invBeanOptionsHTML(drinkCat, selId){
+function invBeanOptionsHTML(drinkCat, selId, includeNone){
   const cats = drinkCat==='any' ? ['espresso','v60'] : [drinkCat];
-  return cats.map(cat=>{
+  // Optional leading "none" — some drinks (tea, hot chocolate, water) carry no
+  // bean, so the picker mustn't force one. Selected when the row has no bean.
+  const none = includeNone ? `<option value="" ${!selId?'selected':''}>— none —</option>` : '';
+  return none + cats.map(cat=>{
     const its = invActiveItems().filter(i=>i.category===cat);
     if (!its.length) return '';
     return `<optgroup label="${escapeHTML(DC_CATEGORIES[cat]||cat)}">${its.map(it=>`<option value="${it.id}" ${it.id===selId?'selected':''}>${escapeHTML(it.name)}</option>`).join('')}</optgroup>`;
@@ -24067,7 +24076,7 @@ function invUsageBeanOptions(u){
   let cat = 'espresso';
   if (u.drinkId){ const d = invDrinkById(u.drinkId); cat = d ? (d.category||'espresso') : 'espresso'; }
   else if (!invIsSweetItem(u.itemId)){ cat = (invActiveDrinks()[0]||{}).category || 'espresso'; } // fresh row defaults to the first drink
-  return invBeanOptionsHTML(cat, sel);
+  return invBeanOptionsHTML(cat, sel, true); // "none" — a drink can have no bean
 }
 // When the drink/sweet select changes: re-scope the bean options to the drink's
 // category, and hide the bean picker entirely for a sweet.
@@ -24078,7 +24087,7 @@ function invUsageDrinkChanged(sel){
   const val = sel.value || '';
   if (val.indexOf('drink:')===0){
     const d = invDrinkById(val.slice(6));
-    beanSel.innerHTML = invBeanOptionsHTML(d ? (d.category||'espresso') : 'espresso', beanSel.value);
+    beanSel.innerHTML = invBeanOptionsHTML(d ? (d.category||'espresso') : 'espresso', beanSel.value, true);
     if (beanBox) beanBox.style.display = '';
   } else {
     if (beanBox) beanBox.style.display = 'none'; // a sweet — no bean
@@ -24110,6 +24119,46 @@ function invUsageRowHTML(u){
 function invUsageAddRow(){
   const c = document.getElementById('inv-usage-rows');
   if (c) c.insertAdjacentHTML('beforeend', invUsageRowHTML({}));
+}
+// Shift waste buckets. Was a flat grams total per bucket on inventory_shifts;
+// now each line also names the BEAN, so "which coffee got dialled in / spilled"
+// is answerable. The per-type sums are still written back to the waste_*_g
+// columns (a derived cache) so every rollup that reads them keeps working.
+const INV_WASTE_TYPES = [
+  { key:'dialin',   label:'Dial-in' },
+  { key:'remakes',  label:'Remakes' },
+  { key:'training', label:'Training' },
+  { key:'spillage', label:'Spillage' },
+];
+function invWasteTypeLabel(k){ return (INV_WASTE_TYPES.find(t=>t.key===k)||{}).label || k; }
+// One editable waste line: type · bean · grams. Read back by class from inside
+// #inv-waste-rows on save. Beans = the espresso + V60 items (any of the 12).
+function invWasteRowHTML(w){
+  w = w || {};
+  const typeOpts = INV_WASTE_TYPES.map(t=>`<option value="${t.key}" ${w.wasteType===t.key?'selected':''}>${t.label}</option>`).join('');
+  const beanOpts = `<option value="" ${!w.itemId?'selected':''}>— bean —</option>` + invBeanOptionsHTML('any', w.itemId||'');
+  return `<div class="waste-row flex flex-wrap gap-1.5 items-center mb-2 pb-2 border-b border-slate-100">
+    <div class="w-28"><select class="waste-type input w-full py-2 text-sm" title="Waste type">${typeOpts}</select></div>
+    <div class="flex-1 min-w-[8rem]"><select class="waste-bean input w-full py-2 text-sm" title="Bean">${beanOpts}</select></div>
+    <div class="w-20"><input class="waste-grams input w-full py-2 text-sm text-right" type="number" inputmode="decimal" step="any" placeholder="g" value="${w.grams!=null&&w.grams!==0?w.grams:''}"></div>
+    <button type="button" onclick="this.closest('.waste-row').remove()" aria-label="Remove line" class="text-slate-400 hover:text-rose-600 text-lg leading-none px-1">&times;</button>
+  </div>`;
+}
+function invWasteAddRow(){
+  const c = document.getElementById('inv-waste-rows');
+  if (c) c.insertAdjacentHTML('beforeend', invWasteRowHTML({}));
+}
+// Seed the waste editor: prefer per-bean lines; else, for a legacy shift that
+// only has the old bucket totals, seed one bean-less line per non-zero bucket
+// so re-saving doesn't silently wipe those totals.
+function invWasteSeed(existing){
+  if (existing && existing.wasteLog && existing.wasteLog.length) return existing.wasteLog;
+  const seed = [];
+  if (existing){
+    const legacy = { dialin:existing.wasteDialin, remakes:existing.wasteRemakes, training:existing.wasteTraining, spillage:existing.wasteSpillage };
+    INV_WASTE_TYPES.forEach(t=>{ const v = legacy[t.key]; if (v!=null && v!==0) seed.push({ wasteType:t.key, itemId:null, grams:v }); });
+  }
+  return seed;
 }
 // Manage the drinks recipe menu (admin/head_barista). List → tap to edit.
 function openInventoryDrinksModal(){
@@ -24247,16 +24296,18 @@ async function loadInventoryShifts(branch, ym){
   const rows = (shifts || []).map(mapInventoryShiftFromDb);
   if (rows.length){
     const ids = rows.map(s=>s.id);
-    const [{ data:counts }, { data:usage }, { data:sales }] = await Promise.all([
+    const [{ data:counts }, { data:usage }, { data:waste }, { data:sales }] = await Promise.all([
       sb.from('inventory_shift_counts').select('*').in('shift_id', ids),
       sb.from('inventory_usage_log').select('*').in('shift_id', ids),
+      sb.from('inventory_waste_log').select('*').in('shift_id', ids),
       sb.from('inventory_drink_sales').select('*').in('shift_id', ids),
     ]);
-    const byShift = {}, byUsage = {}, bySales = {};
+    const byShift = {}, byUsage = {}, byWaste = {}, bySales = {};
     (counts || []).map(mapInventoryShiftCountFromDb).forEach(c=>{ (byShift[c.shiftId] = byShift[c.shiftId] || []).push(c); });
     (usage  || []).map(mapInventoryUsageFromDb).forEach(u=>{ (byUsage[u.shiftId] = byUsage[u.shiftId] || []).push(u); });
+    (waste  || []).map(mapInventoryWasteFromDb).forEach(w=>{ (byWaste[w.shiftId] = byWaste[w.shiftId] || []).push(w); });
     (sales  || []).map(mapDrinkSaleFromDb).forEach(d=>{ (bySales[d.shiftId] = bySales[d.shiftId] || []).push(d); });
-    rows.forEach(s=>{ s.counts = byShift[s.id] || []; s.usage = byUsage[s.id] || []; s.drinkSales = bySales[s.id] || []; });
+    rows.forEach(s=>{ s.counts = byShift[s.id] || []; s.usage = byUsage[s.id] || []; s.wasteLog = byWaste[s.id] || []; s.drinkSales = bySales[s.id] || []; });
   }
   state.inventoryShiftsCache[key] = rows;
   _invLoading.delete(key);
@@ -24428,9 +24479,10 @@ function invBuildDashboard(branch){
   const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
   const ownerAgg = {}; const ownersTotal = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
-    const it = items.find(i=>i.id===u.itemId); if (!it) return;
+    const it = items.find(i=>i.id===u.itemId) || null;
+    if (!it && !u.drinkId) return;                     // bean-less, drink-less row = nothing to attribute
     const grams   = invUsageGrams(u, it);              // drink dose, else bean dose, else 0
-    const isCoffee = !!u.drinkId || it.doseG!=null;    // a drink or a bean = coffee
+    const isCoffee = !!u.drinkId || (it && it.doseG!=null); // a drink or a bean = coffee
     const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
     if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
     // Owners consume too, but they have no 1+1 allowance — aggregate per person.
@@ -24740,20 +24792,17 @@ function invRenderEntry(branch){
     }).join('');
     return `<div class="mb-4"><div class="text-[11px] uppercase tracking-[0.15em] text-brand-700 font-semibold mb-1">${escapeHTML(DC_CATEGORIES[cat]||cat)}</div>${rows}</div>`;
   }).join('');
-  const wasteFields = [
-    ['dialin','Dial-in', existing&&existing.wasteDialin!=null?existing.wasteDialin:''],
-    ['remakes','Remakes', existing&&existing.wasteRemakes!=null?existing.wasteRemakes:''],
-    ['training','Training', existing&&existing.wasteTraining!=null?existing.wasteTraining:''],
-    ['spillage','Spillage', existing&&existing.wasteSpillage!=null?existing.wasteSpillage:''],
-  ].map(([k,lbl,val])=>`<div><div class="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">${lbl}</div><input id="inv-waste-${k}" type="number" inputmode="decimal" step="any" value="${val}" class="input w-full text-right text-base py-2" placeholder="0"></div>`).join('');
   const foodicsBox = isClose ? `
     <div class="bg-brand-50 border border-brand-200 rounded-2xl p-3 mb-4 text-xs text-slate-600">
       Per item enter <span class="font-semibold text-slate-700">Received</span> (deliveries this shift) and <span class="font-semibold text-slate-700">Closing</span> (what's left). Sales go on the <span class="font-semibold text-brand-700">Product mix</span> screen.
     </div>
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
-      <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold mb-2">Daily waste log <span class="text-slate-400 font-normal normal-case">· grams</span></div>
-      <div class="text-[11px] text-slate-400 mb-2">Coffee lost to operations (no person). Calibration / dial-in goes here.</div>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">${wasteFields}</div>
+      <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
+        <div class="text-[11px] uppercase tracking-[0.15em] text-slate-500 font-semibold">Daily waste log <span class="text-slate-400 font-normal normal-case">· grams</span></div>
+        <button type="button" onclick="invWasteAddRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+      </div>
+      <div class="text-[11px] text-slate-400 mb-2">Coffee lost to operations (no person). Per line: <span class="font-medium text-slate-500">type · bean · grams</span>. Calibration / dial-in goes here.</div>
+      <div id="inv-waste-rows">${invWasteSeed(existing).map(invWasteRowHTML).join('')}</div>
     </div>
     <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
       <div class="flex items-center justify-between mb-1 gap-2 flex-wrap">
@@ -24880,13 +24929,25 @@ async function invSaveClose(shiftId, branch, shift){
     if (closing==null && recv==null) return null;
     return { shift_id:shiftId, item_id:it.id, closing_qty:closing, received_qty:recv };
   }).filter(Boolean);
+  // Waste log — per-bean line items. Sum each type back into the waste_*_g
+  // columns (kept as a derived cache so every rollup reading them is untouched).
+  const wasteRows = []; const wasteSum = { dialin:0, remakes:0, training:0, spillage:0 };
+  document.querySelectorAll('#inv-waste-rows .waste-row').forEach(row=>{
+    const grams = Number(row.querySelector('.waste-grams')?.value);
+    if (!isFinite(grams) || grams===0) return;
+    const type = row.querySelector('.waste-type')?.value || 'dialin';
+    const item_id = row.querySelector('.waste-bean')?.value || null;
+    wasteRows.push({ shift_id: shiftId, item_id, waste_type: type, grams });
+    if (wasteSum[type]!=null) wasteSum[type] += grams;
+  });
+  const hasWaste = wasteRows.length > 0;
   const { error } = await sb.from('inventory_shifts').update({
     status:'closed', closed_by:actor.id, closed_by_name:actor.name, closed_at:nowISO,
     updated_at:nowISO,
-    waste_dialin_g:   invNum('inv-waste-dialin'),
-    waste_remakes_g:  invNum('inv-waste-remakes'),
-    waste_training_g: invNum('inv-waste-training'),
-    waste_spillage_g: invNum('inv-waste-spillage'),
+    waste_dialin_g:   hasWaste ? wasteSum.dialin   : null,
+    waste_remakes_g:  hasWaste ? wasteSum.remakes  : null,
+    waste_training_g: hasWaste ? wasteSum.training : null,
+    waste_spillage_g: hasWaste ? wasteSum.spillage : null,
   }).eq('id', shiftId);
   if (error){ toast('Could not close shift: ' + error.message, 'error'); return; }
   if (rows.length){
@@ -24903,11 +24964,11 @@ async function invSaveClose(shiftId, branch, shift){
     let item_id = null, drink_id = null;
     if (whatVal.indexOf('drink:')===0){
       drink_id = whatVal.slice(6);
-      item_id  = row.querySelector('.usage-bean')?.value || null; // a drink needs a bean
+      item_id  = row.querySelector('.usage-bean')?.value || null; // bean optional (None) — some drinks have no bean
     } else if (whatVal.indexOf('item:')===0){
       item_id  = whatVal.slice(5);
     }
-    if (!item_id) return;
+    if (!item_id && !drink_id) return; // need at least a product (a drink, or a bean/sweet)
     // Person can be a staff member (plain id) or an owner (own:<id>).
     const personVal = row.querySelector('.usage-emp')?.value || '';
     const isOwner = personVal.indexOf('own:')===0;
@@ -24923,6 +24984,12 @@ async function invSaveClose(shiftId, branch, shift){
   if (usageRows.length){
     const { error:e3 } = await sb.from('inventory_usage_log').insert(usageRows);
     if (e3){ toast('Closed shift, but staff log failed: ' + e3.message, 'error'); }
+  }
+  // Waste log — replace this shift's lines (delete-then-insert, same as usage).
+  await sb.from('inventory_waste_log').delete().eq('shift_id', shiftId);
+  if (wasteRows.length){
+    const { error:e4 } = await sb.from('inventory_waste_log').insert(wasteRows);
+    if (e4){ toast('Closed shift, but waste log failed: ' + e4.message, 'error'); }
   }
   // Soft allowance check (1 coffee + 1 sweet per person). Non-blocking — the
   // count still saves; this just flags excess so the closer is aware.
