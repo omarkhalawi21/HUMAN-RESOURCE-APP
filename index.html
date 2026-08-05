@@ -315,6 +315,7 @@ const I18N = {
     off_day: "Off day",
     att_leave: "ON LEAVE",
     att_offday: "OFFDAY",
+    att_worked_offday: "WORKED OFF-DAY",
     salary: "Salary",
     ded_hours_label: "Calculate from hours (optional)",
     ded_hours_ph: "e.g. 2",
@@ -551,6 +552,7 @@ const I18N = {
     off_day: "يوم راحة",
     att_leave: "إجازة",
     att_offday: "راحة",
+    att_worked_offday: "عمل بيوم راحة",
     salary: "الراتب",
     ded_hours_label: "احتساب من الساعات (اختياري)",
     ded_hours_ph: "مثال: 2",
@@ -916,6 +918,22 @@ function todaysShift(empId) {
   const x = getEmpExtras(empId);
   const dow = new Date().getDay();
   return { ...x.schedule[dow], dow };
+}
+// True when this attendance row is someone who clocked in on a weekday their
+// schedule marks OFF — i.e. they worked an extra / cover day. Derived (no stored
+// flag) so it stays correct even if the schedule is edited later.
+function attWorkedOffDay(a) {
+  if (!a || !a.clockIn) return false;
+  const sched = getEmpExtras(a.employeeId).schedule;
+  const dow = new Date(a.date + 'T00:00:00').getDay();
+  return !!(sched && sched[dow] && sched[dow].off);
+}
+// The little "worked off-day" badge, appended after the normal status badge on
+// attendance rows. Empty string when it's a normal scheduled day.
+function attOffDayBadge(a) {
+  return attWorkedOffDay(a)
+    ? ` <span class="badge badge-amber" title="Clocked in on a scheduled off-day (extra / cover shift)">${escapeHTML(t('att_worked_offday'))}</span>`
+    : '';
 }
 function daysUntil(dateStr) {
   if (!dateStr) return null;
@@ -4946,7 +4964,7 @@ function renderEmployeeProfile(empId) {
                     <td>${a.clockIn||'—'}</td>
                     <td>${a.clockOut||'—'}</td>
                     <td>${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
-                    <td>${statusBadge(a.status)}</td>
+                    <td>${statusBadge(a.status)}${attOffDayBadge(a)}</td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -5673,7 +5691,7 @@ function renderAttendance() {
                   <td>${a.clockIn||'—'}</td>
                   <td>${attOutCell(a, false)}</td>
                   <td>${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
-                  <td>${statusBadge(a.status)}</td>
+                  <td>${statusBadge(a.status)}${attOffDayBadge(a)}</td>
                   <td class="text-slate-500 text-xs">${a.location?.label||'—'}</td>
                 </tr>`).join('')}
             </tbody>
@@ -5709,7 +5727,7 @@ function renderAttendance() {
                   <td>${a?.clockIn||'—'}</td>
                   <td>${a?.clockOut ? `${a.clockOut}${canFix ? ` <button onclick="undoClockOut('${a.id}')" title="Undo clock-out (re-open shift)" aria-label="Undo clock-out" class="text-slate-300 hover:text-rose-600 align-middle ml-1">${icon('close','w-3.5 h-3.5 inline')}</button>` : ''}` : '—'}</td>
                   <td>${a?.clockIn && a?.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
-                  <td>${a ? statusBadge(a.status)
+                  <td>${a ? statusBadge(a.status)+attOffDayBadge(a)
                           : onLeave ? `<span class="badge badge-green">${escapeHTML(t('att_leave'))}</span>`
                           : isOff ? `<span class="badge badge-green">${escapeHTML(t('att_offday'))}</span>`
                           : statusBadge('absent')}</td>
@@ -5838,7 +5856,7 @@ function renderAttendance() {
                   <td class="tabular-nums">${a.clockIn||'—'}</td>
                   <td class="tabular-nums">${attOutCell(a, canFix)}</td>
                   <td class="tabular-nums">${a.clockIn && a.clockOut ? minutesToHrs(attMinutes(a))+'h' : '—'}</td>
-                  <td>${statusBadge(a.status)}</td>
+                  <td>${statusBadge(a.status)}${attOffDayBadge(a)}</td>
                 </tr>`;
               }).join('')}
               ${sorted.length>500 ? `<tr><td colspan="7" class="text-center text-slate-400 text-xs !py-3">Showing first 500 of ${sorted.length}. Narrow filters to see more.</td></tr>`:''}
