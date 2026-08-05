@@ -821,6 +821,8 @@ function emptyState() {
     suppliers: [],          // [{ id, name, contactName, phone, email, notes, createdBy, createdAt, updatedAt }]
     inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
     maintenance: [],        // [{ id, title, description, branch, location, asset, assetId, priority, status, reportedBy, assignedTo, resolution, resolvedAt, photoMime, photoSize, photoDataUrl, createdAt, updatedAt }]
+    maintenanceDuties: [],  // recurring assignable duties (block 103): [{ id, title, description, assignedTo, department, recurrence, startDate, recurrenceUntil, active, createdBy, createdAt }]
+    maintenanceDutyLogs: [],// per-occurrence completion records: [{ id, dutyId, occurrenceDate, completedAt, completedBy, note, photoDataUrl, photoMime, photoSize }]
     assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
     dailyCountItems: [],    // catalog: [{ id, name, unit, category, tracksWaste, sortOrder, active }]
     dailyCountsToday: [],   // bounded: all branches' counts for today only (admin dashboard snapshot)
@@ -2111,6 +2113,33 @@ function maintenanceToDb(m) {
     photo_thumb_data_url: m.photoThumbDataUrl || null,
   };
 }
+// ---- Maintenance duties (block 103) ----
+function mapDutyFromDb(r) {
+  return {
+    id: r.id, title: r.title || '', description: r.description || '',
+    assignedTo: r.assigned_to || null, department: r.department || '',
+    recurrence: r.recurrence || 'none', startDate: r.start_date || '',
+    recurrenceUntil: r.recurrence_until || null, active: r.active !== false,
+    createdBy: r.created_by || null, createdAt: r.created_at,
+  };
+}
+function dutyToDb(d) {
+  return {
+    title: d.title, description: d.description || null,
+    assigned_to: d.assignedTo || null, department: d.department || null,
+    recurrence: d.recurrence || 'none', start_date: d.startDate,
+    recurrence_until: d.recurrenceUntil || null, active: d.active !== false,
+    updated_at: new Date().toISOString(),
+  };
+}
+function mapDutyLogFromDb(r) {
+  return {
+    id: r.id, dutyId: r.duty_id, occurrenceDate: r.occurrence_date,
+    completedAt: r.completed_at, completedBy: r.completed_by || null,
+    note: r.note || '', photoDataUrl: r.photo_data_url || null,
+    photoMime: r.photo_mime || null, photoSize: Number(r.photo_size) || 0,
+  };
+}
 function mapAssetFromDb(r) {
   return {
     id: r.id,
@@ -2258,7 +2287,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR, maintenanceDutiesR, maintenanceDutyLogsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2400,6 +2429,8 @@ async function loadAll() {
       sb.from('marketing_expenses').select('*').order('spent_on', { ascending: false }).limit(5000),
       // Meetings (block 100) — low-volume but grows; cap to recent 300.
       sb.from('meetings').select('*').order('meeting_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
+      sb.from('maintenance_duties').select('*').order('created_at', { ascending: false }),
+      sb.from('maintenance_duty_logs').select('*').gte('occurrence_date', new Date(Date.now()-180*86400000).toISOString().slice(0,10)),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2453,6 +2484,8 @@ async function loadAll() {
     state.deductions   = (deductionsR.data   || []).map(mapDeductionFromDb);
     state.tasks        = (tasksR.data        || []).map(mapTaskFromDb);
     state.meetings     = (meetingsR?.data     || []).map(mapMeetingFromDb);
+    state.maintenanceDuties   = (maintenanceDutiesR?.data   || []).map(mapDutyFromDb);
+    state.maintenanceDutyLogs = (maintenanceDutyLogsR?.data || []).map(mapDutyLogFromDb);
     state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
     state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
     state.applications = (applicationsR.data || []).map(mapApplicationFromDb);
@@ -17068,7 +17101,250 @@ async function deleteAsset(id) {
   render();
 }
 
+/* ==================== MAINTENANCE DUTIES (block 103) ====================
+   Recurring duties assigned to an employee, shown on a Day/Week/Month calendar.
+   Occurrences are expanded virtually from (start_date + recurrence); completing
+   one writes a maintenance_duty_logs row (the productivity record) with an
+   optional proof photo. Reuses the generic marketing date/recurrence helpers
+   (mktYmd / mktDateAdd / mktWeekStart / mktRuleHits). ------------------------ */
+let maintenanceTab = 'requests';   // 'requests' | 'duties'
+let _mdCalView = 'month';          // 'month' | 'week' | 'day'
+let _mdCalDate = null;             // 'YYYY-MM-DD' anchor for week/day
+let _mdCalMonth = null;            // 'YYYY-MM' for month view
+let _mdScope = 'mine';             // person filter: 'all' | 'mine' | employeeId
+let _mdPhoto = null;               // transient completion-photo upload (cleared in closeModal)
+
+function mdCanManageDuties(){ return hasRole('admin','operations'); }   // create/edit/delete duties
+function mdActiveDuties(){ return (state.maintenanceDuties||[]).filter(d=>d.active); }
+function mdDutyById(id){ return (state.maintenanceDuties||[]).find(d=>d.id===id)||null; }
+function mdLog(dutyId, ds){ return (state.maintenanceDutyLogs||[]).find(l=>l.dutyId===dutyId && l.occurrenceDate===ds)||null; }
+function mdEmpName(id){ if(!id) return 'Unassigned'; const e=(state.employees||[]).find(x=>x.id===id); return e?`${e.firstName} ${e.lastName||''}`.trim():'—'; }
+function mdCanComplete(d){ const me=currentEmployee(); return hasRole('admin','operations') || (!!d && d.assignedTo===me?.id); }
+function mdSetTab(t){ maintenanceTab=(t==='duties'?'duties':'requests'); render(); }
+function mdSetScope(v){ _mdScope=v||'all'; render(); }
+function mdScopedDuties(){
+  const me=currentEmployee();
+  return mdActiveDuties().filter(d=>{
+    if(_mdScope==='mine') return d.assignedTo===me?.id;
+    if(_mdScope==='all')  return true;
+    return d.assignedTo===_mdScope;
+  });
+}
+// All duty occurrences on a date (respects scope + recurrence). Each entry
+// carries its completion log (or null = not yet done).
+function mdOccurrencesOnDay(ds){
+  const out=[];
+  mdScopedDuties().forEach(d=>{ const anchor=d.startDate; if(!anchor) return;
+    const rule=d.recurrence||'none';
+    if(rule==='none'){ if(anchor===ds) out.push({duty:d, log:mdLog(d.id,ds)}); return; }
+    if(ds<anchor) return; if(d.recurrenceUntil && ds>d.recurrenceUntil) return;
+    if(mktRuleHits(anchor,ds,rule)) out.push({duty:d, log:mdLog(d.id,ds)});
+  });
+  return out.sort((a,b)=>(a.duty.title||'').localeCompare(b.duty.title||''));
+}
+// One occurrence chip: green + struck when done, rose when a past date is
+// missed, else scheduled. A 📷 marks a completion that carries a photo.
+function mdChip(entry, ds){
+  const d=entry.duty; const done=!!entry.log; const overdue=!done && ds<todayISO();
+  const who=_mdScope==='all' ? ` · ${escapeHTML(mdEmpName(d.assignedTo))}` : '';
+  const cam=entry.log && entry.log.photoDataUrl ? ' 📷' : '';
+  const color=done?'#00c875':(overdue?'#f15780':'#6d28d9');
+  const rep=d.recurrence!=='none'?'↻ ':'';
+  return `<button onclick="openMdOccurrence('${d.id}','${ds}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-75':''}" style="background:${color}22;border-left:3px solid ${color};color:#334155" title="${escapeHTML(d.title)}${done?' · done':(overdue?' · missed':'')}">
+    <span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${done?'✓ ':rep}${escapeHTML(d.title)}${who}${cam}</span>
+  </button>`;
+}
+// ---- calendar navigation (mirrors the marketing calendar) ----
+function mdCalInit(){ if(!_mdCalDate||!/^\d{4}-\d{2}-\d{2}$/.test(_mdCalDate)) _mdCalDate=todayISO(); return _mdCalDate; }
+function mdCalPrev(){ if(_mdCalView==='month') _mdCalMonth=mktCalShift(_mdCalMonth||todayISO().slice(0,7),-1); else _mdCalDate=mktDateAdd(mdCalInit(),_mdCalView==='week'?-7:-1); render(); }
+function mdCalNext(){ if(_mdCalView==='month') _mdCalMonth=mktCalShift(_mdCalMonth||todayISO().slice(0,7),1); else _mdCalDate=mktDateAdd(mdCalInit(),_mdCalView==='week'?7:1); render(); }
+function mdCalToday(){ _mdCalMonth=todayISO().slice(0,7); _mdCalDate=todayISO(); render(); }
+function mdSetCalView(v){ _mdCalView=(v==='day'||v==='week'||v==='month')?v:'month'; if(_mdCalView==='month'){ if(_mdCalDate) _mdCalMonth=_mdCalDate.slice(0,7); } else mdCalInit(); render(); }
+function renderMdCalendar(){
+  const view=(_mdCalView==='week'||_mdCalView==='day')?_mdCalView:'month';
+  const today=todayISO();
+  const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const emps=(state.employees||[]).filter(isActiveEmployee).slice().sort((a,b)=>(a.firstName||'').localeCompare(b.firstName||''));
+  const ym=(_mdCalMonth && /^\d{4}-\d{2}$/.test(_mdCalMonth)) ? _mdCalMonth : today.slice(0,7);
+  _mdCalMonth=ym;
+  if(view!=='month') mdCalInit();
+  let periodLbl='', body='';
+  if(view==='month'){
+    const [y,mo]=ym.split('-').map(Number);
+    periodLbl=new Date(y,mo-1,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+    const startDow=new Date(y,mo-1,1).getDay(); const daysInMonth=new Date(y,mo,0).getDate();
+    const cells=[]; for(let i=0;i<startDow;i++) cells.push(null); for(let d=1;d<=daysInMonth;d++) cells.push(d); while(cells.length%7) cells.push(null);
+    const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg" style="min-height:92px"></div>`;
+      const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=mdOccurrencesOnDay(ds); const isToday=ds===today;
+      const shown=list.slice(0,3); const extra=list.length-shown.length;
+      return `<div class="bg-white border ${isToday?'border-brand-400':'border-slate-200'} rounded-lg p-1.5 flex flex-col gap-0.5" style="min-height:92px">
+        <button onclick="_mdCalDate='${ds}'; mdSetCalView('day')" class="text-[11px] font-semibold ${isToday?'text-brand-700':'text-slate-400'} mb-0.5 text-left hover:text-brand-700">${d}${isToday?' ·':''}</button>
+        ${shown.map(e=>mdChip(e,ds)).join('')}
+        ${extra>0?`<button onclick="_mdCalDate='${ds}'; mdSetCalView('day')" class="text-[10px] text-brand-600 hover:underline font-medium px-1.5 text-left">+${extra} more</button>`:''}
+      </div>`; };
+    body=`<div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(x=>`<div class="text-[11px] font-semibold text-slate-400 text-center uppercase tracking-wider">${x}</div>`).join('')}</div>
+      <div class="grid grid-cols-7 gap-1.5">${cells.map(cell).join('')}</div>`;
+  } else if(view==='week'){
+    const ws=mktWeekStart(_mdCalDate); const weekDays=[]; for(let i=0;i<7;i++) weekDays.push(mktDateAdd(ws,i));
+    const a=new Date(weekDays[0]+'T00:00:00'), b=new Date(weekDays[6]+'T00:00:00');
+    periodLbl=(a.getMonth()===b.getMonth())?`${a.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${b.getDate()}, ${b.getFullYear()}`:`${a.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${b.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${b.getFullYear()}`;
+    body=`<div class="grid grid-cols-7 gap-1.5">${weekDays.map((ds,i)=>{ const list=mdOccurrencesOnDay(ds); const isToday=ds===today; const dd=new Date(ds+'T00:00:00');
+      return `<div class="min-w-0">
+        <button onclick="_mdCalDate='${ds}'; mdSetCalView('day')" class="w-full mb-1.5 text-center ${isToday?'text-brand-700':'text-slate-500'} hover:text-brand-700"><div class="text-[10px] uppercase tracking-wider font-semibold">${dow[i]}</div><div class="text-lg font-semibold">${dd.getDate()}</div></button>
+        <div class="bg-white border ${isToday?'border-brand-400':'border-slate-200'} rounded-lg p-1.5 flex flex-col gap-1" style="min-height:420px">${list.length?list.map(e=>mdChip(e,ds)).join(''):'<div class="text-[10px] text-slate-300 text-center py-3">—</div>'}</div>
+      </div>`; }).join('')}</div>`;
+  } else {
+    const ds=_mdCalDate; periodLbl=new Date(ds+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    const list=mdOccurrencesOnDay(ds); const doneN=list.filter(e=>e.log).length;
+    body=`<div class="max-w-2xl mx-auto"><div class="text-xs text-slate-500 mb-3">${list.length} dut${list.length===1?'y':'ies'} · ${doneN} done</div>${list.length?`<div class="flex flex-col gap-2">${list.map(e=>mdChip(e,ds)).join('')}</div>`:'<div class="text-center text-slate-400 text-sm py-16">No duties scheduled for this day.</div>'}</div>`;
+  }
+  const viewToggle=`<div class="inline-flex bg-slate-100 rounded-lg p-0.5">${['day','week','month'].map(v=>`<button onclick="mdSetCalView('${v}')" class="px-3 py-1 text-xs font-medium rounded ${view===v?'bg-white shadow-card text-slate-900':'text-slate-500 hover:text-slate-700'}">${v.charAt(0).toUpperCase()+v.slice(1)}</button>`).join('')}</div>`;
+  const scopeSel=`<select class="input !py-1.5 !w-auto text-sm" onchange="mdSetScope(this.value)"><option value="mine" ${_mdScope==='mine'?'selected':''}>My duties</option><option value="all" ${_mdScope==='all'?'selected':''}>Everyone</option>${emps.map(e=>`<option value="${e.id}" ${_mdScope===e.id?'selected':''}>${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</option>`).join('')}</select>`;
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <button onclick="mdCalPrev()" class="btn btn-ghost btn-sm" aria-label="Previous">‹</button>
+        <div class="font-display text-lg font-semibold text-slate-900 min-w-[10rem] text-center">${escapeHTML(periodLbl)}</div>
+        <button onclick="mdCalNext()" class="btn btn-ghost btn-sm" aria-label="Next">›</button>
+        <button onclick="mdCalToday()" class="btn btn-ghost btn-sm">Today</button>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">${viewToggle}${scopeSel}${mdCanManageDuties()?`<button onclick="openMdDutyModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} New duty</button>`:''}</div>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      ${body}
+      <div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap"><span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#00c875"></span>Done</span><span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#6d28d9"></span>Scheduled</span><span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#f15780"></span>Missed</span><span class="text-slate-400">📷 = photo attached</span></div>
+    </div>`;
+}
+// ---- occurrence detail / completion (with photo) ----
+function openMdOccurrence(dutyId, ds){
+  const d=mdDutyById(dutyId); if(!d) return;
+  _mdPhoto=null;
+  openModal(d.title||'Duty', `<div id="md-occ-body">${mdOccurrenceBodyHTML(dutyId, ds)}</div>`, ()=>true, { saveLabel: t('close') });
+}
+function mdRefreshOccurrence(dutyId, ds){ const el=document.getElementById('md-occ-body'); if(el) el.innerHTML=mdOccurrenceBodyHTML(dutyId, ds); }
+function mdOccurrenceBodyHTML(dutyId, ds){
+  const d=mdDutyById(dutyId); if(!d) return '<div class="text-sm text-slate-500">Duty not found.</div>';
+  const log=mdLog(dutyId, ds); const canDo=mdCanComplete(d);
+  const dateLbl=new Date(ds+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const meta=`<div class="text-xs text-slate-500 mb-3">${escapeHTML(dateLbl)} · assigned to <span class="font-medium text-slate-700">${escapeHTML(mdEmpName(d.assignedTo))}</span>${d.recurrence!=='none'?` · ${escapeHTML(mktRecurLabel(d.recurrence).toLowerCase())}`:''}</div>`;
+  const desc=(d.description||'').trim()?`<div class="text-sm text-slate-700 whitespace-pre-wrap mb-4">${escapeHTML(d.description.trim())}</div>`:'';
+  if(log){
+    return `${meta}${desc}
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-3">
+        <div class="text-sm font-semibold text-emerald-800">${icon('check','w-4 h-4 inline')} Completed</div>
+        <div class="text-[11px] text-emerald-700 mt-0.5">by ${escapeHTML(mdEmpName(log.completedBy))} · ${escapeHTML(fmtDate(log.completedAt))}</div>
+        ${log.note?`<div class="text-sm text-slate-700 mt-2 whitespace-pre-wrap">${escapeHTML(log.note)}</div>`:''}
+        ${log.photoDataUrl?`<img src="${escapeHTML(log.photoDataUrl)}" alt="Completion photo" class="mt-2 rounded-lg max-h-64 border border-emerald-200">`:''}
+      </div>
+      ${canDo?`<button onclick="mdUndoOccurrence('${dutyId}','${ds}')" class="text-xs text-rose-600 hover:underline">${icon('trash','w-3.5 h-3.5 inline')} Undo completion</button>`:''}`;
+  }
+  if(!canDo) return `${meta}${desc}<div class="text-sm text-slate-400">Not completed yet.</div>`;
+  return `${meta}${desc}
+    <div class="space-y-3">
+      <div><label class="label">Note (optional)</label><textarea id="md-note" class="input" rows="2" placeholder="Anything worth recording…"></textarea></div>
+      <div>
+        <label class="label">Proof photo (optional)</label>
+        <div id="md-photo-preview">${_mdPhoto?`<img src="${escapeHTML(_mdPhoto.dataUrl)}" class="rounded-lg max-h-48 border border-slate-200 mb-2">`:''}</div>
+        <label class="btn btn-ghost btn-sm cursor-pointer inline-flex">${icon('upload','w-4 h-4')} ${_mdPhoto?'Change photo':'Add photo'}<input type="file" accept="image/*" class="hidden" onchange="mdPickPhoto(event,'${dutyId}','${ds}')"></label>
+        <span class="text-[11px] text-slate-400 ml-2">Max 5 MB</span>
+      </div>
+      <button onclick="mdCompleteOccurrence('${dutyId}','${ds}')" class="btn btn-primary w-full">${icon('check','w-4 h-4')} Mark done</button>
+    </div>`;
+}
+async function mdPickPhoto(ev, dutyId, ds){
+  const res=await readUploadedFile(ev, { allowed: PHOTO_ALLOWED_MIMES, errorMsg:'Please pick an image (PNG, JPG, GIF, WEBP).' });
+  if(!res) return;
+  _mdPhoto=res; mdRefreshOccurrence(dutyId, ds);
+}
+async function mdCompleteOccurrence(dutyId, ds){
+  const d=mdDutyById(dutyId); if(!d || !mdCanComplete(d)) { toast('Not allowed', 'error'); return; }
+  const note=(document.getElementById('md-note')?.value||'').trim();
+  const me=currentEmployee();
+  const row={ duty_id:dutyId, occurrence_date:ds, completed_by: me?.id||null, note: note||null,
+    photo_data_url: _mdPhoto?_mdPhoto.dataUrl:null, photo_mime: _mdPhoto?_mdPhoto.mime:null, photo_size: _mdPhoto?_mdPhoto.size:null };
+  const { data, error }=await sb.from('maintenance_duty_logs').upsert(row, { onConflict:'duty_id,occurrence_date' }).select().single();
+  if(error){ toast(humanizeError(error), 'error'); return; }
+  const mapped=mapDutyLogFromDb(data);
+  state.maintenanceDutyLogs=state.maintenanceDutyLogs.filter(l=>!(l.dutyId===dutyId && l.occurrenceDate===ds)).concat(mapped);
+  _mdPhoto=null;
+  toast('Marked done', 'success');
+  mdRefreshOccurrence(dutyId, ds); render();
+}
+async function mdUndoOccurrence(dutyId, ds){
+  const d=mdDutyById(dutyId); if(!d || !mdCanComplete(d)) return;
+  if(!confirm('Undo this completion? The record and its photo will be removed.')) return;
+  const { error }=await sb.from('maintenance_duty_logs').delete().eq('duty_id',dutyId).eq('occurrence_date',ds);
+  if(error){ toast(humanizeError(error), 'error'); return; }
+  state.maintenanceDutyLogs=state.maintenanceDutyLogs.filter(l=>!(l.dutyId===dutyId && l.occurrenceDate===ds));
+  toast('Completion undone', 'success');
+  mdRefreshOccurrence(dutyId, ds); render();
+}
+// ---- duty create / edit (admin/operations) ----
+function openMdDutyModal(id){
+  if(!mdCanManageDuties()){ toast('Managers only', 'error'); return; }
+  const d=id?mdDutyById(id):null;
+  const emps=(state.employees||[]).filter(isActiveEmployee).slice().sort((a,b)=>(a.firstName||'').localeCompare(b.firstName||''));
+  const form=`
+    <div class="space-y-4">
+      <div><label class="label label-required">Duty</label><input id="md-title" class="input" placeholder="e.g. Check generator oil" value="${escapeHTML(d?.title||'')}"></div>
+      <div><label class="label">Details (optional)</label><textarea id="md-desc" class="input" rows="2" placeholder="What to check / do…">${escapeHTML(d?.description||'')}</textarea></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Assign to</label><select id="md-emp" class="input"><option value="">— Unassigned —</option>${emps.map(e=>`<option value="${e.id}" ${d?.assignedTo===e.id?'selected':''}>${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</option>`).join('')}</select></div>
+        <div><label class="label">Department</label><select id="md-dept" class="input"><option value="">— None —</option>${SUGGESTED_DEPARTMENTS.map(x=>`<option ${d?.department===x?'selected':''}>${escapeHTML(x)}</option>`).join('')}</select></div>
+        <div><label class="label label-required">Start date</label><input id="md-start" type="date" class="input" value="${escapeHTML(d?.startDate||todayISO())}"></div>
+        <div><label class="label">Repeat</label><select id="md-recur" class="input">${MKT_RECUR.map(([k,l])=>`<option value="${k}" ${(d?.recurrence||'none')===k?'selected':''}>${escapeHTML(l)}</option>`).join('')}</select></div>
+        <div><label class="label">Repeat until (optional)</label><input id="md-until" type="date" class="input" value="${escapeHTML(d?.recurrenceUntil||'')}"></div>
+        <div class="flex items-end"><label class="flex items-center gap-2 text-sm text-slate-700"><input id="md-active" type="checkbox" ${d?(d.active?'checked':''):'checked'}> Active</label></div>
+      </div>
+      ${d?`<button onclick="mdDeleteDuty('${d.id}')" class="text-xs text-rose-600 hover:underline">${icon('trash','w-3.5 h-3.5 inline')} Delete this duty</button>`:''}
+    </div>`;
+  openModal(d?'Edit duty':'New duty', form, async ()=>{
+    const title=$('#md-title').value.trim(); if(!title){ toast('Duty title is required', 'error'); return false; }
+    const startDate=$('#md-start').value; if(!startDate){ toast('Start date is required', 'error'); return false; }
+    const data={ title, description:$('#md-desc').value.trim(), assignedTo:$('#md-emp').value||null,
+      department:$('#md-dept').value||null, recurrence:$('#md-recur').value||'none', startDate,
+      recurrenceUntil:$('#md-until').value||null, active:$('#md-active').checked };
+    const dbRow=dutyToDb(data);
+    if(d){
+      const { data:row, error }=await sb.from('maintenance_duties').update(dbRow).eq('id',d.id).select().single();
+      if(error){ toast(humanizeError(error), 'error'); return false; }
+      Object.assign(d, mapDutyFromDb(row)); toast('Duty updated', 'success');
+    } else {
+      const { data:row, error }=await sb.from('maintenance_duties').insert(dbRow).select().single();
+      if(error){ toast(humanizeError(error), 'error'); return false; }
+      state.maintenanceDuties.unshift(mapDutyFromDb(row)); toast('Duty created', 'success');
+    }
+    render(); return true;
+  }, { saveLabel: d?'Save changes':'Create duty' });
+}
+async function mdDeleteDuty(id){
+  if(!mdCanManageDuties()) return;
+  if(!confirm('Delete this duty and all its completion records? This cannot be undone.')) return;
+  const { error }=await sb.from('maintenance_duties').delete().eq('id',id);
+  if(error){ toast(humanizeError(error), 'error'); return; }
+  state.maintenanceDuties=state.maintenanceDuties.filter(x=>x.id!==id);
+  state.maintenanceDutyLogs=state.maintenanceDutyLogs.filter(l=>l.dutyId!==id);
+  closeModal(); render(); toast('Duty deleted', 'success');
+}
+function mdTabbarHTML(){
+  const tab=(k,l)=>`<button onclick="mdSetTab('${k}')" class="px-3 py-1.5 text-sm font-medium rounded-lg ${maintenanceTab===k?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-100'}">${l}</button>`;
+  return `<div class="inline-flex bg-white border border-slate-200 rounded-xl p-1 mb-5">${tab('requests','Requests')}${tab('duties','Duties')}</div>`;
+}
+function renderMaintenanceDuties(){
+  const hero=`<div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20" style="background: radial-gradient(circle, #6d28d9 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('wrench','w-3.5 h-3.5')} Maintenance</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Recurring duties</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Scheduled duties on a calendar. Tap a day's duty to mark it done and attach a photo. ${mdCanManageDuties()?'Assign new duties with “New duty”.':''}</p>
+        </div>
+      </div>
+    </div>`;
+  return hero + mdTabbarHTML() + renderMdCalendar();
+}
 function renderMaintenance() {
+  if (maintenanceTab==='duties') return renderMaintenanceDuties();
   const me = currentEmployee();
   const isManager = hasRole('admin','maintenance');
   const all = (state.maintenance || []).slice().sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
@@ -17095,6 +17371,8 @@ function renderMaintenance() {
         <button onclick="openMaintenanceModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Report an issue</button>
       </div>
     </div>
+
+    ${mdTabbarHTML()}
 
     ${isManager ? `
       <!-- Stat cards -->
@@ -23796,6 +24074,7 @@ function closeModal() {
   if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
   if (typeof _mktItemModalId !== 'undefined') _mktItemModalId = null;
   if (typeof _meetingDetailId !== 'undefined') _meetingDetailId = null;
+  if (typeof _mdPhoto !== 'undefined') _mdPhoto = null;
   if (typeof _mktExpLineId !== 'undefined') _mktExpLineId = null;
   if (typeof _sigPad !== 'undefined') _sigPad = null;
   if (typeof _invCsvRows !== 'undefined') _invCsvRows = null;

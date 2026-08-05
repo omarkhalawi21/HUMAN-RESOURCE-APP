@@ -5560,6 +5560,86 @@ CREATE POLICY "iwl_delete_floor_ops_device" ON public.inventory_waste_log FOR DE
 CREATE POLICY "inventory_waste_log_select_owner" ON public.inventory_waste_log FOR SELECT TO authenticated
   USING (public.has_role(ARRAY['owner']));
 
+-- 103. MAINTENANCE DUTIES — recurring assignable duties + per-occurrence log
+-- A duty is a recurring template assigned to one employee (title, recurrence,
+-- start_date). Each time an occurrence is completed, a row is written to
+-- maintenance_duty_logs (UNIQUE per duty+date) with an optional proof photo —
+-- that log IS the productivity record. Occurrences are expanded virtually on the
+-- calendar (same model as marketing recurrence); only completions are stored.
+CREATE TABLE IF NOT EXISTS public.maintenance_duties (
+  id               uuid primary key default gen_random_uuid(),
+  title            text not null,
+  description      text,
+  assigned_to      uuid references public.employees(id) ON DELETE SET NULL,
+  department       text,
+  recurrence       text not null default 'none'
+                     CHECK (recurrence IN ('none','daily','weekdays','weekly','biweekly','monthly')),
+  start_date       date not null,
+  recurrence_until date,
+  active           boolean not null default true,
+  created_by       uuid default auth.uid(),
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS maintenance_duties_assigned_idx ON public.maintenance_duties(assigned_to);
+
+CREATE TABLE IF NOT EXISTS public.maintenance_duty_logs (
+  id                  uuid primary key default gen_random_uuid(),
+  duty_id             uuid not null references public.maintenance_duties(id) ON DELETE CASCADE,
+  occurrence_date     date not null,
+  completed_at        timestamptz not null default now(),
+  completed_by        uuid default auth.uid(),
+  note                text,
+  photo_data_url      text,
+  photo_mime          text,
+  photo_size          integer,
+  UNIQUE(duty_id, occurrence_date)
+);
+CREATE INDEX IF NOT EXISTS maintenance_duty_logs_duty_idx ON public.maintenance_duty_logs(duty_id, occurrence_date);
+
+ALTER TABLE public.maintenance_duties     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.maintenance_duty_logs  ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename IN ('maintenance_duties','maintenance_duty_logs')
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', r.policyname, r.tablename); END LOOP;
+END $$;
+
+-- Duties: everyone reads (UI filters to the assignee); admin/operations manage.
+CREATE POLICY "md_select_all" ON public.maintenance_duties FOR SELECT TO authenticated USING (true);
+CREATE POLICY "md_insert_admin_ops" ON public.maintenance_duties FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "md_update_admin_ops" ON public.maintenance_duties FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations'])) WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "md_delete_admin_ops" ON public.maintenance_duties FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+-- Logs: everyone reads; the duty's ASSIGNEE (or admin/operations) writes its
+-- completions. Assignee match mirrors the tasks_update policy (employees.user_id).
+CREATE POLICY "mdl_select_all" ON public.maintenance_duty_logs FOR SELECT TO authenticated USING (true);
+CREATE POLICY "mdl_insert_assignee_or_ops" ON public.maintenance_duty_logs FOR INSERT TO authenticated
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.maintenance_duties d JOIN public.employees e ON e.id = d.assigned_to
+               WHERE d.id = maintenance_duty_logs.duty_id AND e.user_id = auth.uid()));
+CREATE POLICY "mdl_update_assignee_or_ops" ON public.maintenance_duty_logs FOR UPDATE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.maintenance_duties d JOIN public.employees e ON e.id = d.assigned_to
+               WHERE d.id = maintenance_duty_logs.duty_id AND e.user_id = auth.uid()))
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.maintenance_duties d JOIN public.employees e ON e.id = d.assigned_to
+               WHERE d.id = maintenance_duty_logs.duty_id AND e.user_id = auth.uid()));
+CREATE POLICY "mdl_delete_assignee_or_ops" ON public.maintenance_duty_logs FOR DELETE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.maintenance_duties d JOIN public.employees e ON e.id = d.assigned_to
+               WHERE d.id = maintenance_duty_logs.duty_id AND e.user_id = auth.uid()));
+
 -- =============================================================
 -- DONE.
 --
