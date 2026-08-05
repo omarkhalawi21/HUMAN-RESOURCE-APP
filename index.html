@@ -14293,9 +14293,10 @@ function mktRuleHits(anchor, ds, rule){
 // rose accent; done cards are muted + struck through. Standalone so both the
 // calendar grid and the day-detail modal ("+N more") can render identical chips.
 function mktCalChip(entry){ const it=entry.it, occ=entry.occ; const today=todayISO(); const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
-  // Overdue/done reflect the single card's real state — only meaningful on the
-  // anchor date. Repeated instances (occ) render as plain scheduled chips.
-  const overdue=!occ && it.status!=='done' && it.dueDate<today; const done=!occ && it.status==='done';
+  // `done` reflects the card's status on EVERY occurrence (a done card is struck
+  // through wherever it appears — the status lives on the single card). `overdue`
+  // stays anchor-only: a future repeat of a not-done card isn't itself overdue.
+  const done=it.status==='done'; const overdue=!occ && !done && it.dueDate<today;
   const recurs=mktIsRecurring(it);
   // The card's Notes (item.description). Shown as a one-line snippet under the
   // title, with the FULL notes in the hover tooltip alongside the title.
