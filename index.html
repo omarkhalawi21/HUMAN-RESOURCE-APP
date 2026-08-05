@@ -6493,7 +6493,8 @@ function setPayrollRange(kind) {
   render();
 }
 function renderPayroll() {
-  const admin = canManagePeople();
+  const canEdit = canManagePeople();                  // may run payroll / retry bookkeeping
+  const admin = canEdit || currentRole()==='owner';   // sees the company-wide view (owners get it READ-ONLY)
   const me = currentEmployee();
   const baseRecords = admin ? state.payroll : state.payroll.filter(p => p.employeeId===me.id);
   // Bucket employees by id once — getEmployee is a linear .find() on
@@ -6561,7 +6562,7 @@ function renderPayroll() {
   const activeFilterCount = (payrollFilter.employee!=='all'?1:0) + (payrollFilter.branch!=='all'?1:0) + (payrollFilter.department!=='all'?1:0) + (payrollFilter.status!=='all'?1:0) + (payrollFilter.from?1:0) + (payrollFilter.to?1:0) + (payrollFilter.q?1:0);
 
   return `
-    ${_pendingBookkeeping && admin ? `
+    ${_pendingBookkeeping && canEdit ? `
     <!-- Sec #7 — partial-failure recovery banner. Shown at the top
          of Payroll so admins/HR see it on their next visit. -->
     <div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
@@ -6591,7 +6592,7 @@ function renderPayroll() {
       </div>
       <div class="flex gap-2 flex-wrap">
         ${filteredPeriodsList.length===1 ? `<button onclick="generatePayrollReport('${filteredPeriodsList[0]}')" class="btn btn-ghost">${icon('report','w-4 h-4')} Open Report</button>` : ''}
-        <button onclick="runPayroll()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
+        ${canEdit ? `<button onclick="runPayroll()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>` : `<span class="inline-flex items-center gap-1 text-[11px] uppercase tracking-wide text-slate-400 font-semibold bg-slate-100 rounded-full px-2 py-1">${icon('eye','w-3.5 h-3.5')} Read-only · oversight</span>`}
       </div>
     </div>
 
