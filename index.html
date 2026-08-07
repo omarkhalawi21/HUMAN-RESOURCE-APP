@@ -18357,7 +18357,10 @@ function dcRenderReview(branch, date, items) {
 function dcNum(s) {
   const v = String(s == null ? '' : s).trim();
   if (v === '') return null;
-  const n = parseFloat(v.replace(',', '.'));
+  // A comma is a THOUSANDS separator in this app's locale (e.g. "12,500" = 12500),
+  // never a decimal — strip it. The period stays the decimal point. Treating the
+  // comma as a decimal silently turned counts like "12,500" into 12.5.
+  const n = parseFloat(v.replace(/,/g, ''));
   return Number.isFinite(n) ? n : null;
 }
 function dcPrevDate(dateStr) {
@@ -19133,7 +19136,7 @@ function wcAllRow(it, week) {
   return { vals, total };
 }
 function renderWeeklyCountAll(items, week) {
-  const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
+  const n2 = v => v == null ? '—' : Number(+Number(v).toFixed(2)).toLocaleString('en-US', { maximumFractionDigits: 2 });
   const groups = WC_CAT_ORDER
     .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
     .filter(([, l]) => l.length);
@@ -19192,7 +19195,7 @@ function exportWeeklyCountAllCSV(week) {
 }
 function printWeeklyCountAll(week) {
   const items = (state.weeklyCountItems || []).filter(i => i.active).sort((a,b) => a.sortOrder - b.sortOrder);
-  const n2 = v => v == null ? '—' : String(+Number(v).toFixed(2));
+  const n2 = v => v == null ? '—' : Number(+Number(v).toFixed(2)).toLocaleString('en-US', { maximumFractionDigits: 2 });
   const groups = WC_CAT_ORDER
     .map(cat => [cat, items.filter(it => (it.category||'other') === cat)])
     .filter(([, l]) => l.length);
