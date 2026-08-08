@@ -5640,6 +5640,11 @@ CREATE POLICY "mdl_delete_assignee_or_ops" ON public.maintenance_duty_logs FOR D
     OR EXISTS (SELECT 1 FROM public.maintenance_duties d JOIN public.employees e ON e.id = d.assigned_to
                WHERE d.id = maintenance_duty_logs.duty_id AND e.user_id = auth.uid()));
 
+-- 104. B2B INVOICE — customer commercial-registration (C.R.) number.
+--      Printed on the "Bill to" card next to the customer VAT number.
+-- =============================================================
+ALTER TABLE public.b2b_invoices ADD COLUMN IF NOT EXISTS customer_cr text;
+
 -- =============================================================
 -- DONE.
 --

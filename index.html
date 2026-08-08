@@ -830,7 +830,7 @@ function emptyState() {
     alertExpiryChecks: [],  // bounded: recent expiry checks, all branches (cross-branch alerts card)
     incomingTransfers: [],  // pending roaster→branch transfers awaiting receiver confirmation
     roastBatches: [],       // capped recent: [{ id, serialNo, serialPrefix, prefixNo, greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg, branch, roastDate, notes, recordedBy, createdAt }] — three-weight roast log (green → roasted → sorted); serial = bean prefix sequence (EG-0001) or global RB-
-    b2bInvoices: [],        // capped recent: [{ id, invoiceNo, customerName, customerVat, customerAddress, invoiceDate, dueTerms, items:[{description,qty,unit,price}], subtotal, vatTotal, total, notes, createdBy, createdAt }] — ZATCA-style B2B tax invoices, prices ex-VAT
+    b2bInvoices: [],        // capped recent: [{ id, invoiceNo, customerName, customerVat, customerCr, customerAddress, invoiceDate, dueTerms, items:[{description,qty,unit,price}], subtotal, vatTotal, total, notes, createdBy, createdAt }] — ZATCA-style B2B tax invoices, prices ex-VAT
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
@@ -2020,6 +2020,7 @@ function mapB2bInvoiceFromDb(r) {
     invoiceNo: Number(r.invoice_no) || 0,
     customerName: r.customer_name || '',
     customerVat: r.customer_vat || '',
+    customerCr: r.customer_cr || '',
     customerAddress: r.customer_address || '',
     invoiceDate: r.invoice_date,
     dueTerms: r.due_terms || 'Immediate',
@@ -2043,6 +2044,7 @@ function b2bInvoiceToDb(v) {
   return {
     customer_name: v.customerName,
     customer_vat: v.customerVat || null,
+    customer_cr: v.customerCr || null,
     customer_address: v.customerAddress || null,
     invoice_date: v.invoiceDate || null,
     due_terms: v.dueTerms || 'Immediate',
@@ -26120,8 +26122,9 @@ function b2bCustAutofill(){
   if (!name) return;
   const prev = (state.b2bInvoices || []).find(v => (v.customerName || '').trim().toLowerCase() === name);
   if (!prev) return;
-  const vatEl = document.getElementById('b2b-cust-vat'), adrEl = document.getElementById('b2b-cust-addr');
+  const vatEl = document.getElementById('b2b-cust-vat'), adrEl = document.getElementById('b2b-cust-addr'), crEl = document.getElementById('b2b-cust-cr');
   if (vatEl && !vatEl.value) vatEl.value = prev.customerVat || '';
+  if (crEl && !crEl.value) crEl.value = prev.customerCr || '';
   if (adrEl && !adrEl.value) adrEl.value = prev.customerAddress || '';
 }
 function openB2bInvoiceModal(id){
@@ -26146,6 +26149,10 @@ function openB2bInvoiceModal(id){
           <input id="b2b-cust-vat" class="input" inputmode="numeric" placeholder="15 digits" value="${escapeHTML(editing?.customerVat || '')}">
         </div>
         <div>
+          <label class="label">Customer C.R. number</label>
+          <input id="b2b-cust-cr" class="input" inputmode="numeric" placeholder="commercial registration" value="${escapeHTML(editing?.customerCr || '')}">
+        </div>
+        <div class="md:col-span-2">
           <label class="label">Customer address</label>
           <input id="b2b-cust-addr" class="input" placeholder="city, district" value="${escapeHTML(editing?.customerAddress || '')}">
         </div>
@@ -26192,6 +26199,7 @@ function openB2bInvoiceModal(id){
     const data = {
       customerName,
       customerVat: $('#b2b-cust-vat').value.trim(),
+      customerCr: $('#b2b-cust-cr').value.trim(),
       customerAddress: $('#b2b-cust-addr').value.trim(),
       invoiceDate: $('#b2b-date').value || todayISO(),
       dueTerms: $('#b2b-due').value.trim() || 'Immediate',
@@ -26324,7 +26332,8 @@ async function printB2bInvoice(id){
         <div class="lbl">Bill to العميل</div>
         <div class="nm">${escapeHTML(v.customerName)}</div>
         ${v.customerAddress ? `<div>${escapeHTML(v.customerAddress)}</div>` : ''}
-        ${v.customerVat ? `<div style="margin-top:4px;"><span class="lbl">VAT:</span> <b>${escapeHTML(v.customerVat)}</b></div>` : ''}
+        ${v.customerCr ? `<div style="margin-top:4px;"><span class="lbl">C.R.</span> <b>${escapeHTML(v.customerCr)}</b></div>` : ''}
+        ${v.customerVat ? `<div${v.customerCr ? '' : ' style="margin-top:4px;"'}><span class="lbl">VAT:</span> <b>${escapeHTML(v.customerVat)}</b></div>` : ''}
       </div>
     </div>
     <div class="meta">
