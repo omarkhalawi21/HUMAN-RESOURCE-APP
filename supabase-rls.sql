@@ -5645,6 +5645,53 @@ CREATE POLICY "mdl_delete_assignee_or_ops" ON public.maintenance_duty_logs FOR D
 -- =============================================================
 ALTER TABLE public.b2b_invoices ADD COLUMN IF NOT EXISTS customer_cr text;
 
+-- 105. DAILY COUNT — expired-item log (record-only)
+--      A per-day, per-branch list of items found expired and pulled.
+--      Variable-length (not one row per catalog item), so NO unique
+--      constraint — saving replaces the whole day's set (delete+insert).
+--      Purely a record: it never feeds counts, waste or variance.
+--      DELETE is granted to floor roles because the save reconcile
+--      deletes the day's rows before re-inserting the current list.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.daily_expired (
+  id           uuid primary key default gen_random_uuid(),
+  branch       text not null,
+  count_date   date not null,
+  item_id      uuid references public.daily_count_items(id) ON DELETE SET NULL,
+  item_name    text not null,
+  qty          numeric(12,2),
+  note         text,
+  recorded_by  uuid references public.employees(id),
+  recorded_at  timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS daily_expired_branch_date_idx ON public.daily_expired(branch, count_date);
+
+ALTER TABLE public.daily_expired ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename, policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='daily_expired'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', r.policyname, r.schemaname, r.tablename);
+  END LOOP;
+END $$;
+
+CREATE POLICY "de_select_floor_or_ops"
+  ON public.daily_expired FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista','operations']));
+CREATE POLICY "de_insert_floor"
+  ON public.daily_expired FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "de_update_floor"
+  ON public.daily_expired FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']))
+  WITH CHECK (public.has_role(ARRAY['admin','head_barista','barista']));
+CREATE POLICY "de_delete_floor"
+  ON public.daily_expired FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','head_barista','barista']));
+
 -- =============================================================
 -- DONE.
 --
