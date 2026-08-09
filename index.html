@@ -832,6 +832,7 @@ function emptyState() {
     roastBatches: [],       // capped recent: [{ id, serialNo, serialPrefix, prefixNo, greenItemId, roastedItemId, greenInKg, roastedKg, sortedKg, branch, roastDate, notes, recordedBy, createdAt }] — three-weight roast log (green → roasted → sorted); serial = bean prefix sequence (EG-0001) or global RB-
     b2bInvoices: [],        // capped recent: [{ id, invoiceNo, customerName, customerVat, customerCr, customerAddress, invoiceDate, dueTerms, items:[{description,qty,unit,price}], subtotal, vatTotal, total, notes, createdBy, createdAt }] — ZATCA-style B2B tax invoices, prices ex-VAT
     dailyCountsCache: {},   // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, countDate, qty, wasteQty, note }] }
+    dailyExpiredCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, countDate, itemId, itemName, qty, note }] } — per-day expired-item log, record-only
     weeklyCountItems: [],   // catalog: [{ id, name, unit, category, sortOrder, active }]
     weeklyCountsCache: {},  // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, itemId, branch, weekStart, availableQty, purchasedQty, note }] }
     expiryCheckItems: [],   // catalog: [{ id, name, sortOrder, active }]
@@ -1824,6 +1825,19 @@ function mapDailyCountFromDb(r) {
     recordedAt: r.recorded_at,
   };
 }
+function mapDailyExpiredFromDb(r) {
+  return {
+    id: r.id,
+    branch: r.branch || '',
+    countDate: r.count_date || '',
+    itemId: r.item_id || null,
+    itemName: r.item_name || '',
+    qty: r.qty == null ? null : Number(r.qty),
+    note: r.note || '',
+    recordedBy: r.recorded_by,
+    recordedAt: r.recorded_at,
+  };
+}
 function mapWeeklyCountItemFromDb(r) {
   return {
     id: r.id,
@@ -2521,6 +2535,7 @@ async function loadAll() {
     state.incomingTransfers  = (incomingTransfersR.data || []).map(mapIncomingTransferFromDb);
     state.checklistRunsCache = {};
     state.dailyCountsCache   = {};
+    state.dailyExpiredCache  = {};
     state.weeklyCountItems   = (weeklyCountItemsR.data || []).map(mapWeeklyCountItemFromDb);
     state.weeklyCountsCache  = {};
     state.expiryCheckItems   = (expiryCheckItemsR.data || []).map(mapExpiryCheckItemFromDb);
@@ -18021,6 +18036,7 @@ const DC_STEPS = [
 ];
 let dailyCountState = { branch:'', date:'', view:'entry', step:0, draft:null };
 const _dcLoading = new Set();
+const _deLoading = new Set();
 
 function dcCacheKey(branch, ym) { return branch + '|' + ym; }
 function dcDefaultBranch() {
@@ -18053,6 +18069,30 @@ async function loadDailyCounts(branch, ym) {
     return;
   }
   state.dailyCountsCache[key] = (data || []).map(mapDailyCountFromDb);
+  render();
+}
+
+// Per-day expired-item log — same on-demand per branch+month cache pattern
+// as daily_counts. Record-only; never feeds counts or variance.
+async function loadDailyExpired(branch, ym) {
+  const key = dcCacheKey(branch, ym);
+  if (state.dailyExpiredCache[key] || _deLoading.has(key)) return;
+  _deLoading.add(key);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  const { data, error } = await sb.from('daily_expired').select('*')
+    .eq('branch', branch).gte('count_date', from).lte('count_date', to);
+  _deLoading.delete(key);
+  if (error) {
+    // A missing table (block 105 not run yet) shouldn't brick the count page —
+    // cache empty so the rest of Daily Count still works; the Review section
+    // shows a one-line hint to run the migration.
+    state.dailyExpiredCache[key] = [];
+    render();
+    return;
+  }
+  state.dailyExpiredCache[key] = (data || []).map(mapDailyExpiredFromDb);
   render();
 }
 
@@ -18090,9 +18130,11 @@ function renderDailyCount() {
   // carries over from last month's closing).
   const prev = dcPrevDate(date);
   const needKeys = [...new Set([ym, prev.slice(0,7), prevYm(ym)])];
-  const missing = needKeys.some(m => !state.dailyCountsCache[dcCacheKey(branch, m)]);
+  const missing = needKeys.some(m => !state.dailyCountsCache[dcCacheKey(branch, m)])
+    || !state.dailyExpiredCache[dcCacheKey(branch, ym)];
   if (missing) {
     needKeys.forEach(m => loadDailyCounts(branch, m));
+    loadDailyExpired(branch, ym);
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(branch)}…</div>`;
   }
 
@@ -18349,8 +18391,64 @@ function dcRenderReview(branch, date, items) {
     <div class="space-y-3">
       ${list('Out of stock — reorder/transfer', outList, 'text-rose-600')}
       ${list('Running low', lowList, 'text-amber-600')}
+      ${dcExpiredSection(items)}
       ${counted===0 ? `<div class="bg-white rounded-2xl shadow-card p-6 text-center text-sm text-slate-500">Nothing entered yet — go back and count at least one item.</div>` : ''}
     </div>`;
+}
+// Record-only expired-item log, shown in Review. A variable-length list of
+// {item name, qty, note} — never touches counts or variance. Item name uses
+// a datalist of the count catalog but free text is allowed.
+function dcExpiredSection(items) {
+  const rows = (dailyCountState.draft && dailyCountState.draft.expired) || [];
+  const opts = (items || []).map(it => `<option value="${escapeHTML(it.name)}">`).join('');
+  const rowHTML = (l, i) => `
+    <div class="flex items-center gap-2 flex-wrap" data-exp-row="${i}">
+      <input id="dc-exp-name-${i}" list="dc-exp-items" value="${escapeHTML(l.name||'')}" placeholder="Item / description"
+        class="input flex-1 min-w-[8rem] !py-2 text-sm">
+      <input id="dc-exp-qty-${i}" value="${escapeHTML(l.qty||'')}" inputmode="decimal" placeholder="Qty"
+        class="input !w-20 !py-2 text-sm text-center tabular-nums">
+      <input id="dc-exp-note-${i}" value="${escapeHTML(l.note||'')}" placeholder="Note (optional)"
+        class="input flex-1 min-w-[8rem] !py-2 text-sm">
+      <button type="button" onclick="dcRemoveExpiredRow(${i})" class="text-slate-400 hover:text-rose-600 px-1" title="Remove line" aria-label="Remove expired line">${icon('close','w-4 h-4')}</button>
+    </div>`;
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      <div class="flex items-center justify-between gap-3 mb-1">
+        <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items${rows.length?` (${rows.length})`:''}</div>
+        <button type="button" onclick="dcAddExpiredRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
+      </div>
+      <div class="text-[11px] text-slate-500 mb-3">Items found expired and pulled today. Record-only — a log kept with the day's count; it doesn't change on-hand or variance.</div>
+      <datalist id="dc-exp-items">${opts}</datalist>
+      <div class="space-y-2">
+        ${rows.length ? rows.map(rowHTML).join('') : `<div class="text-sm text-slate-400">No expired items logged. Use “Add line” if you pulled anything expired.</div>`}
+      </div>
+    </div>`;
+}
+// Pull the rendered expired-row inputs back into the draft before any
+// re-render (add/remove line, Back/Next, Save) so nothing typed is lost.
+function dcCaptureExpired() {
+  const d = dailyCountState.draft;
+  if (!d || !Array.isArray(d.expired)) return;
+  d.expired = d.expired.map((l, i) => {
+    const nm = document.getElementById('dc-exp-name-'+i);
+    const qt = document.getElementById('dc-exp-qty-'+i);
+    const nt = document.getElementById('dc-exp-note-'+i);
+    if (!nm && !qt && !nt) return l; // not currently rendered
+    return { name: nm ? nm.value.trim() : l.name, qty: qt ? qt.value.trim() : l.qty, note: nt ? nt.value.trim() : l.note };
+  });
+}
+function dcAddExpiredRow() {
+  const d = dailyCountState.draft; if (!d) return;
+  dcCaptureExpired();
+  if (!Array.isArray(d.expired)) d.expired = [];
+  d.expired.push({ name:'', qty:'', note:'' });
+  render();
+}
+function dcRemoveExpiredRow(i) {
+  const d = dailyCountState.draft; if (!d || !Array.isArray(d.expired)) return;
+  dcCaptureExpired();
+  d.expired.splice(i, 1);
+  render();
 }
 
 // Inputs are free text (type=text — number inputs increment on scroll,
@@ -18392,7 +18490,11 @@ function dcEnsureDraft(branch, date, items) {
       n: c && c.note ? c.note : '',
     };
   });
-  dailyCountState.draft = { key: k, byItem };
+  // Expired-item log for this exact day — a variable-length list, not per-item.
+  const expired = (state.dailyExpiredCache[dcCacheKey(branch, date.slice(0,7))] || [])
+    .filter(r => r.countDate === date)
+    .map(r => ({ name: r.itemName || '', qty: r.qty != null ? String(r.qty) : '', note: r.note || '' }));
+  dailyCountState.draft = { key: k, byItem, expired };
 }
 // Pull the currently-rendered step's inputs into the draft so Back/Next
 // and Save never lose what was typed.
@@ -18416,6 +18518,7 @@ function dcCaptureStep() {
 }
 function dcStep(delta) {
   dcCaptureStep();
+  dcCaptureExpired();
   const next = dailyCountState.step + delta;
   dailyCountState.step = Math.max(0, Math.min(DC_STEPS.length, next));
   render();
@@ -18597,11 +18700,19 @@ function exportDailyCountSummaryCSV(branch, ym) {
 
 async function saveDailyCounts() {
   dcCaptureStep(); // fold any visible inputs into the draft first
+  dcCaptureExpired();
   const { branch, date, draft } = dailyCountState;
   if (!draft) { toast('Nothing to save.', 'info'); return; }
   const me = currentEmployee();
   const ym = date.slice(0,7), key = dcCacheKey(branch, ym);
   const items = (state.dailyCountItems || []).filter(i => i.active);
+  // Expired-item log (record-only). A variable-length list, reconciled by
+  // replacing the whole day's set: any non-empty line is kept.
+  const expLines = ((draft.expired) || [])
+    .map(l => ({ name: (l.name||'').trim(), qty: dcNum(l.qty), note: (l.note||'').trim() }))
+    .filter(l => l.name !== '');
+  const existingExp = (state.dailyExpiredCache[key] || []).filter(r => r.countDate === date);
+  const expChanged = expLines.length > 0 || existingExp.length > 0;
   const existing = (state.dailyCountsCache[key] || []).filter(c => c.countDate === date);
   const exById = {}; existing.forEach(c => { exById[c.itemId] = c; });
   const toUpsert = [], toDeleteIds = [];
@@ -18625,7 +18736,7 @@ async function saveDailyCounts() {
       recorded_at: new Date().toISOString(),
     });
   });
-  if (!toUpsert.length && !toDeleteIds.length) { toast('Nothing to save.', 'info'); return; }
+  if (!toUpsert.length && !toDeleteIds.length && !expChanged) { toast('Nothing to save.', 'info'); return; }
   if (toDeleteIds.length) {
     const { error } = await sb.from('daily_counts').delete().in('id', toDeleteIds);
     if (error) {
@@ -18651,6 +18762,27 @@ async function saveDailyCounts() {
       await loadDailyCounts(branch, ym);
       return;
     }
+  }
+  // Expired-item log — replace the whole day's set (delete then insert).
+  // Record-only, so it's independent of the count rows above; a failure
+  // here shouldn't roll back the counts, only surface + refresh.
+  if (expChanged) {
+    const { error: delErr } = await sb.from('daily_expired')
+      .delete().eq('branch', branch).eq('count_date', date);
+    if (delErr) {
+      toast(humanizeError(delErr) + (delErr?.message?.includes('does not exist') ? ' — run SQL block 105 first' : ''), 'error');
+      // counts already saved; the refresh below reloads the expired cache
+    } else if (expLines.length) {
+      const rows = expLines.map(l => {
+        const match = items.find(i => i.name.toLowerCase() === l.name.toLowerCase());
+        return { branch, count_date: date, item_id: match ? match.id : null,
+          item_name: l.name, qty: l.qty, note: l.note || null, recorded_by: me?.id || null };
+      });
+      const { error: insErr } = await sb.from('daily_expired').insert(rows);
+      if (insErr) toast(humanizeError(insErr), 'error');
+    }
+    delete state.dailyExpiredCache[key];
+    loadDailyExpired(branch, ym);
   }
   // Refresh the month cache + reset the flow so the saved values
   // re-seed the draft on the next render.
