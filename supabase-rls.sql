@@ -5692,6 +5692,42 @@ CREATE POLICY "de_delete_floor"
   ON public.daily_expired FOR DELETE TO authenticated
   USING (public.has_role(ARRAY['admin','head_barista','barista']));
 
+-- 106. MARKETING — per-occurrence completion of recurring cards
+--      A recurring calendar card has ONE row but repeats on many days.
+--      This records that a SPECIFIC day's occurrence was done, so marking
+--      one day complete strikes only that day (not every occurrence).
+--      UNIQUE(item_id, occurrence_date); read-all, write = marketing roles
+--      (same gate as the marketing_items family).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.marketing_item_completions (
+  id              uuid primary key default gen_random_uuid(),
+  item_id         uuid NOT NULL REFERENCES public.marketing_items(id) ON DELETE CASCADE,
+  occurrence_date date NOT NULL,
+  completed_by    uuid REFERENCES public.employees(id),
+  completed_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (item_id, occurrence_date)
+);
+CREATE INDEX IF NOT EXISTS marketing_item_completions_item_idx ON public.marketing_item_completions(item_id);
+CREATE INDEX IF NOT EXISTS marketing_item_completions_date_idx ON public.marketing_item_completions(occurrence_date);
+
+ALTER TABLE public.marketing_item_completions ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies
+           WHERE schemaname='public' AND tablename='marketing_item_completions'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.marketing_item_completions', r.policyname); END LOOP;
+END $$;
+
+CREATE POLICY "mic_select_all" ON public.marketing_item_completions FOR SELECT TO authenticated USING (true);
+CREATE POLICY "mic_insert_mkt" ON public.marketing_item_completions FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','marketing']));
+CREATE POLICY "mic_update_mkt" ON public.marketing_item_completions FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','marketing'])) WITH CHECK (public.has_role(ARRAY['admin','operations','marketing']));
+CREATE POLICY "mic_delete_mkt" ON public.marketing_item_completions FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','marketing']));
+
 -- =============================================================
 -- DONE.
 --

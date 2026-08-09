@@ -804,6 +804,7 @@ function emptyState() {
     marketingLists: [],    // lists (columns) within a marketing board
     marketingItems: [],    // cards; parentId set = subitem
     marketingItemMembers: [], // [{ itemId, employeeId }] multi-assignee join
+    marketingCompletions: [], // [{ id, itemId, occurrenceDate, completedBy, completedAt }] per-day done for recurring cards (block 106)
     marketingAttachments: [], // [{ id, itemId, name, mime, size }] metadata only (data_url fetched on demand)
     marketingBudgetLines: [], // [{ id, projectId, category, planned, actual, note }] standalone budget lines (block 96)
     marketingExpenses: [],    // [{ id, budgetLineId, amount, spentOn, vendor, note }] itemized expenses (block 97); sum → line.actual
@@ -1594,6 +1595,9 @@ function marketingItemToDb(i) {
 function mapMarketingItemMemberFromDb(r) {
   return { itemId: r.item_id, employeeId: r.employee_id, createdAt: r.created_at };
 }
+function mapMarketingCompletionFromDb(r) {
+  return { id: r.id, itemId: r.item_id, occurrenceDate: r.occurrence_date, completedBy: r.completed_by || null, completedAt: r.completed_at };
+}
 function mapMarketingItemEventFromDb(r) {
   return {
     id: r.id, itemId: r.item_id, actorId: r.actor_id||null,
@@ -2303,7 +2307,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR, maintenanceDutiesR, maintenanceDutyLogsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR, maintenanceDutiesR, maintenanceDutyLogsR, marketingCompletionsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2447,6 +2451,9 @@ async function loadAll() {
       sb.from('meetings').select('*').order('meeting_date', { ascending: false }).order('created_at', { ascending: false }).limit(300),
       sb.from('maintenance_duties').select('*').order('created_at', { ascending: false }),
       sb.from('maintenance_duty_logs').select('*').gte('occurrence_date', new Date(Date.now()-180*86400000).toISOString().slice(0,10)),
+      // Per-occurrence completion of recurring marketing cards — bounded to a
+      // rolling window (same as duty logs); the calendar shows recent months.
+      sb.from('marketing_item_completions').select('*').gte('occurrence_date', new Date(Date.now()-180*86400000).toISOString().slice(0,10)),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2502,6 +2509,7 @@ async function loadAll() {
     state.meetings     = (meetingsR?.data     || []).map(mapMeetingFromDb);
     state.maintenanceDuties   = (maintenanceDutiesR?.data   || []).map(mapDutyFromDb);
     state.maintenanceDutyLogs = (maintenanceDutyLogsR?.data || []).map(mapDutyLogFromDb);
+    state.marketingCompletions = (marketingCompletionsR?.data || []).map(mapMarketingCompletionFromDb);
     state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
     state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
     state.applications = (applicationsR.data || []).map(mapApplicationFromDb);
@@ -14342,28 +14350,54 @@ function mktRuleHits(anchor, ds, rule){
 // (project colour at low alpha + a solid left accent). Overdue cards get a
 // rose accent; done cards are muted + struck through. Standalone so both the
 // calendar grid and the day-detail modal ("+N more") can render identical chips.
-function mktCalChip(entry){ const it=entry.it, occ=entry.occ; const today=todayISO(); const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
-  // `done` reflects the card's status on EVERY occurrence (a done card is struck
-  // through wherever it appears — the status lives on the single card). `overdue`
-  // stays anchor-only: a future repeat of a not-done card isn't itself overdue.
-  const done=it.status==='done'; const overdue=!occ && !done && it.dueDate<today;
+// Is this specific occurrence of a recurring card marked done?
+function mktOccDone(itemId, ds){ return (state.marketingCompletions||[]).some(c=>c.itemId===itemId && c.occurrenceDate===ds); }
+// Toggle the done state for ONE day of a recurring card (per-occurrence).
+async function mktToggleOccurrence(itemId, ds){
+  const existing=(state.marketingCompletions||[]).find(c=>c.itemId===itemId && c.occurrenceDate===ds);
+  if(existing){
+    const { error } = await sb.from('marketing_item_completions').delete().eq('id', existing.id);
+    if(error){ toast(humanizeError(error),'error'); return; }
+    state.marketingCompletions = state.marketingCompletions.filter(c=>c.id!==existing.id);
+  } else {
+    const { data, error } = await sb.from('marketing_item_completions')
+      .insert({ item_id:itemId, occurrence_date:ds, completed_by: currentEmployee()?.id||null }).select().single();
+    if(error){ toast(humanizeError(error) + (error?.message?.includes('does not exist')?' — run SQL block 106 first':''),'error'); return; }
+    state.marketingCompletions.push(mapMarketingCompletionFromDb(data));
+  }
+  render();
+}
+// Apple-style pastel event block, tinted from the card's PROJECT colour
+// (project colour at low alpha + a solid left accent). Overdue cards get a
+// rose accent; done cards are muted + struck through. Standalone so both the
+// calendar grid and the day-detail modal ("+N more") can render identical chips.
+function mktCalChip(entry){ const it=entry.it, occ=entry.occ, ds=entry.ds; const today=todayISO(); const b=mktBoardOfItem(it); const p=b?mktProject(b.projectId):null; const color=p?p.color:'#6d28d9';
   const recurs=mktIsRecurring(it);
+  // Recurring cards complete PER DAY (marketing_item_completions), so each
+  // occurrence is struck independently — marking one day done no longer
+  // crosses out the others. One-off cards still use the card's single status.
+  const done = recurs ? mktOccDone(it.id, ds) : (it.status==='done');
+  const overdue=!occ && !done && it.dueDate<today;
   // The card's Notes (item.description). Shown as a one-line snippet under the
   // title, with the FULL notes in the hover tooltip alongside the title.
   const notes=(it.description||'').trim();
   const tip=escapeHTML(it.title)+(recurs?' · '+mktRecurLabel(it.recurrence).toLowerCase():'')+(overdue?' · overdue':'')+(notes?'\n\n'+escapeHTML(notes):'');
   const rep=recurs?`<span class="opacity-50" title="Repeats">↻ </span>`:'';
-  return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${rep}${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button>`; }
+  // A recurring card gets a per-day checkbox to complete just this occurrence.
+  const check = recurs
+    ? `<input type="checkbox" ${done?'checked':''} onclick="event.stopPropagation(); mktToggleOccurrence('${it.id}','${ds}')" class="shrink-0 cursor-pointer" style="margin-top:3px;accent-color:#059669" title="${done?'Mark this day not done':'Mark this day done'}" aria-label="Mark this day done">`
+    : '';
+  return `<div class="w-full rounded-md ${done?'opacity-60':''} flex items-start gap-1 px-1.5 py-1" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155">${check}<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="flex-1 min-w-0 text-left" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${rep}${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button></div>`; }
 // All cards due on a single date (honouring the calendar's project scope +
 // recurrence rules) — mirrors the byDay build in renderMarketingCalendar.
 function mktCalDayItems(ds){
   const items=mktCalItems(_mktCalScope); const out=[];
   items.forEach(it=>{ const anchor=it.dueDate; if(!anchor) return;
     const rule=mktIsRecurring(it)?it.recurrence:'none';
-    if(rule==='none'){ if(anchor===ds) out.push({it,occ:false}); return; }
+    if(rule==='none'){ if(anchor===ds) out.push({it,occ:false,ds}); return; }
     const until=it.recurrenceUntil||null;
     if(ds<anchor) return; if(until && ds>until) return;
-    if(mktRuleHits(anchor,ds,rule)) out.push({it, occ: ds!==anchor});
+    if(mktRuleHits(anchor,ds,rule)) out.push({it, occ: ds!==anchor, ds});
   });
   return out;
 }
@@ -14396,11 +14430,11 @@ function renderMarketingCalendar(){
     const byDay={};
     items.forEach(it=>{ const anchor=it.dueDate; if(!anchor) return;
       const rule=mktIsRecurring(it)?it.recurrence:'none';
-      if(rule==='none'){ if(anchor.slice(0,7)===ym){ (byDay[anchor]=byDay[anchor]||[]).push({it,occ:false}); } return; }
+      if(rule==='none'){ if(anchor.slice(0,7)===ym){ (byDay[anchor]=byDay[anchor]||[]).push({it,occ:false,ds:anchor}); } return; }
       const until=it.recurrenceUntil||null;
       for(let d=1; d<=daysInMonth; d++){ const ds=`${ym}-${String(d).padStart(2,'0')}`;
         if(ds<anchor) continue; if(until && ds>until) continue;
-        if(mktRuleHits(anchor,ds,rule)) (byDay[ds]=byDay[ds]||[]).push({it, occ: ds!==anchor});
+        if(mktRuleHits(anchor,ds,rule)) (byDay[ds]=byDay[ds]||[]).push({it, occ: ds!==anchor, ds});
       }
     });
     Object.values(byDay).forEach(arr=>arr.forEach(e=>visibleEntries.push(e)));
@@ -14784,6 +14818,7 @@ async function mktDeleteItem(id){
   const gone=new Set([id, ...mktSubitems(id).map(s=>s.id)]);
   state.marketingItems = state.marketingItems.filter(i=>!gone.has(i.id));
   state.marketingItemMembers = state.marketingItemMembers.filter(m=>!gone.has(m.itemId));
+  state.marketingCompletions = (state.marketingCompletions||[]).filter(c=>!gone.has(c.itemId)); // DB cascade-deletes; keep local state in sync
   if(_mktItemModalId===id){ closeModal(); render(); return; }
   render();
   if(it && it.parentId) refreshMarketingItemDetail(it.parentId);
