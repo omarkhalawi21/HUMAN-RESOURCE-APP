@@ -18545,6 +18545,38 @@ function dcFlag(it, tNum) {
   return null;
 }
 
+// Record-only expired-item log for a whole month, shown under both the
+// Month grid and the Summary. Faithful list (Date · Item · Qty · Note),
+// not a roll-up — it never feeds counts or variance.
+function dcExpiredLogPanel(branch, ym) {
+  const rows = (state.dailyExpiredCache[dcCacheKey(branch, ym)] || [])
+    .slice()
+    .sort((a,b) => (a.countDate||'').localeCompare(b.countDate||'') || (a.itemName||'').localeCompare(b.itemName||''));
+  const body = rows.length
+    ? rows.map(r => `<tr class="border-t border-slate-50">
+        <td class="px-3 py-2 whitespace-nowrap tabular-nums text-slate-500">${escapeHTML(fmtDate(r.countDate))}</td>
+        <td class="px-3 py-2 text-slate-800">${escapeHTML(r.itemName||'—')}</td>
+        <td class="px-3 py-2 text-right tabular-nums text-slate-700">${r.qty!=null?escapeHTML(String(r.qty)):'—'}</td>
+        <td class="px-3 py-2 text-slate-500">${escapeHTML(r.note||'')}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="4" class="px-3 py-6 text-center text-sm text-slate-400">No expired items logged in ${escapeHTML(ym)}.</td></tr>`;
+  return `
+    <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold mb-2 mt-2">Expired items${rows.length?` (${rows.length})`:''}</div>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto mb-4">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+            <th class="px-3 py-2 text-left">Date</th>
+            <th class="px-3 py-2 text-left">Item</th>
+            <th class="px-3 py-2 text-right">Qty</th>
+            <th class="px-3 py-2 text-left">Note</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
 function renderDailyCountMonth(items, monthRows, ym, branch) {
   const [y, m] = ym.split('-').map(Number);
   const days = new Date(y, m, 0).getDate();
@@ -18586,7 +18618,8 @@ function renderDailyCountMonth(items, monthRows, ym, branch) {
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${dcExpiredLogPanel(branch, ym)}`;
 }
 
 // Previous calendar month of a "YYYY-MM" string. Pure string math.
@@ -18673,7 +18706,8 @@ function renderDailyCountSummary(items, monthRows, ym, branch) {
       <strong>Consumed</strong> = Opening + Received − Wasted − Closing. Opening carries over from last month's closing count (or the first count this month if there's no prior data).
       Compare <strong>Consumed</strong> against your Foodics sales for ${escapeHTML(ym)} to spot variance.
     </div>
-    ${groups.map(([cat,list]) => tbl(cat,list)).join('')}`;
+    ${groups.map(([cat,list]) => tbl(cat,list)).join('')}
+    ${dcExpiredLogPanel(branch, ym)}`;
 }
 
 function exportDailyCountSummaryCSV(branch, ym) {
