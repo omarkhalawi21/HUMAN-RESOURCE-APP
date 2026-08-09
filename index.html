@@ -14020,6 +14020,7 @@ function mktEd(html){ return canManageMarketing() ? html : ''; }
 let _mktProjectId  = null; // drill-down: selected project
 let _mktBoardId    = null; // drill-down: selected board
 let _mktItemModalId = null; // item whose detail modal is open
+let _mktItemModalOcc = null; // occurrence date (YYYY-MM-DD) the modal was opened for, if any
 let _mktHomeTab = 'projects'; // Marketing home: 'projects' | 'dashboard' | 'calendar'
 let _mktCalMonth = null;      // calendar month 'YYYY-MM' (lazy-init to current)
 let _mktCalScope = 'all';     // calendar project filter: 'all' | projectId
@@ -14367,6 +14368,9 @@ async function mktToggleOccurrence(itemId, ds){
   }
   render();
 }
+// Toggle from inside the card popup, then refresh the popup body so its
+// button + label reflect the new state (render() only repaints the page).
+async function mktToggleOccurrenceFromModal(id, ds){ await mktToggleOccurrence(id, ds); refreshMarketingItemDetail(id); }
 // Apple-style pastel event block, tinted from the card's PROJECT colour
 // (project colour at low alpha + a solid left accent). Overdue cards get a
 // rose accent; done cards are muted + struck through. Standalone so both the
@@ -14383,11 +14387,10 @@ function mktCalChip(entry){ const it=entry.it, occ=entry.occ, ds=entry.ds; const
   const notes=(it.description||'').trim();
   const tip=escapeHTML(it.title)+(recurs?' · '+mktRecurLabel(it.recurrence).toLowerCase():'')+(overdue?' · overdue':'')+(notes?'\n\n'+escapeHTML(notes):'');
   const rep=recurs?`<span class="opacity-50" title="Repeats">↻ </span>`:'';
-  // A recurring card gets a per-day checkbox to complete just this occurrence.
-  const check = recurs
-    ? `<input type="checkbox" ${done?'checked':''} onclick="event.stopPropagation(); mktToggleOccurrence('${it.id}','${ds}')" class="shrink-0 cursor-pointer" style="margin-top:3px;accent-color:#059669" title="${done?'Mark this day not done':'Mark this day done'}" aria-label="Mark this day done">`
-    : '';
-  return `<div class="w-full rounded-md ${done?'opacity-60':''} flex items-start gap-1 px-1.5 py-1" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155">${check}<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}')" class="flex-1 min-w-0 text-left" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${rep}${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button></div>`; }
+  // No control on the chip itself — clicking opens the card popup for THIS
+  // occurrence (the date is passed through), where a "Mark this day done"
+  // button strikes just that day.
+  return `<button onclick="event.stopPropagation(); openMarketingItemDetail('${it.id}','${ds}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${overdue?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${rep}${escapeHTML(it.title)}</span>${notes?`<span class="block text-[10px] leading-snug text-slate-500 mt-0.5" style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word">${escapeHTML(notes)}</span>`:''}</button>`; }
 // All cards due on a single date (honouring the calendar's project scope +
 // recurrence rules) — mirrors the byDay build in renderMarketingCalendar.
 function mktCalDayItems(ds){
@@ -14666,7 +14669,7 @@ function renderMarketingKanban(b){
 }
 
 // ---- item detail modal ----
-async function openMarketingItemDetail(id){ const it=mktItem(id); if(!it) return; await loadMarketingItemEvents(id); _mktItemModalId=id; openModal(it.title||'Item', `<div id="mkt-item-body">${mktItemBodyHTML(id)}</div>`, ()=>true, { saveLabel: t('close') }); }
+async function openMarketingItemDetail(id, occDate){ const it=mktItem(id); if(!it) return; await loadMarketingItemEvents(id); _mktItemModalId=id; _mktItemModalOcc = (mktIsRecurring(it) && occDate) ? occDate : null; openModal(it.title||'Item', `<div id="mkt-item-body">${mktItemBodyHTML(id)}</div>`, ()=>true, { saveLabel: t('close') }); }
 function refreshMarketingItemDetail(id){ if(_mktItemModalId!==id) return; const el=document.getElementById('mkt-item-body'); if(el) el.innerHTML=mktItemBodyHTML(id); }
 // Read-only card view for owners — same information, no inputs or action
 // controls (create/edit/delete are withheld; block-94 RLS blocks writes anyway).
@@ -14725,8 +14728,17 @@ function mktItemBodyHTML(id){
     else { dot='bg-brand-500'; line=`<span class="font-medium text-slate-700">${escapeHTML(mktEmpName(e.actorId))}</span>: <span class="text-slate-700 whitespace-pre-wrap">${escapeHTML(e.body||'')}</span>`; }
     return `<div class="flex gap-3"><div class="flex flex-col items-center"><span class="w-2.5 h-2.5 rounded-full ${dot} mt-1.5 shrink-0"></span>${i<timeline.length-1?'<span class="w-px flex-1 bg-slate-200 my-1"></span>':''}</div><div class="pb-4 min-w-0 flex-1"><div class="text-sm">${line}</div><div class="text-[11px] text-slate-400">${escapeHTML(fmtDate(e.createdAt))} · ${escapeHTML(timeAgo(e.createdAt))}</div></div></div>`;
   }).join('');
+  // Per-occurrence done — only when the modal was opened from a specific day
+  // of a recurring card. Strikes just that day on the calendar.
+  const occDone = _mktItemModalOcc ? mktOccDone(id, _mktItemModalOcc) : false;
+  const occBar = (mktIsRecurring(it) && _mktItemModalOcc) ? `
+    <div class="flex items-center gap-2 mb-4 p-2.5 rounded-xl ${occDone?'bg-emerald-50 border border-emerald-100':'bg-slate-50 border border-slate-200'}">
+      <button onclick="mktToggleOccurrenceFromModal('${id}','${_mktItemModalOcc}')" class="btn btn-sm ${occDone?'btn-ghost':'btn-primary'}">${occDone?icon('close','w-4 h-4')+' Mark not done':icon('check','w-4 h-4')+' Mark done'}</button>
+      <span class="text-xs ${occDone?'text-emerald-700':'text-slate-500'}">${occDone?'Done for':'This day only ·'} ${escapeHTML(fmtDate(_mktItemModalOcc))}</span>
+    </div>` : '';
   return `
     <input class="input font-semibold text-base mb-4" value="${escapeHTML(it.title)}" onchange="mktUpdateItem('${id}',{title:(this.value||'').trim()||'Untitled'})" aria-label="Item title">
+    ${occBar}
     <div class="grid grid-cols-2 gap-3 mb-4">
       <div><label class="label">Status</label><select class="input" onchange="mktChangeItemStatus('${id}',this.value)">${Object.entries(TASK_STATUSES).map(([k,v])=>`<option value="${k}" ${it.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
       <div><label class="label">Priority</label><select class="input" onchange="mktUpdateItem('${id}',{priority:this.value})">${Object.entries(TASK_PRIORITIES).map(([k,v])=>`<option value="${k}" ${it.priority===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
@@ -24302,6 +24314,7 @@ function closeModal() {
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
   if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
   if (typeof _mktItemModalId !== 'undefined') _mktItemModalId = null;
+  if (typeof _mktItemModalOcc !== 'undefined') _mktItemModalOcc = null;
   if (typeof _meetingDetailId !== 'undefined') _meetingDetailId = null;
   if (typeof _mdPhoto !== 'undefined') _mdPhoto = null;
   if (typeof _mktExpLineId !== 'undefined') _mktExpLineId = null;
