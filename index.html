@@ -15645,7 +15645,10 @@ function renderDocuments() {
                 <td class="font-mono text-sm text-slate-600">${escapeHTML(x.baladiya?.number||'—')}</td>
                 <td>${x.baladiya?.expiry ? `<div>${fmtDate(x.baladiya.expiry)}</div><span class="badge ${balSt.cls}">${escapeHTML(balSt.label)}</span>` : '<span class="badge badge-slate">Not set</span>'}</td>
                 <td class="!text-end whitespace-nowrap">
-                  ${admin ? `<button onclick="openRenewModal('${e.id}')" class="btn btn-sm btn-ghost">${icon('refresh','w-4 h-4')} ${escapeHTML(t('renew'))}</button>` : `<span class="text-xs text-slate-400">${(daysUntil(x.iqama?.expiry)<0 || daysUntil(x.baladiya?.expiry)<0) ? 'Expired — contact HR' : (daysUntil(x.iqama?.expiry)!==null && daysUntil(x.iqama?.expiry)<=30) || (daysUntil(x.baladiya?.expiry)!==null && daysUntil(x.baladiya?.expiry)<=30) ? 'Renewal due — contact HR' : 'Up to date'}</span>`}
+                  ${admin ? `<div class="inline-flex items-center gap-1.5">
+                    <button onclick="openRenewModal('${e.id}','iqama')" class="btn btn-sm btn-ghost" title="Renew IQAMA only">${icon('refresh','w-4 h-4')} ${escapeHTML(t('iqama'))}</button>
+                    <button onclick="openRenewModal('${e.id}','baladiya')" class="btn btn-sm btn-ghost" title="Renew Baladiya only">${icon('refresh','w-4 h-4')} ${escapeHTML(t('baladiya'))}</button>
+                  </div>` : `<span class="text-xs text-slate-400">${(daysUntil(x.iqama?.expiry)<0 || daysUntil(x.baladiya?.expiry)<0) ? 'Expired — contact HR' : (daysUntil(x.iqama?.expiry)!==null && daysUntil(x.iqama?.expiry)<=30) || (daysUntil(x.baladiya?.expiry)!==null && daysUntil(x.baladiya?.expiry)<=30) ? 'Renewal due — contact HR' : 'Up to date'}</span>`}
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -15676,17 +15679,24 @@ function applyRenewalPeriod(target) {
   const inp = document.getElementById(inputId);
   if (inp) inp.value = todayPlusMonths(months);
 }
-function openRenewModal(empId) {
+// which: 'iqama' | 'baladiya' → renew that ONE document, leaving the other
+// untouched. Omitted → the combined modal (both shown), but each expiry
+// defaults to its CURRENT value so saving never silently advances a
+// document you didn't mean to — use each section's Renew button to set a
+// new date. This is what lets you renew one document at a time.
+function openRenewModal(empId, which) {
   const e = getEmployee(empId);
   if (!e) return;
   const x = getEmpExtras(empId);
-  // Pre-compute the renewed expiry dates so they show up in the form on
-  // open. User can still adjust before saving.
-  const newIqamaExp    = todayPlusMonths(IQAMA_RENEW_MONTHS);
-  const newBaladiyaExp = todayPlusMonths(BALADIYA_RENEW_MONTHS);
-  const form = `
-    <div class="text-sm text-slate-600 mb-4">Renewing documents for <strong>${escapeHTML(e.firstName+' '+e.lastName)}</strong>. New expiry dates are auto-calculated &mdash; adjust if needed.</div>
-    <div class="grid grid-cols-2 gap-4">
+  const single    = which === 'iqama' || which === 'baladiya';
+  const showIqama = !single || which === 'iqama';
+  const showBal   = !single || which === 'baladiya';
+  // A targeted single-doc renewal pre-fills the new date (that's the intent).
+  // In the combined modal, default to the previous date so an untouched
+  // document is left exactly as it was.
+  const iqamaVal = single ? todayPlusMonths(IQAMA_RENEW_MONTHS)    : (x.iqama?.expiry    || '');
+  const balVal   = single ? todayPlusMonths(BALADIYA_RENEW_MONTHS) : (x.baladiya?.expiry || '');
+  const iqamaSection = `
       <div class="col-span-2 flex items-center justify-between mt-1">
         <div class="text-xs uppercase tracking-wider font-semibold text-slate-500">${escapeHTML(t('iqama'))} &mdash; Resident ID</div>
         <button type="button" onclick="applyRenewalPeriod('iqama')" class="text-xs text-brand-600 hover:underline">Renew &middot; +${IQAMA_RENEW_MONTHS} months</button>
@@ -15694,33 +15704,46 @@ function openRenewModal(empId) {
       <div><label class="label">IQAMA number</label><input id="r-iqama-no" class="input" value="${escapeHTML(x.iqama?.number||'')}"></div>
       <div>
         <label class="label">New expiry date</label>
-        <input id="r-iqama-exp" class="input" type="date" value="${escapeHTML(newIqamaExp)}">
+        <input id="r-iqama-exp" class="input" type="date" value="${escapeHTML(iqamaVal)}">
         ${x.iqama?.expiry ? `<div class="text-[11px] text-slate-400 mt-1">Previous: ${fmtDate(x.iqama.expiry)}</div>` : ''}
-      </div>
-      <div class="col-span-2 flex items-center justify-between mt-3">
+      </div>`;
+  const balSection = `
+      <div class="col-span-2 flex items-center justify-between ${showIqama?'mt-3':'mt-1'}">
         <div class="text-xs uppercase tracking-wider font-semibold text-slate-500">${escapeHTML(t('baladiya'))} &mdash; Health Card</div>
         <button type="button" onclick="applyRenewalPeriod('baladiya')" class="text-xs text-brand-600 hover:underline">Renew &middot; +1 year</button>
       </div>
       <div><label class="label">Baladiya number</label><input id="r-bal-no" class="input" value="${escapeHTML(x.baladiya?.number||'')}"></div>
       <div>
         <label class="label">New expiry date</label>
-        <input id="r-bal-exp" class="input" type="date" value="${escapeHTML(newBaladiyaExp)}">
+        <input id="r-bal-exp" class="input" type="date" value="${escapeHTML(balVal)}">
         ${x.baladiya?.expiry ? `<div class="text-[11px] text-slate-400 mt-1">Previous: ${fmtDate(x.baladiya.expiry)}</div>` : ''}
-      </div>
+      </div>`;
+  const docLabel = which === 'iqama' ? t('iqama') : which === 'baladiya' ? t('baladiya') : 'documents';
+  const hint = single
+    ? `${icon('check','w-4 h-4 inline')} Renewing <strong>${escapeHTML(docLabel)}</strong> only — the other document is left unchanged. The new expiry defaults to <strong>+${which==='iqama'?IQAMA_RENEW_MONTHS+' months':'1 year'}</strong> from today; adjust if needed.`
+    : `${icon('check','w-4 h-4 inline')} Each document renews independently — use its <strong>Renew</strong> button (or edit the date) for the one you want. Any document left on its current date is not changed.`;
+  const form = `
+    <div class="text-sm text-slate-600 mb-4">Renewing ${escapeHTML(single?docLabel:'documents')} for <strong>${escapeHTML(e.firstName+' '+e.lastName)}</strong>.</div>
+    <div class="grid grid-cols-2 gap-4">
+      ${showIqama ? iqamaSection : ''}
+      ${showBal ? balSection : ''}
     </div>
-    <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-xs text-emerald-800 mt-4">
-      ${icon('check','w-4 h-4 inline')} New expiries default to <strong>+${IQAMA_RENEW_MONTHS} months</strong> for IQAMA and <strong>+1 year</strong> for Baladiya from today. Saving here counts as a renewal &mdash; the previous date is replaced.
-    </div>
+    <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-xs text-emerald-800 mt-4">${hint}</div>
   `;
-  openModal('Renew documents', form, async () => {
+  const title = which === 'iqama' ? 'Renew IQAMA' : which === 'baladiya' ? 'Renew Baladiya' : 'Renew documents';
+  openModal(title, form, async () => {
     const cur = state.empExtras[empId] || emptyExtras();
+    // Start from the current record and only overwrite the section(s) shown,
+    // so a single-doc renewal preserves the other document verbatim.
     const next = {
       schedule:    cur.schedule || defaultSchedule(),
-      iqama:       { number: $('#r-iqama-no').value.trim(), expiry: $('#r-iqama-exp').value },
-      baladiya:    { number: $('#r-bal-no').value.trim(),   expiry: $('#r-bal-exp').value   },
+      iqama:       cur.iqama    ? { ...cur.iqama }    : { number:'', expiry:'' },
+      baladiya:    cur.baladiya ? { ...cur.baladiya } : { number:'', expiry:'' },
       branch:      cur.branch || '',
       nationality: cur.nationality || '',
     };
+    if (showIqama) next.iqama    = { number: $('#r-iqama-no').value.trim(), expiry: $('#r-iqama-exp').value };
+    if (showBal)   next.baladiya = { number: $('#r-bal-no').value.trim(),   expiry: $('#r-bal-exp').value   };
     const ok = await saveEmpExtras(empId, next);
     if (!ok) return false;
     render();
