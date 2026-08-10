@@ -25306,6 +25306,163 @@ function invBuildDashboard(branch){
     .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
   return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
+// Month-end roll-up for one branch+YYYY-MM: aggregates every shift in the
+// month into totals, per-category / per-item consumption, actual-vs-theoretical
+// variance, waste, and staff/owner/comp usage. Reuses the same helpers as the
+// daily dashboard, just summed over the whole month. Assumes the month is
+// already loaded into state.inventoryShiftsCache (printInvMonthReport loads it).
+function invBuildMonthReport(branch, ym){
+  const items = invActiveItems();
+  const shifts = state.inventoryShiftsCache[invCacheKey(branch, ym)] || [];
+  const closed = shifts.filter(s=>s.status==='closed').length;
+  const dates = new Set(shifts.map(s=>s.businessDate));
+  let totalConsumed=0, totalFoodics=0;
+  const catMap={}, itemMap={}, varAgg={};
+  shifts.forEach(s=>{
+    totalFoodics += invShiftProductsSold(s);
+    s.counts.forEach(c=>{
+      const used = invConsumed(c); totalConsumed += used;
+      const it = items.find(i=>i.id===c.itemId);
+      if (it && used){ catMap[it.category]=(catMap[it.category]||0)+used; itemMap[it.id]=(itemMap[it.id]||0)+used; }
+      const v = varAgg[c.itemId] || (varAgg[c.itemId]={ consumed:0, cups:0, hasCups:false });
+      v.consumed += used; if (c.foodicsQty!=null){ v.cups += c.foodicsQty; v.hasCups=true; }
+    });
+  });
+  // Waste totals (grams) + waste-as-%-of-coffee-used for the month.
+  const waste = shifts.reduce((a,s)=>{ a.dialin+=s.wasteDialin||0; a.remakes+=s.wasteRemakes||0; a.training+=s.wasteTraining||0; a.spillage+=s.wasteSpillage||0; return a; }, { dialin:0, remakes:0, training:0, spillage:0 });
+  waste.total = waste.dialin+waste.remakes+waste.training+waste.spillage;
+  let coffeeG=0; items.forEach(it=>{ if(it.doseG!=null||it.category==='espresso'){ const v=varAgg[it.id]; if(v) coffeeG+=v.consumed*1000; } });
+  waste.coffeeG = Math.round(coffeeG); waste.pct = coffeeG>0 ? Math.round(waste.total/coffeeG*1000)/10 : null;
+  const byCategory = Object.keys(catMap).map(cat=>({ cat, label:DC_CATEGORIES[cat]||cat, consumed:Math.round(catMap[cat]*100)/100 })).sort((a,b)=>b.consumed-a.consumed);
+  const byItem = Object.keys(itemMap).map(id=>{ const it=items.find(i=>i.id===id); return { name:it?it.name:'?', unit:it?it.unit:'', consumed:Math.round(itemMap[id]*100)/100 }; }).sort((a,b)=>b.consumed-a.consumed);
+  // Actual vs theoretical variance (month), mirroring the daily build.
+  let espActual=0, espCups=0, espTheoG=0, espHasSold=false, espHasActual=false;
+  items.filter(i=>i.category==='espresso').forEach(it=>{ const v=varAgg[it.id]; if(v){ espActual+=v.consumed; if(v.consumed) espHasActual=true; } });
+  shifts.forEach(s=> (s.drinkSales||[]).forEach(d=>{ const dr=invDrinkById(d.drinkId); if(!dr) return; espCups+=d.qtySold; espTheoG+=d.qtySold*(dr.gramsPer||0); espHasSold=true; }));
+  const variance = items.filter(it=>it.category!=='espresso').map(it=>{
+    const v=varAgg[it.id]; if(!v || (!v.hasCups && !v.consumed)) return null;
+    if (it.doseG!=null){ const theo=v.hasCups?(v.cups*it.doseG/1000):null;
+      return { name:it.name, unit:it.unit, consumed:Math.round(v.consumed*1000)/1000, cups:v.hasCups?v.cups:null, theoretical:theo!=null?Math.round(theo*1000)/1000:null, variance:theo!=null?Math.round((v.consumed-theo)*1000):null, varUnit:'g' }; }
+    const theo=v.hasCups?v.cups:null;
+    return { name:it.name, unit:it.unit, consumed:Math.round(v.consumed*100)/100, cups:v.hasCups?v.cups:null, theoretical:theo, variance:theo!=null?Math.round((v.consumed-theo)*100)/100:null, varUnit:it.unit };
+  }).filter(Boolean);
+  if (espHasActual||espHasSold) variance.push({ name:'Espresso (all)', unit:'kg', consumed:Math.round(espActual*1000)/1000, cups:espHasSold?espCups:null, theoretical:espHasSold?Math.round((espTheoG/1000)*1000)/1000:null, variance:espHasSold?Math.round(espActual*1000-espTheoG):null, varUnit:'g' });
+  variance.sort((a,b)=>Math.abs(b.variance||0)-Math.abs(a.variance||0));
+  // Staff / owner / comps usage over the month.
+  const staffAgg={}, comps={ coffeeG:0, sweets:0 }, ownerAgg={};
+  shifts.forEach(s=> (s.usage||[]).forEach(u=>{
+    const it = items.find(i=>i.id===u.itemId) || null;
+    if (!it && !u.drinkId) return;
+    const grams = invUsageGrams(u, it);
+    const isCoffee = !!u.drinkId || (it && it.doseG!=null);
+    const pcs = isCoffee ? 0 : u.qty;
+    if (u.reason==='customer_comp'){ comps.coffeeG+=grams; comps.sweets+=pcs; return; }
+    if (u.reason==='owner_coffee' || u.reason==='owner_food'){
+      const ok = u.ownerId || ('emp:'+(u.employeeId||'_none'));
+      const o = ownerAgg[ok] || (ownerAgg[ok]={ name:u.ownerId?invOwnerName(u.ownerId):invEmpName(u.employeeId), coffeeG:0, sweets:0 });
+      o.coffeeG+=grams; o.sweets+=pcs; return;
+    }
+    const k = u.employeeId || '_none';
+    const a = staffAgg[k] || (staffAgg[k]={ name:invEmpName(u.employeeId), coffeeDrinks:0, coffeeG:0, sweets:0 });
+    if (u.reason==='staff_coffee'){ a.coffeeDrinks+=u.qty; a.coffeeG+=grams; }
+    else if (u.reason==='staff_food'){ a.sweets+=pcs; }
+    else { a.coffeeG+=grams; a.sweets+=pcs; }
+  }));
+  const staff = Object.values(staffAgg).map(a=>({ ...a, coffeeDrinks:Math.round(a.coffeeDrinks*100)/100, coffeeG:Math.round(a.coffeeG), sweets:Math.round(a.sweets*100)/100 })).filter(a=>a.coffeeDrinks||a.sweets||a.coffeeG).sort((x,y)=>(y.coffeeG+y.sweets*1000)-(x.coffeeG+x.sweets*1000));
+  const owners = Object.values(ownerAgg).map(o=>({ ...o, coffeeG:Math.round(o.coffeeG), sweets:Math.round(o.sweets*100)/100 })).filter(o=>o.coffeeG||o.sweets).sort((x,y)=>(y.coffeeG+y.sweets*1000)-(x.coffeeG+x.sweets*1000));
+  comps.coffeeG=Math.round(comps.coffeeG); comps.sweets=Math.round(comps.sweets*100)/100;
+  // Current needs-ordering snapshot (as of now, not month-historical).
+  const lowList=[]; items.forEach(it=>{ const lc=invLatestClosing(branch, it.id); if(!lc) return; const thr=invThreshold(it); if(lc.qty<=thr) lowList.push({ name:it.name, category:DC_CATEGORIES[it.category]||it.category, onHand:lc.qty, thr, unit:it.unit }); });
+  lowList.sort((a,b)=>(a.onHand-a.thr)-(b.onHand-b.thr));
+  return { branch, ym, shiftCount:shifts.length, closedCount:closed, daysWithData:dates.size, totalConsumed:Math.round(totalConsumed*100)/100, totalFoodics, waste, byCategory, byItem, variance, staff, owners, comps, lowList };
+}
+// Printable end-of-month inventory report for a branch. Loads the month on
+// demand, then opens the print window (letterhead + true-black tables, same
+// print conventions as the other reports).
+async function printInvMonthReport(branch, ym){
+  if (!/^\d{4}-\d{2}$/.test(ym||'')) { toast('Pick a month first', 'info'); return; }
+  const key = invCacheKey(branch, ym);
+  if (!state.inventoryShiftsCache[key]) await loadInventoryShifts(branch, ym);
+  if (!state.inventoryShiftsCache[key]) { toast('Still loading — try again in a moment', 'info'); return; }
+  const r = invBuildMonthReport(branch, ym);
+  const [y,mo] = ym.split('-').map(Number);
+  const monthLbl = new Date(y, mo-1, 1).toLocaleDateString('en-US', { month:'long', year:'numeric' });
+  const num = v => (v==null?'—':String(v));
+  const tile = (lbl,val,sub)=>`<div class="tile"><div class="tl">${escapeHTML(lbl)}</div><div class="tv">${escapeHTML(String(val))}</div>${sub?`<div class="ts">${escapeHTML(sub)}</div>`:''}</div>`;
+  const catRows = r.byCategory.length ? r.byCategory.map(c=>`<tr><td>${escapeHTML(c.label)}</td><td class="r">${num(c.consumed)}</td></tr>`).join('') : `<tr><td colspan="2" class="empty">No consumption recorded.</td></tr>`;
+  const itemRows = r.byItem.length ? r.byItem.slice(0,25).map(i=>`<tr><td>${escapeHTML(i.name)}</td><td class="r">${num(i.consumed)} ${escapeHTML(i.unit)}</td></tr>`).join('') : `<tr><td colspan="2" class="empty">No consumption recorded.</td></tr>`;
+  const varRows = r.variance.length ? r.variance.slice(0,30).map(v=>{
+    const vTxt = v.variance==null ? '—' : `${v.variance>0?'+':''}${v.variance} ${v.varUnit||''}`;
+    return `<tr><td>${escapeHTML(v.name)}</td><td class="r">${num(v.consumed)} ${escapeHTML(v.unit||'')}</td><td class="r">${v.theoretical==null?'—':num(v.theoretical)+(v.cups!=null?` (${v.cups} sold)`:'')}</td><td class="r">${escapeHTML(vTxt)}</td></tr>`;
+  }).join('') : `<tr><td colspan="4" class="empty">No product-mix data this month.</td></tr>`;
+  const staffRows = r.staff.length ? r.staff.map(a=>`<tr><td>${escapeHTML(a.name)}</td><td class="r">${a.coffeeDrinks?`${a.coffeeDrinks} (${a.coffeeG} g)`:'—'}</td><td class="r">${a.sweets||'—'}</td></tr>`).join('') : `<tr><td colspan="3" class="empty">No staff consumption logged.</td></tr>`;
+  const ownerRows = r.owners.map(o=>`<tr><td>${escapeHTML(o.name)}</td><td class="r">${o.coffeeG} g</td><td class="r">${o.sweets||'—'}</td></tr>`).join('');
+  const lowRows = r.lowList.length ? r.lowList.map(l=>`<tr><td>${escapeHTML(l.name)}</td><td>${escapeHTML(l.category)}</td><td class="r">${num(l.onHand)} ${escapeHTML(l.unit)}</td><td class="r">${num(l.thr)} ${escapeHTML(l.unit)}</td><td class="r">${l.onHand<=0?'OUT':'LOW'}</td></tr>`).join('') : `<tr><td colspan="5" class="empty">Nothing below threshold.</td></tr>`;
+  const s = state.settings || {};
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Inventory report — ${escapeHTML(r.branch)} · ${escapeHTML(monthLbl)}</title>
+  <style>${LETTERHEAD_CSS}
+    .page{ max-width:1000px; }
+    h3{ font-size:13px; margin:20px 0 6px; text-transform:uppercase; letter-spacing:.05em; color:#111; border-bottom:1px solid #000; padding-bottom:3px; }
+    .tiles{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .tile{ flex:1 1 0; min-width:120px; border:1.5px solid #000; border-radius:8px; padding:9px 11px; }
+    .tile .tl{ font-size:9px; text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
+    .tile .tv{ font-size:20px; font-weight:700; margin-top:2px; }
+    .tile .ts{ font-size:10px; color:#333; }
+    table.rep{ width:100%; border-collapse:collapse; font-size:12px; margin-top:4px; }
+    table.rep th{ background:#0f172a; color:#fff; padding:6px 9px; text-align:right; font-size:9.5px; text-transform:uppercase; letter-spacing:.04em; }
+    table.rep th:first-child{ text-align:left; }
+    table.rep td{ padding:6px 9px; border-bottom:1px solid #e5e7eb; text-align:left; color:#1a1a1a; }
+    table.rep td.r{ text-align:right; }
+    table.rep td.empty{ text-align:center; color:#777; padding:14px; }
+    .two{ display:flex; gap:18px; } .two > div{ flex:1 1 0; }
+  </style></head><body>
+  <div class="actions"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML('INVENTORY MONTHLY REPORT')}
+    <div class="doc-date">${escapeHTML(r.branch)} &middot; ${escapeHTML(monthLbl)}</div>
+    <p class="doc-intro">End-of-month inventory summary for ${escapeHTML(r.branch)}: consumption, products sold, waste, actual-vs-theoretical variance, and staff/owner usage. Generated from ${r.closedCount} closed shift(s) across ${r.daysWithData} day(s).</p>
+    <div class="tiles">
+      ${tile('Shifts closed', r.closedCount, `${r.shiftCount} total`)}
+      ${tile('Products sold', r.totalFoodics, 'product mix')}
+      ${tile('Consumed', Math.round(r.totalConsumed*100)/100, 'units (all items)')}
+      ${tile('Total waste', `${Math.round(r.waste.total)} g`, r.waste.pct!=null?`${r.waste.pct}% of coffee`:'')}
+    </div>
+
+    <div class="two">
+      <div>
+        <h3>Consumption by category</h3>
+        <table class="rep"><thead><tr><th>Category</th><th>Consumed</th></tr></thead><tbody>${catRows}</tbody></table>
+      </div>
+      <div>
+        <h3>Waste breakdown (grams)</h3>
+        <table class="rep"><thead><tr><th>Type</th><th>Grams</th></tr></thead><tbody>
+          <tr><td>Dial-in</td><td class="r">${Math.round(r.waste.dialin)}</td></tr>
+          <tr><td>Remakes</td><td class="r">${Math.round(r.waste.remakes)}</td></tr>
+          <tr><td>Training</td><td class="r">${Math.round(r.waste.training)}</td></tr>
+          <tr><td>Spillage</td><td class="r">${Math.round(r.waste.spillage)}</td></tr>
+          <tr><td><b>Total</b></td><td class="r"><b>${Math.round(r.waste.total)}</b></td></tr>
+        </tbody></table>
+      </div>
+    </div>
+
+    <h3>Top items consumed</h3>
+    <table class="rep"><thead><tr><th>Item</th><th>Consumed</th></tr></thead><tbody>${itemRows}</tbody></table>
+
+    <h3>Actual vs theoretical usage</h3>
+    <table class="rep"><thead><tr><th>Item</th><th>Actual</th><th>Theoretical</th><th>Variance</th></tr></thead><tbody>${varRows}</tbody></table>
+
+    <h3>Staff consumption</h3>
+    <table class="rep"><thead><tr><th>Employee</th><th>Coffee</th><th>Sweets</th></tr></thead><tbody>${staffRows}${ownerRows?`<tr><td colspan="3" style="background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase">Owners</td></tr>${ownerRows}`:''}${(r.comps.coffeeG||r.comps.sweets)?`<tr><td>Customer comps</td><td class="r">${r.comps.coffeeG} g</td><td class="r">${r.comps.sweets||'—'}</td></tr>`:''}</tbody></table>
+
+    <h3>Needs ordering / low stock (current)</h3>
+    <table class="rep"><thead><tr><th>Item</th><th>Category</th><th>On hand</th><th>Reorder at</th><th>Status</th></tr></thead><tbody>${lowRows}</tbody></table>
+
+    ${state.companyStamp ? `<div style="position:absolute; right:64px; bottom:96px;">${stampImgHTML(120, 0.85)}</div>` : ''}
+    <div class="doc-footer">Inventory monthly report &middot; ${escapeHTML(r.branch)} &middot; ${escapeHTML(monthLbl)} &middot; Generated ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</div>
+  </div>
+  </body></html>`;
+  if (!openPrintWindow(html)) return;
+}
 function initInvCharts(){
   if (typeof Chart === 'undefined' || !_invChartData) return;
   Object.keys(_invCharts).forEach(k=>{ try{ _invCharts[k].destroy(); }catch(_){} delete _invCharts[k]; });
@@ -25380,7 +25537,18 @@ function invBuildDashboardHTML(branch){
       <div class="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">${lbl}</div>
       <div class="font-display text-xl font-semibold ${strong?'text-brand-700':'text-slate-900'} mt-0.5">${Math.round(g)}<span class="text-xs font-normal text-slate-400"> g</span></div>
     </div>`;
+  const thisYm = todayISO().slice(0,7);
   return `
+    <div class="bg-white rounded-2xl shadow-card p-3 mb-4 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="text-sm font-semibold text-slate-800">Monthly report</span>
+        <span class="text-xs text-slate-400">end-of-month summary · consumption, sold, waste, variance, staff</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="month" id="inv-report-month" value="${escapeHTML(thisYm)}" max="${escapeHTML(thisYm)}" class="input !w-auto !py-1.5 text-sm">
+        <button onclick="printInvMonthReport('${escapeHTML(branch)}', document.getElementById('inv-report-month').value)" class="btn btn-primary btn-sm">${icon('file','w-4 h-4')} Print report</button>
+      </div>
+    </div>
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
       ${invStatCard("Today's shifts", `${d.openCount}`, `${d.openCount} open · ${[d.morning,d.evening].filter(s=>s&&s.status==='closed').length} closed`)}
       ${invStatCard('Needs ordering', `${d.lowList.length}`, `low or out of stock`)}
