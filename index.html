@@ -3401,12 +3401,14 @@ async function doSignup() {
 async function afterAuth(user) {
   state.session = { userId: user.id, email: user.email, loggedAt: new Date().toISOString() };
   await loadAll();
+  initRealtime();
   const me = currentEmployee();
   toast(`${t('welcome_back')}, ${me?.firstName||user.email}!`, 'success');
   location.hash = '#/dashboard';
   render();
 }
 async function logout() {
+  teardownRealtime();
   await sb.auth.signOut();
   // All data lives in Supabase; in-memory state is rebuilt on next login.
   state = emptyState();
@@ -3756,6 +3758,72 @@ function getNotifSeen() {
 function setNotifSeen(set) {
   try { localStorage.setItem(NOTIF_SEEN_KEY, JSON.stringify([...set].slice(-500))); } catch(_) {}
 }
+// ---- Real-time push (Supabase Realtime) ----------------------------------
+// Live-delivers maintenance requests + duties to the person in charge so a
+// new request or a fresh assignment pops a toast and updates the bell without
+// a refresh. RLS is enforced on the stream: admin/maintenance receive every
+// request, a reporter only their own; duties are world-readable so we filter
+// to the assignee client-side. Requires the tables to be in the
+// supabase_realtime publication (SQL block 108).
+let _rtChannel = null;
+function initRealtime() {
+  if (_rtChannel || !sb) return;
+  _rtChannel = sb.channel('hr-maintenance')
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'maintenance_requests' }, p => rtOnMaintenance(p, true))
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'maintenance_requests' }, p => rtOnMaintenance(p, false))
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'maintenance_duties' },   p => rtOnDuty(p, true))
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'maintenance_duties' },   p => rtOnDuty(p, false))
+    .subscribe();
+}
+function teardownRealtime() {
+  if (_rtChannel && sb) { try { sb.removeChannel(_rtChannel); } catch(_) {} }
+  _rtChannel = null;
+}
+function rtToast(title, detail) {
+  // Toast style already includes the bell refresh (render() below).
+  toast(`${title}: ${detail}`.slice(0, 140), 'info');
+}
+function rtOnMaintenance(payload, isInsert) {
+  const raw = payload && payload.new; if (!raw || !raw.id) return;
+  const me = currentEmployee();
+  const row = mapMaintenanceFromDb(raw);
+  row.photoDataUrl = null; // never hoard full photo bytes in the list (matches loadAll)
+  const mgr = hasRole('admin','maintenance');
+  // Defense-in-depth: only keep rows this user is entitled to see, so a
+  // non-manager can never accumulate others' requests even if the Realtime
+  // stream ever over-delivers (RLS should already scope it, this is a belt).
+  const canSee = mgr || row.reportedBy === me?.id || (row.assignedTo && row.assignedTo === me?.id);
+  if (!canSee) return;
+  const list = state.maintenance || (state.maintenance = []);
+  const idx = list.findIndex(x => x.id === raw.id);
+  const prev = idx >= 0 ? list[idx] : null;
+  if (idx >= 0) list[idx] = { ...prev, ...row, photoDataUrl: prev.photoDataUrl };
+  else list.unshift(row);
+  const mineNow  = !!(row.assignedTo && me && row.assignedTo === me.id);
+  const minePrev = !!(prev && prev.assignedTo && me && prev.assignedTo === me.id);
+  if (isInsert) {
+    // A brand-new request — alert the maintenance team (but not the person
+    // who just filed it, who gets their own row echoed back by RLS).
+    if (mgr && row.reportedBy !== me?.id) rtToast('🔧 New maintenance request', row.title);
+  } else if (mineNow && !minePrev) {
+    // Just assigned to me.
+    rtToast('🔧 Assigned to you', row.title);
+  }
+  render();
+}
+function rtOnDuty(payload, isInsert) {
+  const raw = payload && payload.new; if (!raw || !raw.id) return;
+  const me = currentEmployee();
+  const list = state.maintenanceDuties || (state.maintenanceDuties = []);
+  const idx = list.findIndex(x => x.id === raw.id);
+  const prev = idx >= 0 ? list[idx] : null;
+  const row = mapDutyFromDb(raw);
+  if (idx >= 0) list[idx] = row; else list.unshift(row);
+  const mineNow  = !!(row.assignedTo && me && row.assignedTo === me.id && row.active);
+  const minePrev = !!(prev && prev.assignedTo && me && prev.assignedTo === me.id);
+  if (mineNow && (isInsert || !minePrev)) rtToast('🧰 New duty assigned to you', row.title);
+  render();
+}
 function buildNotifications() {
   const me = currentEmployee();
   const today = todayISO();
@@ -3859,6 +3927,25 @@ function buildNotifications() {
         title:'Checklist incomplete today', detail:`${escapeHTML(c.title)} · ${done}/${items.length}`, href:'#/work_management' });
     });
   }
+  // Maintenance: the "person in charge" view. Managers (admin/maintenance)
+  // are nudged to triage new/unassigned requests; anyone gets requests +
+  // active duties assigned to them. These also arrive LIVE via Supabase
+  // Realtime (initRealtime) — this keeps a persistent copy in the bell.
+  const isMaint = hasRole('admin','maintenance');
+  (state.maintenance||[]).forEach(r=>{
+    if (r.status==='resolved' || r.status==='cancelled') return;
+    if (isMaint && !r.assignedTo) {
+      out.push({ key:'maint-open-'+r.id, icon:'wrench', tone:'amber', title:'Maintenance request to assign',
+        detail:`${escapeHTML(r.title)}${r.branch?' · '+escapeHTML(r.branch):''}`, href:'#/maintenance' });
+    } else if (r.assignedTo===me?.id) {
+      out.push({ key:'maint-mine-'+r.id, icon:'wrench', tone:'amber', title:'Maintenance assigned to you',
+        detail:`${escapeHTML(r.title)}${r.branch?' · '+escapeHTML(r.branch):''}`, href:'#/maintenance' });
+    }
+  });
+  (state.maintenanceDuties||[]).filter(d=>d.active && d.assignedTo===me?.id).forEach(d=>{
+    out.push({ key:'duty-mine-'+d.id, icon:'wrench', tone:'blue', title:'Maintenance duty assigned to you',
+      detail:`${escapeHTML(d.title)}`, href:'#/maintenance' });
+  });
   return out.slice(0, 30);
 }
 function notifUnseenCount(list) {
@@ -27057,6 +27144,7 @@ async function bootstrap() {
     if (session?.user) {
       state.session = { userId: session.user.id, email: session.user.email, loggedAt: new Date().toISOString() };
       await loadAll();
+      initRealtime();
       // Bring any stale recurring lists in sync now that we have the
       // user + their data loaded. The render below uses
       // todoEffectiveItems() so the UI is already correct; this just
@@ -27088,12 +27176,14 @@ async function bootstrap() {
       return;
     }
     if (event === 'SIGNED_OUT') {
+      teardownRealtime();
       state = emptyState();
       location.hash = '';
       render();
     } else if (event === 'SIGNED_IN' && session?.user && !state.session) {
       state.session = { userId: session.user.id, email: session.user.email, loggedAt: new Date().toISOString() };
       await loadAll();
+      initRealtime();
       render();
     } else if (event === 'TOKEN_REFRESHED') {
       // no-op

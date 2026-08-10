@@ -5756,6 +5756,27 @@ CREATE POLICY "tasks_update_admin_ops_or_assignee"
     OR EXISTS (SELECT 1 FROM public.employees e WHERE e.user_id = auth.uid() AND tasks.assignee_ids ? e.id::text)
   );
 
+-- 108. REALTIME — live maintenance notifications
+--      Adds maintenance_requests + maintenance_duties to the
+--      supabase_realtime publication so the frontend can subscribe to
+--      inserts/updates and push a toast + bell update to the person in
+--      charge with no refresh. RLS still applies to the stream: admin/
+--      maintenance receive every request, a reporter only their own; duties
+--      are world-readable and filtered to the assignee in the client.
+--      Idempotent — only adds a table if it isn't already published.
+-- =============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                 WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='maintenance_requests') THEN
+    EXECUTE 'ALTER PUBLICATION supabase_realtime ADD TABLE public.maintenance_requests';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                 WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='maintenance_duties') THEN
+    EXECUTE 'ALTER PUBLICATION supabase_realtime ADD TABLE public.maintenance_duties';
+  END IF;
+END $$;
+
 -- =============================================================
 -- DONE.
 --
