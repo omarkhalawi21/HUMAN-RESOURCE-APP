@@ -1456,6 +1456,9 @@ function mapTaskFromDb(r) {
   return {
     id: r.id, title: r.title||'', description: r.description||'',
     department: r.department||'', assignedTo: r.assigned_to||null,
+    // Multi-assignee (SQL block 107). Legacy assigned_to is kept in sync as the
+    // first assignee; assigneeIds is the source of truth for who's on the task.
+    assigneeIds: Array.isArray(r.assignee_ids) ? r.assignee_ids.map(String) : (r.assigned_to ? [String(r.assigned_to)] : []),
     priority: r.priority||'normal', status: r.status||'todo',
     dueDate: r.due_date||null, completedAt: r.completed_at||null,
     groupId: r.group_id||null,
@@ -1488,7 +1491,11 @@ function meetingToDb(m) {
 function taskToDb(t) {
   return {
     title: t.title||null, description: t.description||null,
-    department: t.department||null, assigned_to: t.assignedTo||null,
+    department: t.department||null,
+    // assignee_ids is the source of truth; assigned_to stays in sync as the
+    // first assignee so legacy reads + the single-assignee RLS still work.
+    assignee_ids: Array.isArray(t.assigneeIds) ? t.assigneeIds : (t.assignedTo ? [t.assignedTo] : []),
+    assigned_to: (Array.isArray(t.assigneeIds) && t.assigneeIds[0]) || t.assignedTo || null,
     priority: t.priority||'normal', status: t.status||'todo',
     due_date: t.dueDate||null, completed_at: t.completedAt||null,
     group_id: t.groupId||null,
@@ -3793,7 +3800,7 @@ function buildNotifications() {
   // Tasks: ops/admin get all; everyone gets their own assigned ones
   // (so non-ops staff still get reminders via the bell even though
   // the Work Management page itself stays ops/admin for now).
-  (state.tasks||[]).filter(t=>t.status!=='done' && (isOps || t.assignedTo===me?.id)).forEach(t=>{
+  (state.tasks||[]).filter(t=>t.status!=='done' && (isOps || taskIsAssignedTo(t, me?.id))).forEach(t=>{
     if (taskOverdue(t)) {
       out.push({ key:'task-od-'+t.id, icon:'warning', tone:'red', title:'Task overdue',
         detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}`, href:'#/work_management' });
@@ -12228,8 +12235,8 @@ function workTaskMatches(t) {
   if (workFilter.tab === 'done' && t.status !== 'done') return false;
   if (workFilter.dept !== 'all' && (t.department||'') !== workFilter.dept) return false;
   if (workFilter.q) {
-    const e = getEmployee(t.assignedTo);
-    const hay = `${t.title} ${t.description||''} ${t.department||''} ${e?(e.firstName+' '+e.lastName):''}`.toLowerCase();
+    const names = taskAssignedIds(t).map(taskEmpName).join(' ');
+    const hay = `${t.title} ${t.description||''} ${t.department||''} ${names}`.toLowerCase();
     if (!hay.includes(workFilter.q.toLowerCase())) return false;
   }
   return true;
@@ -12451,7 +12458,7 @@ function renderWorkTasks() {
 
   // A Trello card — draggable between list columns; click opens the detail modal.
   const cardHTML = tk => {
-    const e = getEmployee(tk.assignedTo);
+    const asgIds = taskAssignedIds(tk);
     const isOver = taskOverdue(tk);
     const s = TASK_STATUSES[tk.status] || TASK_STATUSES.todo;
     const cl = Array.isArray(tk.checklist) ? tk.checklist : [];
@@ -12466,7 +12473,7 @@ function renderWorkTasks() {
       <div class="text-sm font-medium text-slate-900">${escapeHTML(tk.title)}</div>
       ${tk.description?`<div class="text-xs text-slate-500 mt-1 truncate">${escapeHTML(tk.description)}</div>`:''}
       <div class="flex items-center justify-between mt-2 gap-2">
-        ${e?`<span class="flex items-center gap-1.5 min-w-0">${avatarHTML(e,22)}<span class="text-[11px] text-slate-500 truncate">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</span></span>`:'<span class="text-[11px] text-slate-400">Unassigned</span>'}
+        ${asgIds.length?`<span class="flex items-center gap-1.5 min-w-0">${taskAssigneeAvatars(tk,22)}<span class="text-[11px] text-slate-500 truncate">${escapeHTML(asgIds.length===1 ? taskEmpName(asgIds[0]) : (taskEmpName(asgIds[0]).split(' ')[0]+' +'+(asgIds.length-1)))}</span></span>`:'<span class="text-[11px] text-slate-400">Unassigned</span>'}
         ${tk.dueDate?`<span class="text-[11px] ${isOver?'text-rose-600 font-medium':'text-slate-500'} shrink-0">${escapeHTML(fmtDate(tk.dueDate))}</span>`:''}
       </div>
     </div>`;
@@ -12497,13 +12504,30 @@ function renderWorkTasks() {
 
   return titleCard + boardTabs + boardToolbar + filters + columns;
 }
+// Transient assignee list for the open task modal (chips UI). Cleared in
+// closeModal(). The modal is form-based, so we hold the selection here and
+// read it on save rather than writing to the DB per add/remove.
+let _tkAssignees = [];
+function tkModalEmps(){
+  return (state.employees||[]).filter(isActiveEmployee).slice()
+    .sort((a,b)=> ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
+}
+function tkAssigneesBoxHTML(){
+  const chips = _tkAssignees.map(id=>{ const e=getEmployee(id); const nm=e?(e.firstName+' '+(e.lastName||'')).trim():'?';
+    return `<span class="inline-flex items-center gap-1 bg-slate-100 rounded-full pl-1 pr-2 py-0.5 text-xs">${e?avatarHTML(e,20):''}<span>${escapeHTML(nm)}</span><button type="button" onclick="tkRemoveAssignee('${id}')" class="text-slate-400 hover:text-rose-600" title="Remove">${icon('close','w-3 h-3')}</button></span>`; }).join('');
+  const avail = tkModalEmps().filter(e=>!_tkAssignees.includes(e.id));
+  const dd = `<select class="input mt-2" onchange="if(this.value){tkAddAssignee(this.value); this.value='';}"><option value="">${_tkAssignees.length?'+ Add another…':'+ Assign someone…'}</option>${avail.map(e=>`<option value="${e.id}">${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</option>`).join('')}</select>`;
+  return `<div class="flex items-center gap-1.5 flex-wrap">${chips||'<span class="text-xs text-slate-400">No one assigned</span>'}</div>${dd}`;
+}
+function tkRefreshAssignees(){ const box=document.getElementById('tk-assignees-box'); if(box) box.innerHTML=tkAssigneesBoxHTML(); }
+function tkAddAssignee(id){ if(id && !_tkAssignees.includes(id)) _tkAssignees.push(id); tkRefreshAssignees(); }
+function tkRemoveAssignee(id){ _tkAssignees=_tkAssignees.filter(x=>x!==id); tkRefreshAssignees(); }
 function openTaskModal(id, prefillGroupId) {
   if (!hasRole('admin','operations')) return;
   const editing = id ? (state.tasks||[]).find(t => t.id===id) : null;
   const defaultGroup = editing ? (editing.groupId||'') : (prefillGroupId||'');
   const groups = (state.taskGroups||[]).slice().sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.name||'').localeCompare(b.name||''));
-  const emps = (state.employees||[]).filter(isActiveEmployee).slice()
-    .sort((a,b)=> ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
+  _tkAssignees = editing ? taskAssignedIds(editing).slice() : [];
   const form = `
     <div class="space-y-4">
       <div>
@@ -12514,14 +12538,14 @@ function openTaskModal(id, prefillGroupId) {
         <label class="label">Description (optional)</label>
         <textarea id="tk-desc" class="input" rows="3" placeholder="What needs doing, any context…">${escapeHTML(editing?.description||'')}</textarea>
       </div>
+      <div>
+        <label class="label">Assign to <span class="text-slate-400 font-normal">(one or more)</span></label>
+        <div id="tk-assignees-box">${tkAssigneesBoxHTML()}</div>
+      </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="label">Department</label>
           <select id="tk-dept" class="input"><option value="">— None —</option>${SUGGESTED_DEPARTMENTS.map(d=>`<option ${editing?.department===d?'selected':''}>${escapeHTML(d)}</option>`).join('')}</select>
-        </div>
-        <div>
-          <label class="label">Assign to</label>
-          <select id="tk-emp" class="input"><option value="">— Unassigned —</option>${emps.map(e=>`<option value="${e.id}" ${editing?.assignedTo===e.id?'selected':''}>${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}</option>`).join('')}</select>
         </div>
         <div>
           <label class="label">Priority</label>
@@ -12551,7 +12575,7 @@ function openTaskModal(id, prefillGroupId) {
       title,
       description: $('#tk-desc').value.trim(),
       department: $('#tk-dept').value,
-      assignedTo: $('#tk-emp').value || null,
+      assigneeIds: _tkAssignees.slice(),
       priority: $('#tk-prio').value,
       status,
       dueDate: $('#tk-due').value || null,
@@ -12600,8 +12624,25 @@ async function changeTaskStatus(id, status) {
    `_taskDetailId` tracks which task's modal is open so mutations can refresh
    just the modal body in place instead of re-opening it. */
 let _taskDetailId = null;
+// Assignees of a task as an id array. Prefers the multi-assignee list; falls
+// back to the legacy single assigned_to so it works even pre-migration.
+function taskAssignedIds(t){
+  if (!t) return [];
+  if (Array.isArray(t.assigneeIds) && t.assigneeIds.length) return t.assigneeIds;
+  return t.assignedTo ? [t.assignedTo] : [];
+}
+function taskIsAssignedTo(t, empId){ return !!empId && taskAssignedIds(t).includes(empId); }
+function taskAssigneesLabel(t){ const ids = taskAssignedIds(t); return ids.length ? ids.map(taskEmpName).join(', ') : 'Unassigned'; }
+// Overlapping avatar stack for a task's assignees (up to 3 + "+N").
+function taskAssigneeAvatars(t, size){
+  const ids = taskAssignedIds(t); if (!ids.length) return '';
+  const sz = size || 22;
+  const shown = ids.slice(0,3).map((id,i)=>{ const e = getEmployee(id); if(!e) return ''; return `<span class="inline-block ${i?'-ml-1.5':''} ring-2 ring-white rounded-full" title="${escapeHTML(taskEmpName(id))}">${avatarHTML(e,sz)}</span>`; }).join('');
+  const extra = ids.length>3 ? `<span class="-ml-1.5 inline-flex items-center justify-center rounded-full bg-slate-200 text-slate-600 text-[10px] font-semibold ring-2 ring-white" style="width:${sz}px;height:${sz}px">+${ids.length-3}</span>` : '';
+  return `<span class="inline-flex items-center">${shown}${extra}</span>`;
+}
 function taskCanCollaborate(t) {
-  return !!t && (hasRole('admin','operations') || t.assignedTo === (currentEmployee()?.id));
+  return !!t && (hasRole('admin','operations') || taskIsAssignedTo(t, currentEmployee()?.id));
 }
 function taskEmpName(id) {
   if (!id) return 'System';
@@ -12685,7 +12726,7 @@ function taskDetailBodyHTML(taskId) {
     <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm mb-4">
       <div class="flex items-center gap-2"><span class="text-slate-400 text-xs uppercase tracking-wider">Status</span> ${statusControl}</div>
       <div><span class="text-slate-400 text-xs uppercase tracking-wider">Priority</span> <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span></div>
-      <div><span class="text-slate-400 text-xs uppercase tracking-wider">Assignee</span> <span class="text-slate-700">${escapeHTML(taskEmpName(tk.assignedTo))}</span></div>
+      <div class="flex items-center gap-2"><span class="text-slate-400 text-xs uppercase tracking-wider">${taskAssignedIds(tk).length>1?'Assignees':'Assignee'}</span> ${taskAssignedIds(tk).length?`${taskAssigneeAvatars(tk,20)} <span class="text-slate-700">${escapeHTML(taskAssigneesLabel(tk))}</span>`:'<span class="text-slate-500">Unassigned</span>'}</div>
       ${tk.dueDate?`<div><span class="text-slate-400 text-xs uppercase tracking-wider">Due</span> <span class="${taskOverdue(tk)?'text-rose-600 font-medium':'text-slate-700'}">${escapeHTML(fmtDate(tk.dueDate))}</span></div>`:''}
       ${tk.department?`<div><span class="text-slate-400 text-xs uppercase tracking-wider">Dept</span> <span class="text-slate-700">${escapeHTML(tk.department)}</span></div>`:''}
     </div>`;
@@ -12948,7 +12989,7 @@ function meetingDetailBodyHTML(id) {
                 <div class="min-w-0 flex-1">
                   <button type="button" onclick="openTaskDetail('${tk.id}')" class="text-sm font-medium text-start hover:text-brand-700 ${tk.status === 'done' ? 'line-through text-slate-400' : 'text-slate-800'}">${escapeHTML(tk.title)}</button>
                   <div class="flex items-center gap-1.5 flex-wrap mt-1">
-                    <span class="text-[11px] text-slate-500">${escapeHTML(taskEmpName(tk.assignedTo))}</span>
+                    <span class="text-[11px] text-slate-500">${escapeHTML(taskAssigneesLabel(tk))}</span>
                     <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${pr.pill}">${escapeHTML(pr.label)}</span>
                     ${tk.dueDate ? `<span class="text-[11px] ${over ? 'text-rose-600 font-medium' : 'text-slate-400'}">${over ? escapeHTML(t('overdue')) + ' · ' : ''}${escapeHTML(fmtDate(tk.dueDate))}</span>` : ''}
                   </div>
@@ -13014,11 +13055,11 @@ function tasksSnapshotHTML() {
   }).sort((a,b)=>(a.dueDate||'').localeCompare(b.dueDate||''));
   if (all.length === 0) return '';
   const rowHTML = t => {
-    const e = getEmployee(t.assignedTo);
+    const asg = taskAssignedIds(t);
     return `<div class="flex items-center justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
       <div class="min-w-0">
         <div class="text-sm text-slate-800 truncate">${escapeHTML(t.title)}</div>
-        <div class="text-[11px] text-slate-500">${escapeHTML(t.department||'No dept')}${e?` · ${escapeHTML((e.firstName+' '+(e.lastName||'')).trim())}`:''}</div>
+        <div class="text-[11px] text-slate-500">${escapeHTML(t.department||'No dept')}${asg.length?` · ${escapeHTML(taskAssigneesLabel(t))}`:''}</div>
       </div>
       <div class="text-xs whitespace-nowrap">${taskDueLabel(t)}</div>
     </div>`;
@@ -13136,7 +13177,7 @@ function myWorkTaskListHTML(mine){
 function renderMyWork() {
   const me = currentEmployee();
   if (!me) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">No employee profile linked to your account.</div>`;
-  const mine = (state.tasks||[]).filter(t => t.assignedTo === me.id);
+  const mine = (state.tasks||[]).filter(t => taskIsAssignedTo(t, me.id));
   const overdue = mine.filter(taskOverdue)
     .sort((a,b)=>(a.dueDate||'').localeCompare(b.dueDate||''));
   const prioRank = { urgent:0, high:1, normal:2, low:3 };
@@ -13855,7 +13896,8 @@ function renderWorkCompliance() {
   const tOver = tasks.filter(taskOverdue);
   const tDone = tasks.filter(t => t.status==='done' && (t.completedAt||'').slice(0,7) === ym).length;
   const byA = {};
-  tOver.forEach(t => { const k = t.assignedTo || '—'; (byA[k] = byA[k] || []).push(t); });
+  // Multi-assignee: an overdue task counts under each person it's assigned to.
+  tOver.forEach(t => { const ids = taskAssignedIds(t); (ids.length?ids:['—']).forEach(k => { (byA[k] = byA[k] || []).push(t); }); });
   const overList = Object.entries(byA).map(([k,arr]) => {
     const e = k!=='—' ? getEmployee(k) : null;
     return { name: e ? (e.firstName+' '+(e.lastName||'')).trim() : 'Unassigned', n: arr.length };
@@ -24313,6 +24355,7 @@ function closeModal() {
   if (typeof _maintenancePhotoCleared !== 'undefined') _maintenancePhotoCleared = false;
   if (typeof _payrollAdjustments !== 'undefined') _payrollAdjustments = [];
   if (typeof _payrollSkipDeductions !== 'undefined') _payrollSkipDeductions = new Set();
+  if (typeof _tkAssignees !== 'undefined') _tkAssignees = [];
   if (typeof _mktItemModalId !== 'undefined') _mktItemModalId = null;
   if (typeof _mktItemModalOcc !== 'undefined') _mktItemModalOcc = null;
   if (typeof _meetingDetailId !== 'undefined') _meetingDetailId = null;

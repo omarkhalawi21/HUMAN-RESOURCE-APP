@@ -5728,6 +5728,34 @@ CREATE POLICY "mic_update_mkt" ON public.marketing_item_completions FOR UPDATE T
 CREATE POLICY "mic_delete_mkt" ON public.marketing_item_completions FOR DELETE TO authenticated
   USING (public.has_role(ARRAY['admin','operations','marketing']));
 
+-- 107. TASKS — multiple assignees per task
+--      assignee_ids (jsonb array of employee-id strings) is the source of
+--      truth; the legacy assigned_to is kept in sync by the frontend as the
+--      first assignee. Existing rows are seeded from assigned_to. The UPDATE
+--      policy is relaxed so ANY assignee in the array (not just assigned_to)
+--      can edit the task — matching how status changes work in the UI.
+-- =============================================================
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS assignee_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+UPDATE public.tasks
+   SET assignee_ids = jsonb_build_array(assigned_to)
+ WHERE assigned_to IS NOT NULL
+   AND (assignee_ids IS NULL OR assignee_ids = '[]'::jsonb);
+
+DROP POLICY IF EXISTS "tasks_update_admin_ops_or_assignee" ON public.tasks;
+CREATE POLICY "tasks_update_admin_ops_or_assignee"
+  ON public.tasks FOR UPDATE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = tasks.assigned_to AND e.user_id = auth.uid())
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.user_id = auth.uid() AND tasks.assignee_ids ? e.id::text)
+  )
+  WITH CHECK (
+    public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = tasks.assigned_to AND e.user_id = auth.uid())
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.user_id = auth.uid() AND tasks.assignee_ids ? e.id::text)
+  );
+
 -- =============================================================
 -- DONE.
 --
