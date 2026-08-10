@@ -13600,9 +13600,95 @@ function renderMyWork() {
   return header
     + actionSection
     + myWorkTaskListHTML(mine)
+    + myWorkCalendarHTML()
     + assignedSection
     + clSection
     + todoSection;
+}
+
+// ---- My Work calendar (my assigned tasks by due date) ----
+// Mirrors the Marketing calendar's month/week/day UX, scoped to tasks
+// assigned to the current user that have a due date. Tasks have no
+// recurrence, so each appears once, on its due date. Reuses the pure date
+// helpers from the marketing calendar (mktCalShift / mktYmd / mktDateAdd /
+// mktWeekStart) but keeps its own view state.
+let _mwCalView  = 'month';
+let _mwCalMonth = null;   // 'YYYY-MM'
+let _mwCalDate  = null;   // 'YYYY-MM-DD' anchor for week/day
+function _mwCalMonthInit(){ if(!_mwCalMonth || !/^\d{4}-\d{2}$/.test(_mwCalMonth)) _mwCalMonth=todayISO().slice(0,7); return _mwCalMonth; }
+function _mwCalDateInit(){ if(!_mwCalDate || !/^\d{4}-\d{2}-\d{2}$/.test(_mwCalDate)) _mwCalDate=todayISO(); return _mwCalDate; }
+function mwCalPrev(){ if(_mwCalView==='month') _mwCalMonth=mktCalShift(_mwCalMonthInit(), -1); else _mwCalDate=mktDateAdd(_mwCalDateInit(), _mwCalView==='week'?-7:-1); render(); }
+function mwCalNext(){ if(_mwCalView==='month') _mwCalMonth=mktCalShift(_mwCalMonthInit(), 1); else _mwCalDate=mktDateAdd(_mwCalDateInit(), _mwCalView==='week'?7:1); render(); }
+function mwCalToday(){ _mwCalMonth=todayISO().slice(0,7); _mwCalDate=todayISO(); render(); }
+function mwSetCalView(v){ _mwCalView=(v==='day'||v==='week'||v==='month')?v:'month'; if(_mwCalView==='month' && _mwCalDate) _mwCalMonth=_mwCalDate.slice(0,7); if(_mwCalView!=='month') _mwCalDateInit(); render(); }
+function mwCalMyTasks(){ const me=currentEmployee(); if(!me) return []; return (state.tasks||[]).filter(t=>t.dueDate && taskIsAssignedTo(t, me.id)); }
+function mwCalDayTasks(ds){ return mwCalMyTasks().filter(t=>t.dueDate===ds).sort((a,b)=>((a.status==='done')-(b.status==='done')) || (a.title||'').localeCompare(b.title||'')); }
+function mwCalChip(tk){ const s=TASK_STATUSES[tk.status]||TASK_STATUSES.todo; const done=tk.status==='done'; const over=taskOverdue(tk); const color=s.solid||'#6d28d9';
+  const tip=escapeHTML(tk.title)+' · '+s.label+(over?' · overdue':'');
+  return `<button onclick="event.stopPropagation(); openTaskDetail('${tk.id}')" class="w-full text-left px-1.5 py-1 rounded-md ${done?'opacity-60':''}" style="background:${color}26;border-left:3px solid ${over?'#f15780':color};color:#334155" title="${tip}"><span class="block text-[11px] leading-tight truncate ${done?'line-through':''}">${escapeHTML(tk.title)}</span></button>`; }
+function mwCalDay(ds){ const list=mwCalDayTasks(ds); const dateLbl=new Date(ds+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const body=`<div class="flex flex-col gap-1.5">${list.length?list.map(mwCalChip).join(''):'<div class="text-sm text-slate-400 text-center py-4">No tasks due this day.</div>'}</div>`;
+  openModal(`${dateLbl} · ${list.length} task${list.length===1?'':'s'}`, body, ()=>true, { saveLabel: t('close') }); }
+function myWorkCalendarHTML(){
+  const view=(_mwCalView==='week'||_mwCalView==='day')?_mwCalView:'month';
+  const today=todayISO();
+  const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let periodLbl='', body='';
+  if(view==='month'){
+    const ym=_mwCalMonthInit(); const [y,mo]=ym.split('-').map(Number);
+    periodLbl=new Date(y,mo-1,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+    const daysInMonth=new Date(y,mo,0).getDate();
+    const byDay={}; mwCalMyTasks().forEach(tk=>{ if(tk.dueDate.slice(0,7)===ym) (byDay[tk.dueDate]=byDay[tk.dueDate]||[]).push(tk); });
+    const startDow=new Date(y,mo-1,1).getDay();
+    const cells=[]; for(let i=0;i<startDow;i++) cells.push(null); for(let d=1;d<=daysInMonth;d++) cells.push(d); while(cells.length%7) cells.push(null);
+    const cell=d=>{ if(d===null) return `<div class="bg-slate-50/50 rounded-lg" style="min-height:88px"></div>`;
+      const ds=`${ym}-${String(d).padStart(2,'0')}`; const list=(byDay[ds]||[]).sort((a,b)=>(a.status==='done')-(b.status==='done')); const isToday=ds===today;
+      const shown=list.slice(0,3); const extra=list.length-shown.length;
+      return `<div class="bg-white border ${isToday?'border-brand-400':'border-slate-200'} rounded-lg p-1.5 flex flex-col gap-0.5" style="min-height:88px">
+        <button onclick="_mwCalDate='${ds}'; mwSetCalView('day')" class="text-[11px] font-semibold ${isToday?'text-brand-700':'text-slate-400'} mb-0.5 text-left hover:text-brand-700" title="Open this day">${d}${isToday?' ·':''}</button>
+        ${shown.map(mwCalChip).join('')}
+        ${extra>0?`<button onclick="mwCalDay('${ds}')" class="text-[10px] text-brand-600 hover:text-brand-700 hover:underline font-medium px-1.5 text-left">+${extra} more</button>`:''}
+      </div>`; };
+    body=`<div class="grid grid-cols-7 gap-1.5 mb-1.5">${dow.map(x=>`<div class="text-[11px] font-semibold text-slate-400 text-center uppercase tracking-wider">${x}</div>`).join('')}</div>
+      <div class="grid grid-cols-7 gap-1.5">${cells.map(cell).join('')}</div>`;
+  } else if(view==='week'){
+    const ws=mktWeekStart(_mwCalDateInit()); const weekDays=[]; for(let i=0;i<7;i++) weekDays.push(mktDateAdd(ws,i));
+    const a=new Date(weekDays[0]+'T00:00:00'), b=new Date(weekDays[6]+'T00:00:00');
+    periodLbl=(a.getMonth()===b.getMonth())?`${a.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${b.getDate()}, ${b.getFullYear()}`:`${a.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${b.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${b.getFullYear()}`;
+    const cols=weekDays.map((ds,i)=>{ const list=mwCalDayTasks(ds); const isToday=ds===today; const d=new Date(ds+'T00:00:00');
+      return `<div class="min-w-0">
+        <button onclick="_mwCalDate='${ds}'; mwSetCalView('day')" class="w-full mb-1.5 text-center ${isToday?'text-brand-700':'text-slate-500'} hover:text-brand-700" title="Open this day">
+          <div class="text-[10px] uppercase tracking-wider font-semibold">${dow[i]}</div>
+          <div class="text-lg font-semibold">${d.getDate()}</div>
+        </button>
+        <div class="bg-white border ${isToday?'border-brand-400':'border-slate-200'} rounded-lg p-1.5 flex flex-col gap-1" style="min-height:340px">
+          ${list.length?list.map(mwCalChip).join(''):'<div class="text-[10px] text-slate-300 text-center py-3">—</div>'}
+        </div>
+      </div>`; }).join('');
+    body=`<div class="grid grid-cols-7 gap-1.5">${cols}</div>`;
+  } else { // day
+    const ds=_mwCalDateInit(); periodLbl=new Date(ds+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    const list=mwCalDayTasks(ds);
+    body=`<div class="max-w-2xl mx-auto"><div class="text-xs text-slate-500 mb-3">${list.length} task${list.length===1?'':'s'} due</div>${list.length?`<div class="flex flex-col gap-2">${list.map(mwCalChip).join('')}</div>`:'<div class="text-center text-slate-400 text-sm py-16">No tasks due this day.</div>'}</div>`;
+  }
+  const viewToggle=`<div class="inline-flex bg-slate-100 rounded-lg p-0.5">${['day','week','month'].map(v=>`<button onclick="mwSetCalView('${v}')" class="px-3 py-1 text-xs font-medium rounded ${view===v?'bg-white shadow-card text-slate-900':'text-slate-500 hover:text-slate-700'}">${v.charAt(0).toUpperCase()+v.slice(1)}</button>`).join('')}</div>`;
+  const legend=`<div class="flex items-center gap-3 mt-3 text-[11px] text-slate-500 flex-wrap"><span class="text-slate-400">Status:</span>${Object.entries(TASK_STATUSES).map(([k,v])=>`<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:${v.solid}"></span>${escapeHTML(v.label)}</span>`).join('')}<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded" style="background:#f15780"></span>Overdue</span></div>`;
+  return `<div class="mb-6">
+    <div class="flex items-center gap-2 mb-2"><h3 class="font-display text-base font-semibold text-slate-900">My calendar</h3><span class="text-xs text-slate-400">my tasks by due date</span></div>
+    <div class="bg-white rounded-2xl shadow-card p-4">
+      <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div class="flex items-center gap-2">
+          <button onclick="mwCalPrev()" class="btn btn-ghost btn-sm" aria-label="Previous">‹</button>
+          <div class="font-display text-base font-semibold text-slate-900 text-center" style="min-width:9rem">${escapeHTML(periodLbl)}</div>
+          <button onclick="mwCalNext()" class="btn btn-ghost btn-sm" aria-label="Next">›</button>
+          <button onclick="mwCalToday()" class="btn btn-ghost btn-sm">Today</button>
+        </div>
+        ${viewToggle}
+      </div>
+      ${body}
+      ${legend}
+    </div>
+  </div>`;
 }
 
 // ---- Checklists (Phase 2): per-department reusable checklists,
