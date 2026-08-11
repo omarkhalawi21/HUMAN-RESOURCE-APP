@@ -5861,6 +5861,34 @@ CREATE POLICY "pr_update_ops" ON public.purchase_requests FOR UPDATE TO authenti
 CREATE POLICY "pr_delete_ops" ON public.purchase_requests FOR DELETE TO authenticated
   USING (public.has_role(ARRAY['admin','operations','maintenance']));
 
+-- 111. WEB PUSH — device subscriptions for phone notifications
+--      One row per device that opted in (endpoint is unique). A user manages
+--      only their own; the notify-push Edge Function reads all via the
+--      service role (bypasses RLS) to send pushes on new maintenance /
+--      purchase requests.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid references auth.users(id) ON DELETE CASCADE,
+  employee_id uuid references public.employees(id) ON DELETE CASCADE,
+  endpoint    text not null unique,
+  p256dh      text,
+  auth        text,
+  user_agent  text,
+  created_at  timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_emp_idx ON public.push_subscriptions(employee_id);
+
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='push_subscriptions'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.push_subscriptions', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "push_own_all" ON public.push_subscriptions FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+
 -- =============================================================
 -- DONE.
 --

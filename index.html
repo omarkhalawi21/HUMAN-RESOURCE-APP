@@ -18,6 +18,12 @@
 <link rel="apple-touch-icon" href="logo.png" />
 <meta name="apple-mobile-web-app-title" content="Hassad" />
 <meta name="application-name" content="Hassad" />
+<!-- Installable PWA (Add to Home Screen) — required for Web Push, and on iOS
+     push only works once the app is installed to the Home Screen. -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="theme-color" content="#a8172e" />
 <!-- Self-hosted Tailwind, pre-built via `npm run build`. Source: tailwind.input.css + tailwind.config.js. -->
 <link rel="stylesheet" href="tailwind.css" />
@@ -3793,6 +3799,60 @@ function teardownRealtime() {
 function rtToast(title, detail) {
   // Toast style already includes the bell refresh (render() below).
   toast(`${title}: ${detail}`.slice(0, 140), 'info');
+}
+
+// ---- Web Push (phone alerts even when the app is closed) -----------------
+// sw.js shows the notification; here we register it and subscribe/unsubscribe
+// this device, storing the subscription in push_subscriptions (SQL block 111).
+// The SEND happens server-side in the notify-push Edge Function, triggered by
+// a DB webhook on new maintenance/purchase requests.
+const VAPID_PUBLIC_KEY = 'BG-BrmvlRPa9wo77-586XSMnU0iY2ibSBtGd0bT9QOSIfx-cgsQdwWOqMVjIHelnf0fkKPTNg1RxenB9BX771_o';
+let _swReg = null, _pushSubscribed = false;
+function pushSupported(){ return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+function urlB64ToUint8Array(base64){
+  const pad='='.repeat((4-base64.length%4)%4);
+  const b64=(base64+pad).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(b64); const arr=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+async function registerServiceWorker(){
+  if (!('serviceWorker' in navigator)) return;
+  try { _swReg = await navigator.serviceWorker.register('sw.js'); await refreshPushStatus(); }
+  catch(e){ console.warn('SW register failed', e); }
+}
+async function refreshPushStatus(){
+  if (!pushSupported()) { _pushSubscribed=false; return; }
+  try { const reg=_swReg || await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription(); _pushSubscribed=!!sub; }
+  catch(_){ _pushSubscribed=false; }
+}
+async function enablePushAlerts(){
+  if (!pushSupported()){ toast('This device doesn’t support push. On iPhone, add the app to your Home Screen first, then try again.','error'); return; }
+  const me = currentEmployee(); if(!me){ toast('Sign in first','error'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm!=='granted'){ toast('Notifications weren’t allowed. Enable them for this site in your browser settings.','error'); render(); return; }
+  try {
+    const reg = _swReg || await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription()
+      || await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY) });
+    const j = sub.toJSON();
+    const row = { user_id: state.session?.userId||null, employee_id: me.id,
+      endpoint: j.endpoint, p256dh: j.keys?.p256dh||null, auth: j.keys?.auth||null,
+      user_agent: (navigator.userAgent||'').slice(0,300) };
+    const { error } = await sb.from('push_subscriptions').upsert(row, { onConflict:'endpoint' });
+    if (error){ toast(humanizeError(error)+(error?.message?.includes('does not exist')?' — run SQL block 111 first':''),'error'); return; }
+    _pushSubscribed=true; toast('Phone alerts enabled on this device ✅','success'); render();
+  } catch(e){ toast('Could not enable push: '+(e.message||e),'error'); }
+}
+async function disablePushAlerts(){
+  if (!pushSupported()) return;
+  try {
+    const reg=_swReg || await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if (sub){ const ep=sub.endpoint; try{ await sub.unsubscribe(); }catch(_){} await sb.from('push_subscriptions').delete().eq('endpoint', ep); }
+  } catch(e){ console.warn(e); }
+  _pushSubscribed=false; toast('Phone alerts turned off on this device','info'); render();
 }
 function rtOnMaintenance(payload, isInsert) {
   const raw = payload && payload.new; if (!raw || !raw.id) return;
@@ -8761,6 +8821,24 @@ function renderAccount() {
           </div>
         </div>
       </div>
+
+      <!-- Phone alerts (Web Push) -->
+      ${pushSupported() ? `
+      <div class="bg-white rounded-2xl shadow-card p-5">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div class="min-w-0">
+            <h3 class="font-display text-lg font-semibold text-slate-900 flex items-center gap-2">${icon('bell','w-4 h-4 text-brand-600')} Phone alerts</h3>
+            <p class="text-sm text-slate-500 mt-1 max-w-md">Get a notification on this device when something needs you — new maintenance or purchase requests, assignments — <strong>even when the app is closed</strong>. <span class="text-slate-400">On iPhone, first add the app to your Home Screen, then enable here.</span></p>
+          </div>
+          <div class="shrink-0">
+            ${Notification.permission==='denied'
+              ? `<span class="text-xs text-rose-600">Blocked in your browser settings</span>`
+              : (_pushSubscribed
+                  ? `<button onclick="disablePushAlerts()" class="btn btn-ghost btn-sm">Turn off on this device</button>`
+                  : `<button onclick="enablePushAlerts()" class="btn btn-primary btn-sm">${icon('bell','w-4 h-4')} Enable on this device</button>`)}
+          </div>
+        </div>
+      </div>` : ''}
 
       <!-- Quick stats -->
       <div class="grid grid-cols-3 gap-4">
@@ -27401,6 +27479,7 @@ function renderMain() {
 
 /* -------------------- INIT -------------------- */
 async function bootstrap() {
+  registerServiceWorker(); // fire-and-forget: enables Web Push + installability
   // Snapshot the URL hash BEFORE anything else — the Supabase SDK's
   // getSession() call below auto-detects the recovery token in the URL
   // and STRIPS the hash as part of that. If we read window.location.hash
