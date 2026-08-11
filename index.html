@@ -3957,7 +3957,7 @@ function buildNotifications() {
   });
   // Purchasing: the officer (admin/operations) is nudged about new requests
   // to action; a requester learns when theirs is ordered / received.
-  if (hasRole('admin','operations')) {
+  if (isPurchasingOfficer()) {
     (state.purchaseRequests||[]).filter(r=>r.status==='requested').forEach(r=>{
       out.push({ key:'purch-new-'+r.id, icon:'cash', tone:'amber', title:'Purchase request to action',
         detail:`${escapeHTML(r.item)}${r.branch?' · '+escapeHTML(r.branch):''}`, href:'#/purchasing' });
@@ -17205,7 +17205,10 @@ const PURCHASE_STATUSES = {
   received:  { label:'Received',  pill:'bg-emerald-50 text-emerald-700' },
   cancelled: { label:'Cancelled', pill:'bg-slate-100 text-slate-600' },
 };
-function isPurchasingOfficer(){ return hasRole('admin','operations'); }
+// The purchasing officer is admin/operations OR maintenance — at Hassad the
+// maintenance lead is also the purchasing officer, so the maintenance role
+// runs both. (RLS mirrors this: purchase_requests policies, SQL block 110.)
+function isPurchasingOfficer(){ return hasRole('admin','operations','maintenance'); }
 function purchaseEmpName(id){ const e=getEmployee(id); return e?((e.firstName+' '+(e.lastName||'')).trim()):'—'; }
 function mapPurchaseFromDb(r){
   return {

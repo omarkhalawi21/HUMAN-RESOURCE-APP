@@ -5838,6 +5838,29 @@ BEGIN
   END IF;
 END $$;
 
+-- 110. PURCHASING — the maintenance role is also the purchasing officer
+--      At Hassad the maintenance lead runs purchasing too, and a person has
+--      one role, so we let the 'maintenance' role manage purchase_requests
+--      alongside admin/operations. Re-creates the four policies idempotently.
+-- =============================================================
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='purchase_requests'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.purchase_requests', r.policyname); END LOOP;
+END $$;
+
+CREATE POLICY "pr_select_self_or_ops" ON public.purchase_requests FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','maintenance'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = purchase_requests.requested_by AND e.user_id = auth.uid()));
+CREATE POLICY "pr_insert_self_or_ops" ON public.purchase_requests FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations','maintenance'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = purchase_requests.requested_by AND e.user_id = auth.uid()));
+CREATE POLICY "pr_update_ops" ON public.purchase_requests FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','maintenance'])) WITH CHECK (public.has_role(ARRAY['admin','operations','maintenance']));
+CREATE POLICY "pr_delete_ops" ON public.purchase_requests FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations','maintenance']));
+
 -- =============================================================
 -- DONE.
 --
