@@ -822,6 +822,7 @@ function emptyState() {
     suppliers: [],          // [{ id, name, contactName, phone, email, notes, createdBy, createdAt, updatedAt }]
     inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
     maintenance: [],        // [{ id, title, description, branch, location, asset, assetId, priority, status, reportedBy, assignedTo, resolution, resolvedAt, photoMime, photoSize, photoDataUrl, createdAt, updatedAt }]
+    purchaseRequests: [],   // branch purchase requests (block 109): [{ id, item, description, branch, quantity, priority, status, neededBy, estCost, supplier, actualCost, receivedQty, receivedNotes, requestedBy, orderedBy, orderedAt, receivedBy, receivedAt, notes, createdAt, updatedAt }] — Requested → Ordered → Received
     maintenanceDuties: [],  // recurring assignable duties (block 103): [{ id, title, description, assignedTo, department, recurrence, startDate, recurrenceUntil, active, createdBy, createdAt }]
     maintenanceDutyLogs: [],// per-occurrence completion records: [{ id, dutyId, occurrenceDate, completedAt, completedBy, note, photoDataUrl, photoMime, photoSize }]
     assets: [],             // [{ id, name, category, branch, serialNumber, purchasedAt, warrantyExpires, notes, createdBy, createdAt, updatedAt }]
@@ -2318,7 +2319,7 @@ async function loadAll() {
     const alertWeeklyCutoff = new Date(Date.now() - 28*86400000).toISOString().slice(0,10);
     const alertExpiryCutoff = new Date(Date.now() - 56*86400000).toISOString().slice(0,10);
     const [companyR, employeesR, attendanceR, leaveR, payrollR, branchesR,
-           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR, maintenanceDutiesR, maintenanceDutyLogsR, marketingCompletionsR] = await Promise.all([
+           warningsR, advancesR, certificatesR, archiveR, receiptsR, inventoryR, maintenanceR, extrasR, movementsR, suppliersR, assetsR, dailyCountItemsR, dailyCountsTodayR, incomingTransfersR, weeklyCountItemsR, expiryCheckItemsR, alertWeeklyR, alertExpiryR, bakeryProductsR, bakeryIngredientsR, holidaysR, deductionsR, tasksR, checklistsR, todoListsR, applicationsR, leaveTravelR, inventoryDrinksR, inventoryOwnersR, signedDocumentsR, roastBatchesR, b2bInvoicesR, taskGroupsR, taskBoardsR, mktProjectsR, mktBoardsR, mktListsR, mktItemsR, mktItemMembersR, mktAttachmentsR, mktBudgetR, mktExpensesR, meetingsR, maintenanceDutiesR, maintenanceDutyLogsR, marketingCompletionsR, purchaseRequestsR] = await Promise.all([
       sb.from('companies').select('*').limit(1).maybeSingle(),
       sb.from('employees').select('*').order('first_name'),
       sb.from('attendance').select('*').gte('date', attendanceCutoff).order('date', { ascending: false }),
@@ -2465,6 +2466,8 @@ async function loadAll() {
       // Per-occurrence completion of recurring marketing cards — bounded to a
       // rolling window (same as duty logs); the calendar shows recent months.
       sb.from('marketing_item_completions').select('*').gte('occurrence_date', new Date(Date.now()-180*86400000).toISOString().slice(0,10)),
+      // Purchase requests (block 109) — low-volume; cap recent 500.
+      sb.from('purchase_requests').select('*').order('created_at', { ascending: false }).limit(500),
     ]);
     state.branches = (branchesR.data || []).map(mapBranchFromDb);
     if (companyR.data) {
@@ -2521,6 +2524,7 @@ async function loadAll() {
     state.maintenanceDuties   = (maintenanceDutiesR?.data   || []).map(mapDutyFromDb);
     state.maintenanceDutyLogs = (maintenanceDutyLogsR?.data || []).map(mapDutyLogFromDb);
     state.marketingCompletions = (marketingCompletionsR?.data || []).map(mapMarketingCompletionFromDb);
+    state.purchaseRequests   = (purchaseRequestsR?.data || []).map(mapPurchaseFromDb);
     state.checklists   = (checklistsR.data   || []).map(mapChecklistFromDb);
     state.todoLists    = (todoListsR.data    || []).map(mapTodoListFromDb);
     state.applications = (applicationsR.data || []).map(mapApplicationFromDb);
@@ -3178,7 +3182,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -3508,6 +3512,7 @@ function renderShell(routeContent) {
     { key:'bakery_purchases', icon:'box',   label:'Purchases',       show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
     { key:'maintenance',  icon:'wrench',    label:t('maintenance'),  show:true, group:'company', parent:'maintenance' },
     { key:'assets',       icon:'wrench',    label:t('assets'),       show:hasRole('admin','maintenance'), group:'company', parent:'maintenance' },
+    { key:'purchasing',   icon:'cash',      label:'Purchasing',      show:true, group:'company' },
     { key:'reports',      icon:'report',    label:t('reports'),      show:canManagePeople(), group:'company', parent:'reports' },
     { key:'analytics',    icon:'report',    label:'Analytics',       show:isAdmin(), group:'company', parent:'reports' },
     { key:'spend_report', icon:'report',    label:'Spend report',    show:hasRole('admin','accounting'), group:'company', parent:'reports' },
@@ -3949,6 +3954,19 @@ function buildNotifications() {
   (state.maintenanceDuties||[]).filter(d=>d.active && d.assignedTo===me?.id).forEach(d=>{
     out.push({ key:'duty-mine-'+d.id, icon:'wrench', tone:'blue', title:'Maintenance duty assigned to you',
       detail:`${escapeHTML(d.title)}`, href:'#/maintenance' });
+  });
+  // Purchasing: the officer (admin/operations) is nudged about new requests
+  // to action; a requester learns when theirs is ordered / received.
+  if (hasRole('admin','operations')) {
+    (state.purchaseRequests||[]).filter(r=>r.status==='requested').forEach(r=>{
+      out.push({ key:'purch-new-'+r.id, icon:'cash', tone:'amber', title:'Purchase request to action',
+        detail:`${escapeHTML(r.item)}${r.branch?' · '+escapeHTML(r.branch):''}`, href:'#/purchasing' });
+    });
+  }
+  (state.purchaseRequests||[]).filter(r=>r.requestedBy===me?.id && (r.status==='ordered'||r.status==='received')).forEach(r=>{
+    out.push({ key:'purch-mine-'+r.id+'-'+r.status, icon:'cash', tone:'blue',
+      title: r.status==='ordered' ? 'Your purchase was ordered' : 'Your purchase arrived',
+      detail:`${escapeHTML(r.item)}`, href:'#/purchasing' });
   });
   return out.slice(0, 30);
 }
@@ -17176,6 +17194,192 @@ const MAINT_PRIORITIES = {
   high:   { label: 'High',   pill: 'bg-amber-50 text-amber-700',  bar: 'bg-amber-500' },
   urgent: { label: 'Urgent', pill: 'bg-rose-50 text-rose-700',    bar: 'bg-rose-500' },
 };
+// ============================ PURCHASING ============================
+// Branch purchase requests funnelled to the purchasing officer, with a
+// Requested → Ordered → Received lifecycle. Record-only (no stock changes).
+// Any active staff raises a request; admin/operations are the purchasing
+// officer(s) who see all, order and receive. RLS scopes the rest (block 109).
+const PURCHASE_STATUSES = {
+  requested: { label:'Requested', pill:'bg-amber-50 text-amber-700' },
+  ordered:   { label:'Ordered',   pill:'bg-blue-50 text-blue-700' },
+  received:  { label:'Received',  pill:'bg-emerald-50 text-emerald-700' },
+  cancelled: { label:'Cancelled', pill:'bg-slate-100 text-slate-600' },
+};
+function isPurchasingOfficer(){ return hasRole('admin','operations'); }
+function purchaseEmpName(id){ const e=getEmployee(id); return e?((e.firstName+' '+(e.lastName||'')).trim()):'—'; }
+function mapPurchaseFromDb(r){
+  return {
+    id:r.id, item:r.item||'', description:r.description||'', branch:r.branch||'',
+    quantity:r.quantity||'', priority:r.priority||'normal', status:r.status||'requested',
+    neededBy:r.needed_by||null, estCost:r.est_cost==null?null:Number(r.est_cost),
+    supplier:r.supplier||'', actualCost:r.actual_cost==null?null:Number(r.actual_cost),
+    receivedQty:r.received_qty||'', receivedNotes:r.received_notes||'',
+    requestedBy:r.requested_by||null, orderedBy:r.ordered_by||null, orderedAt:r.ordered_at||null,
+    receivedBy:r.received_by||null, receivedAt:r.received_at||null,
+    notes:r.notes||'', createdAt:r.created_at, updatedAt:r.updated_at,
+  };
+}
+function purchaseToDb(p){
+  const num = v => (v==null||v==='')?null:Number(v);
+  return {
+    item:p.item||null, description:p.description||null, branch:p.branch||null,
+    quantity:p.quantity||null, priority:p.priority||'normal', status:p.status||'requested',
+    needed_by:p.neededBy||null, est_cost:num(p.estCost), supplier:p.supplier||null,
+    actual_cost:num(p.actualCost), received_qty:p.receivedQty||null, received_notes:p.receivedNotes||null,
+    requested_by:p.requestedBy||null, ordered_by:p.orderedBy||null, ordered_at:p.orderedAt||null,
+    received_by:p.receivedBy||null, received_at:p.receivedAt||null,
+    notes:p.notes||null, updated_at:new Date().toISOString(),
+  };
+}
+let purchaseFilter = { status:'active', q:'' };
+function setPurchaseFilter(u){ Object.assign(purchaseFilter,u); render(); }
+async function purchaseSetStatus(id, status){
+  const r=(state.purchaseRequests||[]).find(x=>x.id===id); if(!r) return;
+  const me=currentEmployee();
+  const patch={ status, updated_at:new Date().toISOString() };
+  if (status==='ordered'  && !r.orderedAt){  patch.ordered_by=me?.id||null;  patch.ordered_at=new Date().toISOString(); }
+  if (status==='received' && !r.receivedAt){ patch.received_by=me?.id||null; patch.received_at=new Date().toISOString(); }
+  const { data:res, error } = await sb.from('purchase_requests').update(patch).eq('id', id).select().single();
+  if (error){ toast(humanizeError(error),'error'); return; }
+  Object.assign(r, mapPurchaseFromDb(res));
+  toast(`Marked ${(PURCHASE_STATUSES[status]||{}).label||status}`,'success');
+  render();
+}
+function purchaseMarkOrdered(id){ purchaseSetStatus(id,'ordered'); }
+function purchaseMarkReceived(id){ purchaseSetStatus(id,'received'); }
+function renderPurchasing(){
+  const me = currentEmployee();
+  const officer = isPurchasingOfficer();
+  const all = (state.purchaseRequests||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const stat = (lbl,n,cls)=>`<div class="bg-white rounded-2xl shadow-card p-4 text-center"><div class="font-display text-3xl font-semibold ${cls} stat-numeral">${n}</div><div class="text-[10px] uppercase tracking-[0.14em] text-slate-400 font-semibold mt-1">${escapeHTML(lbl)}</div></div>`;
+  const f=purchaseFilter; const q=(f.q||'').trim().toLowerCase();
+  const filtered = all.filter(r=>{
+    if (f.status==='active' && (r.status==='received'||r.status==='cancelled')) return false;
+    if (f.status!=='active' && f.status!=='all' && r.status!==f.status) return false;
+    if (q){ const hay=`${r.item} ${r.description||''} ${r.branch||''} ${r.supplier||''} ${purchaseEmpName(r.requestedBy)}`.toLowerCase(); if(!hay.includes(q)) return false; }
+    return true;
+  });
+  const statusChip = r => `<span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${(PURCHASE_STATUSES[r.status]||PURCHASE_STATUSES.requested).pill}">${escapeHTML((PURCHASE_STATUSES[r.status]||PURCHASE_STATUSES.requested).label)}</span>`;
+  const prioChip = r => { const p=MAINT_PRIORITIES[r.priority]||MAINT_PRIORITIES.normal; return `<span class="px-2 py-0.5 rounded-full text-[11px] font-medium ${p.pill}">${escapeHTML(p.label)}</span>`; };
+  const officerActions = r => {
+    if (!officer) return '';
+    if (r.status==='requested') return `<button onclick="event.stopPropagation(); purchaseMarkOrdered('${r.id}')" class="btn btn-primary btn-sm">${icon('check','w-4 h-4')} Mark ordered</button>`;
+    if (r.status==='ordered')   return `<button onclick="event.stopPropagation(); purchaseMarkReceived('${r.id}')" class="btn btn-primary btn-sm">${icon('box','w-4 h-4')} Mark received</button>`;
+    return '';
+  };
+  const row = r => `
+    <div onclick="openPurchaseModal('${r.id}')" class="bg-white rounded-xl border border-slate-200 shadow-sm p-3 mb-2 hover:shadow-pop transition-all cursor-pointer">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap mb-1">${statusChip(r)}${prioChip(r)}${r.branch?`<span class="text-[11px] text-slate-400">${escapeHTML(r.branch)}</span>`:''}</div>
+          <div class="font-medium text-slate-900">${escapeHTML(r.item)}${r.quantity?` <span class="text-slate-400 font-normal">· ${escapeHTML(r.quantity)}</span>`:''}</div>
+          ${r.description?`<div class="text-xs text-slate-500 mt-0.5 truncate">${escapeHTML(r.description)}</div>`:''}
+          <div class="text-[11px] text-slate-400 mt-1">by ${escapeHTML(purchaseEmpName(r.requestedBy))}${r.neededBy?` · needed ${escapeHTML(fmtDate(r.neededBy))}`:''}${r.supplier?` · ${escapeHTML(r.supplier)}`:''}${r.actualCost!=null?` · ${fmtMoney(r.actualCost)}`:(r.estCost!=null?` · est ${fmtMoney(r.estCost)}`:'')}</div>
+        </div>
+        <div class="shrink-0">${officerActions(r)}</div>
+      </div>
+    </div>`;
+  const header = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #4a7fc4 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('cash','w-3.5 h-3.5')} Purchasing</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">Purchase requests</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-md">Ask for what your branch needs. The purchasing officer orders it and marks it received — all in one place.</p>
+        </div>
+        <button onclick="openPurchaseModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} New request</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4 mb-5">
+      ${stat('Requested', all.filter(r=>r.status==='requested').length, 'text-amber-600')}
+      ${stat('Ordered', all.filter(r=>r.status==='ordered').length, 'text-blue-600')}
+      ${stat('Received', all.filter(r=>r.status==='received').length, 'text-emerald-600')}
+    </div>`;
+  const filters = `
+    <div class="flex flex-wrap items-center gap-2 mb-4">
+      ${['active','requested','ordered','received','all'].map(s=>`<button onclick="setPurchaseFilter({status:'${s}'})" class="btn btn-sm ${f.status===s?'btn-primary':'btn-ghost'}">${s==='active'?'Open':(s==='all'?'All':(PURCHASE_STATUSES[s]?PURCHASE_STATUSES[s].label:s))}</button>`).join('')}
+      <input class="input !w-auto !py-1.5 text-sm" style="min-width:180px" placeholder="Search…" value="${escapeHTML(f.q)}" oninput="clearTimeout(window._pfT); const v=this.value; window._pfT=setTimeout(()=>setPurchaseFilter({q:v}),250);">
+    </div>`;
+  const list = filtered.length ? filtered.map(row).join('') : `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">No purchase requests${f.status!=='all'?' in this view':''}.</div>`;
+  return header + filters + `<div>${list}</div>`;
+}
+function openPurchaseModal(id){
+  const me = currentEmployee();
+  const officer = isPurchasingOfficer();
+  const editing = id ? (state.purchaseRequests||[]).find(r=>r.id===id) : null;
+  if (editing && !officer && editing.requestedBy!==me?.id) { toast('You can only open your own requests','error'); return; }
+  const readonly = editing && !officer; // a requester viewing their own submitted request
+  const dis = readonly ? 'disabled' : '';
+  const branchOpts = ['', ...COFFEE_BRANCHES].map(b=>`<option value="${escapeHTML(b)}" ${editing?.branch===b?'selected':''}>${b||'— Select —'}</option>`).join('');
+  const form = `
+    <div class="space-y-4">
+      <div><label class="label label-required">Item / what to buy</label>
+        <input id="pr-item" class="input" ${dis} placeholder="e.g. 12oz cups" value="${escapeHTML(editing?.item||'')}"></div>
+      <div><label class="label">Details (optional)</label>
+        <textarea id="pr-desc" class="input" rows="2" ${dis} placeholder="Brand, size, where to get it, why…">${escapeHTML(editing?.description||'')}</textarea></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">Branch</label><select id="pr-branch" class="input" ${dis}>${branchOpts}</select></div>
+        <div><label class="label">Quantity</label><input id="pr-qty" class="input" ${dis} placeholder="e.g. 5 boxes" value="${escapeHTML(editing?.quantity||'')}"></div>
+        <div><label class="label">Priority</label><select id="pr-prio" class="input" ${dis}>${Object.entries(MAINT_PRIORITIES).map(([k,p])=>`<option value="${k}" ${(editing?.priority||'normal')===k?'selected':''}>${escapeHTML(p.label)}</option>`).join('')}</select></div>
+        <div><label class="label">Needed by (optional)</label><input id="pr-needed" type="date" class="input" ${dis} value="${escapeHTML(editing?.neededBy||'')}"></div>
+        <div class="col-span-2"><label class="label">Estimated cost — SAR (optional)</label><input id="pr-est" type="number" step="0.01" inputmode="decimal" class="input" ${dis} placeholder="0.00" value="${editing?.estCost!=null?editing.estCost:''}"></div>
+      </div>
+      ${(officer && editing) ? `
+      <div class="border-t border-slate-100 pt-3">
+        <div class="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Purchasing officer</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="label">Status</label><select id="pr-status" class="input">${Object.entries(PURCHASE_STATUSES).map(([k,v])=>`<option value="${k}" ${editing.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+          <div><label class="label">Supplier / where bought</label><input id="pr-supplier" class="input" value="${escapeHTML(editing.supplier||'')}"></div>
+          <div><label class="label">Actual cost — SAR</label><input id="pr-actual" type="number" step="0.01" inputmode="decimal" class="input" placeholder="0.00" value="${editing.actualCost!=null?editing.actualCost:''}"></div>
+          <div><label class="label">Received qty</label><input id="pr-rqty" class="input" placeholder="e.g. 5 boxes" value="${escapeHTML(editing.receivedQty||'')}"></div>
+          <div class="col-span-2"><label class="label">Receiving notes</label><input id="pr-rnotes" class="input" value="${escapeHTML(editing.receivedNotes||'')}"></div>
+        </div>
+        <div class="mt-3 text-right"><button onclick="deletePurchase('${editing.id}')" class="text-xs text-rose-600 hover:underline">Delete this request</button></div>
+      </div>` : ''}
+      ${readonly ? `<div class="text-xs text-slate-500">Status: <strong>${escapeHTML((PURCHASE_STATUSES[editing.status]||{}).label||editing.status)}</strong>. Only the purchasing officer can change a submitted request.</div>` : ''}
+    </div>`;
+  openModal(editing ? (officer?'Edit request':'Your request') : 'New purchase request', form, async () => {
+    if (readonly) return true;
+    const item = $('#pr-item').value.trim();
+    if (!item){ toast('Item is required','error'); return false; }
+    const data = { ...(editing||{}),
+      item, description:$('#pr-desc').value.trim(), branch:$('#pr-branch').value,
+      quantity:$('#pr-qty').value.trim(), priority:$('#pr-prio').value,
+      neededBy:$('#pr-needed').value||null, estCost:$('#pr-est').value,
+      requestedBy: editing?.requestedBy || me?.id || null,
+    };
+    if (officer && editing) {
+      const ns = $('#pr-status').value;
+      data.status = ns;
+      data.supplier = $('#pr-supplier').value.trim();
+      data.actualCost = $('#pr-actual').value;
+      data.receivedQty = $('#pr-rqty').value.trim();
+      data.receivedNotes = $('#pr-rnotes').value.trim();
+      if (ns==='ordered'  && !editing.orderedAt){  data.orderedBy=me?.id;  data.orderedAt=new Date().toISOString(); }
+      if (ns==='received' && !editing.receivedAt){ data.receivedBy=me?.id; data.receivedAt=new Date().toISOString(); }
+    } else if (!editing) { data.status='requested'; }
+    const dbRow = purchaseToDb(data);
+    if (editing){
+      const { data:res, error } = await sb.from('purchase_requests').update(dbRow).eq('id', editing.id).select().single();
+      if (error){ toast(humanizeError(error)+(error?.message?.includes('does not exist')?' — run SQL block 109 first':''),'error'); return false; }
+      Object.assign(editing, mapPurchaseFromDb(res)); toast('Request updated','success');
+    } else {
+      const { data:res, error } = await sb.from('purchase_requests').insert(dbRow).select().single();
+      if (error){ toast(humanizeError(error)+(error?.message?.includes('does not exist')?' — run SQL block 109 first':''),'error'); return false; }
+      state.purchaseRequests.unshift(mapPurchaseFromDb(res)); toast('Purchase request submitted','success');
+    }
+    render(); return true;
+  }, { saveLabel: readonly ? t('close') : (editing?'Save changes':'Submit request') });
+}
+async function deletePurchase(id){
+  if (!isPurchasingOfficer()) return;
+  if (!confirm('Delete this purchase request?')) return;
+  const { error } = await sb.from('purchase_requests').delete().eq('id', id);
+  if (error){ toast(humanizeError(error),'error'); return; }
+  state.purchaseRequests = (state.purchaseRequests||[]).filter(r=>r.id!==id);
+  closeModal(); render(); toast('Request deleted','success');
+}
 const MAINT_STATUSES = {
   open:         { label: 'Open',         pill: 'bg-amber-50 text-amber-700' },
   in_progress:  { label: 'In progress',  pill: 'bg-blue-50 text-blue-700' },
@@ -27142,6 +27346,7 @@ function renderMain() {
     case 'bakery_purchases': content = hasRole('admin','bakery','operations') ? renderBakeryPurchases() : renderRoleDashboard(); break;
     case 'roaster':      content = hasRole('admin','roaster') ? renderRoaster() : renderRoleDashboard(); break;
     case 'maintenance':  content = renderMaintenance(); break;
+    case 'purchasing':   content = renderPurchasing(); break;
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
