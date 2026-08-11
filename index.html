@@ -2092,6 +2092,10 @@ function rbSerial(b) {
   if (b?.serialPrefix && b?.prefixNo) return b.serialPrefix + '-' + String(b.prefixNo).padStart(4, '0');
   return 'RB-' + String(b?.serialNo || 0).padStart(5, '0');
 }
+// Columns for maintenance list reads + insert/update returns. Excludes the
+// heavy photo_data_url on purpose — full bytes are fetched on demand
+// (previewMaintenancePhoto), so we never up- and down-load MB per save.
+const MAINT_LIST_COLS = 'id, title, description, branch, location, asset_id, priority, status, reported_by, assigned_to, resolution, resolved_at, photo_mime, photo_size, photo_thumb_data_url, created_at, updated_at';
 function mapMaintenanceFromDb(r) {
   return {
     id: r.id,
@@ -2354,7 +2358,7 @@ async function loadAll() {
       // per row) and fetched on demand by previewMaintenancePhoto. The
       // thumb is shipped eagerly so the list can render thumbnails.
       // If you add a column to maintenance_requests, add it here too.
-      sb.from('maintenance_requests').select('id, title, description, branch, location, asset_id, priority, status, reported_by, assigned_to, resolution, resolved_at, photo_mime, photo_size, photo_thumb_data_url, created_at, updated_at').order('created_at', { ascending: false }),
+      sb.from('maintenance_requests').select(MAINT_LIST_COLS).order('created_at', { ascending: false }),
       sb.from('employee_extras').select('*'),
       // Inventory movements: ledger of every adjust/roast/transfer/etc.
       // Same SELECT scope as inventory_items SELECT (admin/hr/ops/
@@ -17857,6 +17861,9 @@ async function generateImageThumbnail(blob, maxPx = MAINT_PHOTO_THUMB_MAX_PX) {
 async function handleMaintenancePhoto(ev) {
   const f = await readUploadedFile(ev, {
     allowed: MAINT_PHOTO_ALLOWED_MIMES,
+    // Accept large phone photos — we compress to a display size below, so a
+    // raw 8–12 MP shot shouldn't be rejected before we can shrink it.
+    maxBytes: 15 * 1024 * 1024,
     errorMsg: 'Unsupported file type. Use a PNG / JPG / GIF / WebP image.',
   });
   if (!f) return;
@@ -17867,7 +17874,22 @@ async function handleMaintenancePhoto(ev) {
     toast('Could not generate thumbnail — using full image.', 'error');
     thumbDataUrl = f.dataUrl;
   }
-  _maintenancePhoto = { mime: f.mime, size: f.size, dataUrl: f.dataUrl, thumbDataUrl };
+  // Compress the STORED image so submit isn't slow — phone photos are
+  // several MB, which made the insert (and the row it echoes back) crawl.
+  // Reuse the resize→JPEG helper at a display size (1600px). Keep the
+  // original only if compression didn't help or can't apply (animated GIF).
+  let mime = f.mime, size = f.size, dataUrl = f.dataUrl;
+  if (f.mime !== 'image/gif') {
+    try {
+      const compressed = await generateImageThumbnail(f.file, 1600);
+      if (compressed && compressed.length < f.dataUrl.length) {
+        dataUrl = compressed;
+        mime = 'image/jpeg';
+        size = Math.round(compressed.slice(compressed.indexOf(',') + 1).length * 3 / 4);
+      }
+    } catch { /* keep the original image */ }
+  }
+  _maintenancePhoto = { mime, size, dataUrl, thumbDataUrl };
   _maintenancePhotoCleared = false;
   const p = document.getElementById('maint-photo-preview');
   if (p) p.innerHTML = maintenancePhotoPreviewHTML(thumbDataUrl, 'Photo preview');
@@ -18040,14 +18062,21 @@ function openMaintenanceModal(id) {
         delete dbRow.photo_mime; delete dbRow.photo_size;
         delete dbRow.photo_data_url; delete dbRow.photo_thumb_data_url;
       }
-      const { data: row, error } = await sb.from('maintenance_requests').update(dbRow).eq('id', editing.id).select().single();
+      const { data: row, error } = await sb.from('maintenance_requests').update(dbRow).eq('id', editing.id).select(MAINT_LIST_COLS).single();
       if (error) { toast(humanizeError(error), 'error'); return false; }
+      // Preserve the full photo bytes we already hold locally — the slim
+      // select above intentionally omits photo_data_url.
+      const keepPhoto = editing.photoDataUrl;
       Object.assign(editing, mapMaintenanceFromDb(row));
+      if (!photoChanged && keepPhoto) editing.photoDataUrl = keepPhoto;
+      else if (photoChanged && _maintenancePhoto) editing.photoDataUrl = _maintenancePhoto.dataUrl;
       toast('Request updated', 'success');
     } else {
-      const { data: row, error } = await sb.from('maintenance_requests').insert(maintenanceToDb(data)).select().single();
+      const { data: row, error } = await sb.from('maintenance_requests').insert(maintenanceToDb(data)).select(MAINT_LIST_COLS).single();
       if (error) { toast(humanizeError(error), 'error'); return false; }
-      state.maintenance.unshift(mapMaintenanceFromDb(row));
+      const inserted = mapMaintenanceFromDb(row);
+      if (_maintenancePhoto) inserted.photoDataUrl = _maintenancePhoto.dataUrl; // reuse bytes we just uploaded
+      state.maintenance.unshift(inserted);
       toast('Request submitted', 'success');
     }
     render();
@@ -18058,9 +18087,11 @@ function openMaintenanceModal(id) {
 async function changeMaintenanceStatus(id, newStatus) {
   const r = (state.maintenance||[]).find(x => x.id === id);
   if (!r) return;
-  const { data, error } = await sb.from('maintenance_requests').update({ status: newStatus }).eq('id', id).select().single();
+  const { data, error } = await sb.from('maintenance_requests').update({ status: newStatus }).eq('id', id).select(MAINT_LIST_COLS).single();
   if (error) { toast(humanizeError(error), 'error'); return; }
+  const keepPhoto = r.photoDataUrl;
   Object.assign(r, mapMaintenanceFromDb(data));
+  if (keepPhoto) r.photoDataUrl = keepPhoto; // slim select omits photo bytes
   render();
   toast(`Marked ${MAINT_STATUSES[newStatus]?.label || newStatus}`, 'success');
 }
@@ -18072,9 +18103,11 @@ async function resolveMaintenance(id) {
   if (note === null) return; // cancelled
   const { data, error } = await sb.from('maintenance_requests')
     .update({ status: 'resolved', resolution: note || null })
-    .eq('id', id).select().single();
+    .eq('id', id).select(MAINT_LIST_COLS).single();
   if (error) { toast(humanizeError(error), 'error'); return; }
+  const keepPhoto = r.photoDataUrl;
   Object.assign(r, mapMaintenanceFromDb(data));
+  if (keepPhoto) r.photoDataUrl = keepPhoto; // slim select omits photo bytes
   render();
   toast('Marked resolved', 'success');
 }
@@ -24465,7 +24498,7 @@ function openModal(title, bodyHTML, onSave, opts = {}) {
         <div class="p-5 overflow-y-auto">${bodyHTML}</div>
         <div class="flex justify-end gap-2 p-5 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
           <button onclick="closeModal()" class="btn btn-ghost">${escapeHTML(t('cancel'))}</button>
-          <button onclick="submitModal()" class="btn btn-primary">${escapeHTML(saveLabel)}</button>
+          <button id="modal-save-btn" onclick="submitModal()" class="btn btn-primary">${escapeHTML(saveLabel)}</button>
         </div>
       </div>
     </div>
@@ -24555,12 +24588,28 @@ function closeModal() {
 }
 async function submitModal() {
   if (!modalOnSave) return closeModal();
+  // Immediate feedback while the (often async, sometimes MB-photo) save
+  // runs: disable the button + show a spinner so it never feels frozen and
+  // can't be double-submitted. Restored only if the save keeps the modal
+  // open (validation error); on success closeModal() removes it anyway.
+  const btn = document.getElementById('modal-save-btn');
+  let prevHTML = null;
+  if (btn && !btn.disabled) {
+    prevHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="animate-spin" style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px"></span> Saving…';
+  }
   // MUST await: many save callbacks are async (Supabase calls). Without
   // awaiting, the modal closes synchronously and any field reads that
   // happen after the first await find an empty DOM (silent data loss —
   // saw branch/nationality/iqama persisted as null because of this).
-  const result = await modalOnSave();
-  if (result !== false) closeModal();
+  try {
+    const result = await modalOnSave();
+    if (result !== false) { closeModal(); return; }
+  } finally {
+    const b = document.getElementById('modal-save-btn');
+    if (b && prevHTML !== null) { b.disabled = false; b.innerHTML = prevHTML; }
+  }
 }
 
 /* -------------------- MAIN RENDER -------------------- */
