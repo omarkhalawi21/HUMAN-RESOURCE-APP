@@ -3782,6 +3782,8 @@ function initRealtime() {
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'maintenance_requests' }, p => rtOnMaintenance(p, false))
     .on('postgres_changes', { event:'INSERT', schema:'public', table:'maintenance_duties' },   p => rtOnDuty(p, true))
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'maintenance_duties' },   p => rtOnDuty(p, false))
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'purchase_requests' },    p => rtOnPurchase(p, true))
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'purchase_requests' },    p => rtOnPurchase(p, false))
     .subscribe();
 }
 function teardownRealtime() {
@@ -3831,6 +3833,29 @@ function rtOnDuty(payload, isInsert) {
   const mineNow  = !!(row.assignedTo && me && row.assignedTo === me.id && row.active);
   const minePrev = !!(prev && prev.assignedTo && me && prev.assignedTo === me.id);
   if (mineNow && (isInsert || !minePrev)) rtToast('🧰 New duty assigned to you', row.title);
+  render();
+}
+function rtOnPurchase(payload, isInsert) {
+  const raw = payload && payload.new; if (!raw || !raw.id) return;
+  const me = currentEmployee();
+  const officer = isPurchasingOfficer();
+  const row = mapPurchaseFromDb(raw);
+  // Only keep rows this user may see (officer, or their own request) —
+  // defense-in-depth against any over-delivery, mirroring rtOnMaintenance.
+  const mine = row.requestedBy && me && row.requestedBy === me.id;
+  if (!officer && !mine) return;
+  const list = state.purchaseRequests || (state.purchaseRequests = []);
+  const idx = list.findIndex(x => x.id === row.id);
+  const prev = idx >= 0 ? list[idx] : null;
+  if (idx >= 0) list[idx] = row; else list.unshift(row);
+  if (isInsert) {
+    // New request → alert the purchasing officer (but not if they filed it).
+    if (officer && row.requestedBy !== me?.id) rtToast('🛒 New purchase request', row.item);
+  } else if (mine && prev && prev.status !== row.status) {
+    // The requester's own request moved on.
+    if (row.status === 'ordered')  rtToast('🛒 Your purchase was ordered', row.item);
+    if (row.status === 'received') rtToast('📦 Your purchase arrived', row.item);
+  }
   render();
 }
 function buildNotifications() {
