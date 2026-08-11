@@ -5777,6 +5777,67 @@ BEGIN
   END IF;
 END $$;
 
+-- 109. PURCHASING — branch purchase requests → purchasing officer
+--      Any staff raises a request; admin/operations (the purchasing officer)
+--      see all and move it Requested → Ordered → Received. Record-only — no
+--      stock changes. RLS mirrors maintenance: officer sees all, a requester
+--      sees only their own. Added to the realtime publication so live push
+--      can be switched on later with no further SQL.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.purchase_requests (
+  id             uuid primary key default gen_random_uuid(),
+  item           text not null,
+  description    text,
+  branch         text,
+  quantity       text,
+  priority       text not null default 'normal',   -- low | normal | high | urgent
+  status         text not null default 'requested',-- requested | ordered | received | cancelled
+  needed_by      date,
+  est_cost       numeric(12,2),
+  supplier       text,
+  actual_cost    numeric(12,2),
+  received_qty   text,
+  received_notes text,
+  requested_by   uuid references public.employees(id) ON DELETE SET NULL,
+  ordered_by     uuid references public.employees(id) ON DELETE SET NULL,
+  ordered_at     timestamptz,
+  received_by    uuid references public.employees(id) ON DELETE SET NULL,
+  received_at    timestamptz,
+  notes          text,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS purchase_requests_status_idx ON public.purchase_requests(status);
+CREATE INDEX IF NOT EXISTS purchase_requests_branch_idx ON public.purchase_requests(branch);
+
+ALTER TABLE public.purchase_requests ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='purchase_requests'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.purchase_requests', r.policyname); END LOOP;
+END $$;
+
+CREATE POLICY "pr_select_self_or_ops" ON public.purchase_requests FOR SELECT TO authenticated
+  USING (public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = purchase_requests.requested_by AND e.user_id = auth.uid()));
+CREATE POLICY "pr_insert_self_or_ops" ON public.purchase_requests FOR INSERT TO authenticated
+  WITH CHECK (public.has_role(ARRAY['admin','operations'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = purchase_requests.requested_by AND e.user_id = auth.uid()));
+CREATE POLICY "pr_update_ops" ON public.purchase_requests FOR UPDATE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations'])) WITH CHECK (public.has_role(ARRAY['admin','operations']));
+CREATE POLICY "pr_delete_ops" ON public.purchase_requests FOR DELETE TO authenticated
+  USING (public.has_role(ARRAY['admin','operations']));
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables
+                 WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='purchase_requests') THEN
+    EXECUTE 'ALTER PUBLICATION supabase_realtime ADD TABLE public.purchase_requests';
+  END IF;
+END $$;
+
 -- =============================================================
 -- DONE.
 --
