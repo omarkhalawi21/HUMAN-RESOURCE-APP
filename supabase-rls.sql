@@ -5890,6 +5890,37 @@ CREATE POLICY "push_own_all" ON public.push_subscriptions FOR ALL TO authenticat
   USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 
 -- =============================================================
+-- 112. WEB PUSH WEBHOOKS -- fire the notify-push Edge Function when a new
+--      maintenance or purchase request is inserted. These are plain triggers
+--      on supabase_functions.http_request (the same mechanism the dashboard's
+--      "Database Webhooks" UI creates), so they live in this file and stay
+--      idempotent. The publishable key headers get the call through the
+--      Edge Function gateway. If supabase_functions is missing, enable
+--      Database -> Webhooks once in the dashboard and re-run this block.
+-- =============================================================
+DROP TRIGGER IF EXISTS notify_push_maintenance ON public.maintenance_requests;
+CREATE TRIGGER notify_push_maintenance
+  AFTER INSERT ON public.maintenance_requests
+  FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request(
+    'https://ymtrycprkbwybzhokvgt.supabase.co/functions/v1/notify-push',
+    'POST',
+    '{"Content-Type":"application/json","apikey":"sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp","Authorization":"Bearer sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp"}',
+    '{}',
+    '5000'
+  );
+
+DROP TRIGGER IF EXISTS notify_push_purchase ON public.purchase_requests;
+CREATE TRIGGER notify_push_purchase
+  AFTER INSERT ON public.purchase_requests
+  FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request(
+    'https://ymtrycprkbwybzhokvgt.supabase.co/functions/v1/notify-push',
+    'POST',
+    '{"Content-Type":"application/json","apikey":"sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp","Authorization":"Bearer sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp"}',
+    '{}',
+    '5000'
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
