@@ -18973,9 +18973,68 @@ function dcItemCard(it, branch, date) {
               class="input !w-16 !h-10 !text-center tabular-nums bg-rose-50/50 border-rose-200">
           </div>` : ''}
       </div>
+      ${dcCardExpired(it)}
       ${it.tracksWaste ? `<input id="dc-n-${it.id}" type="text" value="${escapeHTML(d.n)}" placeholder="note (optional) — e.g. shortage 1"
         class="input !py-2 !text-xs mt-2 w-full">` : `<input id="dc-n-${it.id}" type="hidden" value="${escapeHTML(d.n)}">`}
     </div>`;
+}
+
+// Log an expired pull straight from the item's own card, while the barista is
+// still standing in front of it — one tap opens a qty box and the item name
+// comes from the card, so nothing has to be typed or spelled. Writes into the
+// same draft.expired list the Review step edits, linked by itemId.
+function dcCardExpired(it) {
+  const i = dcExpIndexByItem(it.id);
+  if (i < 0) return `
+    <button type="button" onclick="dcAddItemExpired('${it.id}')"
+      class="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-rose-500 hover:text-rose-700">
+      ${icon('warning','w-3.5 h-3.5')} Log expired
+    </button>`;
+  const l = dailyCountState.draft.expired[i];
+  return `
+    <div class="mt-2 flex items-center gap-2 bg-rose-50/60 border border-rose-200 rounded-xl px-3 py-2">
+      <span class="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">Expired</span>
+      <input id="dc-x-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(l.qty||'')}" placeholder="qty"
+        class="input !w-16 !h-9 !text-center tabular-nums bg-white border-rose-200">
+      <span class="text-[11px] text-rose-500">${escapeHTML(it.unit)}</span>
+      <button type="button" onclick="dcRemoveItemExpired('${it.id}')" class="ml-auto text-rose-400 hover:text-rose-700 px-1"
+        title="Remove expired line" aria-label="Remove expired line">${icon('close','w-4 h-4')}</button>
+    </div>`;
+}
+// Index of the expired line belonging to a count item, or -1.
+function dcExpIndexByItem(itemId) {
+  const d = dailyCountState.draft;
+  if (!d || !Array.isArray(d.expired)) return -1;
+  return d.expired.findIndex(l => l.itemId === itemId);
+}
+function dcAddItemExpired(itemId) {
+  const d = dailyCountState.draft; if (!d) return;
+  dcCaptureStep(); dcCaptureExpired();
+  if (!Array.isArray(d.expired)) d.expired = [];
+  if (dcExpIndexByItem(itemId) < 0) {
+    const it = (state.dailyCountItems || []).find(x => x.id === itemId);
+    d.expired.push({ itemId, name: it ? it.name : '', qty:'', note:'' });
+  }
+  dcRerender('dc-x-' + itemId);
+}
+function dcRemoveItemExpired(itemId) {
+  const d = dailyCountState.draft; if (!d) return;
+  dcCaptureStep(); dcCaptureExpired();
+  const i = dcExpIndexByItem(itemId);
+  if (i >= 0) d.expired.splice(i, 1);
+  dcRerender();
+}
+// render() swaps the whole shell's innerHTML, which collapses the document and
+// so clamps window scroll back to the top. For controls that open in place
+// mid-list that would throw the barista back to the first item, so hold the
+// offset across the re-render and drop the caret straight into the new box.
+function dcRerender(focusId) {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+  if (!focusId) return;
+  const el = document.getElementById(focusId);
+  if (el) { el.focus(); if (el.select) el.select(); }
 }
 
 function dcRenderReview(branch, date, items) {
@@ -19027,11 +19086,37 @@ function dcRenderReview(branch, date, items) {
 // {item name, qty, note} — never touches counts or variance. Item name uses
 // a datalist of the count catalog but free text is allowed.
 function dcExpiredSection(items) {
-  const rows = (dailyCountState.draft && dailyCountState.draft.expired) || [];
+  const d = dailyCountState.draft;
+  if (d) {
+    if (!Array.isArray(d.expired)) d.expired = [];
+    // Keep one spare blank line at the bottom at all times, so logging
+    // something that isn't a count item costs no “Add line” tap first.
+    const blanks = d.expired.filter(l => !l.itemId);
+    if (!blanks.length || (blanks[blanks.length-1].name||'').trim() !== '') {
+      d.expired.push({ itemId:null, name:'', qty:'', note:'' });
+    }
+  }
+  const rows = (d && d.expired) || [];
+  // Card-logged lines first (name already known), free-text lines after.
+  const linked = [], loose = [];
+  rows.forEach((l, i) => (l.itemId ? linked : loose).push([l, i]));
   const opts = (items || []).map(it => `<option value="${escapeHTML(it.name)}">`).join('');
-  const rowHTML = (l, i) => `
+  const filled = rows.filter(l => (l.name||'').trim() !== '').length;
+  // A line logged from an item card: name is fixed, only qty/note are editable.
+  // The hidden name input keeps dcCaptureExpired's index mapping intact.
+  const linkedHTML = (l, i) => `
+    <div class="flex items-center gap-2 flex-wrap bg-rose-50/60 border border-rose-200 rounded-xl px-3 py-2" data-exp-row="${i}">
+      <input id="dc-exp-name-${i}" type="hidden" value="${escapeHTML(l.name||'')}">
+      <div class="flex-1 min-w-[7rem] text-sm font-medium text-slate-800 truncate">${escapeHTML(l.name||'—')}</div>
+      <input id="dc-exp-qty-${i}" value="${escapeHTML(l.qty||'')}" inputmode="decimal" placeholder="Qty"
+        class="input !w-20 !py-2 text-sm text-center tabular-nums bg-white border-rose-200">
+      <input id="dc-exp-note-${i}" value="${escapeHTML(l.note||'')}" placeholder="Note (optional)"
+        class="input flex-1 min-w-[7rem] !py-2 text-sm bg-white border-rose-200">
+      <button type="button" onclick="dcRemoveExpiredRow(${i})" class="text-rose-400 hover:text-rose-700 px-1" title="Remove line" aria-label="Remove expired line">${icon('close','w-4 h-4')}</button>
+    </div>`;
+  const looseHTML = (l, i) => `
     <div class="flex items-center gap-2 flex-wrap" data-exp-row="${i}">
-      <input id="dc-exp-name-${i}" list="dc-exp-items" value="${escapeHTML(l.name||'')}" placeholder="Item / description"
+      <input id="dc-exp-name-${i}" list="dc-exp-items" value="${escapeHTML(l.name||'')}" placeholder="Anything else — type or pick"
         class="input flex-1 min-w-[8rem] !py-2 text-sm">
       <input id="dc-exp-qty-${i}" value="${escapeHTML(l.qty||'')}" inputmode="decimal" placeholder="Qty"
         class="input !w-20 !py-2 text-sm text-center tabular-nums">
@@ -19042,13 +19127,14 @@ function dcExpiredSection(items) {
   return `
     <div class="bg-white rounded-2xl shadow-card p-4">
       <div class="flex items-center justify-between gap-3 mb-1">
-        <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items${rows.length?` (${rows.length})`:''}</div>
+        <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items${filled?` (${filled})`:''}</div>
         <button type="button" onclick="dcAddExpiredRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
       </div>
-      <div class="text-[11px] text-slate-500 mb-3">Items found expired and pulled today. Record-only — a log kept with the day's count; it doesn't change on-hand or variance.</div>
+      <div class="text-[11px] text-slate-500 mb-3">Items found expired and pulled today. Fastest way is <strong>Log expired</strong> on the item's own card while counting — those show up here with the name filled in. Record-only: it doesn't change on-hand or variance (put it in <strong>Wasted</strong> too if you binned it).</div>
       <datalist id="dc-exp-items">${opts}</datalist>
       <div class="space-y-2">
-        ${rows.length ? rows.map(rowHTML).join('') : `<div class="text-sm text-slate-400">No expired items logged. Use “Add line” if you pulled anything expired.</div>`}
+        ${linked.map(([l,i]) => linkedHTML(l,i)).join('')}
+        ${loose.map(([l,i]) => looseHTML(l,i)).join('')}
       </div>
     </div>`;
 }
@@ -19062,21 +19148,21 @@ function dcCaptureExpired() {
     const qt = document.getElementById('dc-exp-qty-'+i);
     const nt = document.getElementById('dc-exp-note-'+i);
     if (!nm && !qt && !nt) return l; // not currently rendered
-    return { name: nm ? nm.value.trim() : l.name, qty: qt ? qt.value.trim() : l.qty, note: nt ? nt.value.trim() : l.note };
+    return { ...l, name: nm ? nm.value.trim() : l.name, qty: qt ? qt.value.trim() : l.qty, note: nt ? nt.value.trim() : l.note };
   });
 }
 function dcAddExpiredRow() {
   const d = dailyCountState.draft; if (!d) return;
   dcCaptureExpired();
   if (!Array.isArray(d.expired)) d.expired = [];
-  d.expired.push({ name:'', qty:'', note:'' });
-  render();
+  d.expired.push({ itemId:null, name:'', qty:'', note:'' });
+  dcRerender('dc-exp-name-' + (d.expired.length - 1));
 }
 function dcRemoveExpiredRow(i) {
   const d = dailyCountState.draft; if (!d || !Array.isArray(d.expired)) return;
   dcCaptureExpired();
   d.expired.splice(i, 1);
-  render();
+  dcRerender();
 }
 
 // Inputs are free text (type=text — number inputs increment on scroll,
@@ -19119,9 +19205,14 @@ function dcEnsureDraft(branch, date, items) {
     };
   });
   // Expired-item log for this exact day — a variable-length list, not per-item.
+  // itemId links a line back to a count item so its card can show/edit it
+  // inline; free-text lines (anything not in the catalog) leave it null.
+  const idByName = {};
+  items.forEach(it => { idByName[it.name.toLowerCase()] = it.id; });
   const expired = (state.dailyExpiredCache[dcCacheKey(branch, date.slice(0,7))] || [])
     .filter(r => r.countDate === date)
-    .map(r => ({ name: r.itemName || '', qty: r.qty != null ? String(r.qty) : '', note: r.note || '' }));
+    .map(r => ({ itemId: r.itemId || idByName[(r.itemName||'').toLowerCase()] || null,
+                 name: r.itemName || '', qty: r.qty != null ? String(r.qty) : '', note: r.note || '' }));
   dailyCountState.draft = { key: k, byItem, expired };
 }
 // Pull the currently-rendered step's inputs into the draft so Back/Next
@@ -19142,6 +19233,13 @@ function dcCaptureStep() {
       r: r ? r.value.trim() : cur.r,
       n: n ? n.value.trim() : cur.n,
     };
+    // The card's inline expired box writes into draft.expired (the single
+    // source of truth shared with the Review list), not into byItem.
+    const x = document.getElementById('dc-x-'+it.id);
+    if (x) {
+      const xi = dcExpIndexByItem(it.id);
+      if (xi >= 0) d.expired[xi] = { ...d.expired[xi], qty: x.value.trim() };
+    }
   });
 }
 function dcStep(delta) {
@@ -19350,6 +19448,18 @@ function exportDailyCountSummaryCSV(branch, ym) {
       s.opening==null?'':s.opening, s.received, s.wasted,
       s.closing==null?'':s.closing, s.consumed==null?'':s.consumed, s.days]);
   });
+  // Second block: the month's expired-item log, so the export matches what
+  // the Summary screen shows. Blank line keeps the two tables apart.
+  const exp = (state.dailyExpiredCache[dcCacheKey(branch, ym)] || [])
+    .slice().sort((a,b) => (a.countDate||'').localeCompare(b.countDate||'')
+                        || (a.itemName||'').localeCompare(b.itemName||''));
+  if (exp.length) {
+    out.push([]);
+    out.push(['Expired items']);
+    out.push(['Branch','Date','Item','Qty','Note']);
+    exp.forEach(r => out.push([branch, r.countDate, r.itemName||'',
+      r.qty==null?'':r.qty, r.note||'']));
+  }
   const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], { type:'text/csv' });
   const url = URL.createObjectURL(blob);
