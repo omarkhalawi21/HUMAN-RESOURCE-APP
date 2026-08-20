@@ -3188,7 +3188,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'expired_log', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -3512,6 +3512,7 @@ function renderShell(routeContent) {
     { key:'daily_count',  icon:'box',       label:'Daily count',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'weekly_count', icon:'box',       label:'Weekly count',    show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'expiry_check', icon:'calendar',  label:'Expiry checklist',show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
+    { key:'expired_log',  icon:'warning',   label:'Expired log',     show:hasRole('admin','head_barista','barista'), group:'company', parent:'inventory' },
     { key:'roaster',      icon:'cash',      label:t('roaster'),      show:hasRole('admin','roaster'), group:'company' },
     { key:'bakery_transfers', icon:'box',   label:'Transfers',       show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
     { key:'bakery_stock', icon:'box',       label:'Stock',           show:hasRole('admin','bakery','operations'), group:'company', parent:'bakery' },
@@ -19287,7 +19288,10 @@ function dcExpiredLogPanel(branch, ym) {
       </tr>`).join('')
     : `<tr><td colspan="4" class="px-3 py-6 text-center text-sm text-slate-400">No expired items logged in ${escapeHTML(ym)}.</td></tr>`;
   return `
-    <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold mb-2 mt-2">Expired items${rows.length?` (${rows.length})`:''}</div>
+    <div class="flex items-center justify-between gap-3 mb-2 mt-2">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items${rows.length?` (${rows.length})`:''}</div>
+      <a href="#/expired_log" onclick="expiredLogState.branch='${escapeHTML(branch)}'; expiredLogState.ym='${escapeHTML(ym)}';" class="text-[11px] font-semibold text-brand-700 hover:underline">Full log &rarr;</a>
+    </div>
     <div class="bg-white rounded-2xl shadow-card overflow-x-auto mb-4">
       <table class="w-full text-sm border-collapse">
         <thead>
@@ -19301,6 +19305,152 @@ function dcExpiredLogPanel(branch, ym) {
         <tbody>${body}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- EXPIRED LOG (cross-branch view of daily_expired) ----------
+   Reads the SAME per-branch+month cache the Daily count fills, so nothing
+   new is bulk-loaded: "All branches" just asks for each branch's month.  */
+let expiredLogState = { branch:'ALL', ym:'' };
+
+function elBranches() {
+  return expiredLogState.branch === 'ALL' ? COFFEE_BRANCHES.slice() : [expiredLogState.branch];
+}
+function elRows() {
+  const ym = expiredLogState.ym, out = [];
+  elBranches().forEach(b => (state.dailyExpiredCache[dcCacheKey(b, ym)] || []).forEach(r => out.push(r)));
+  return out.sort((a, b) => (b.countDate || '').localeCompare(a.countDate || '')
+                         || (a.branch   || '').localeCompare(b.branch   || '')
+                         || (a.itemName || '').localeCompare(b.itemName || ''));
+}
+function elLoggedBy(id) {
+  const e = (state.employees || []).find(x => x.id === id);
+  return e ? (e.firstName + ' ' + (e.lastName || '')).trim() : '';
+}
+
+function renderExpiredLog() {
+  if (!expiredLogState.ym) expiredLogState.ym = todayISO().slice(0, 7);
+  const { branch, ym } = expiredLogState;
+
+  const branchSel = `<select class="pill" onchange="expiredLogState.branch=this.value; render();">
+    <option value="ALL" ${branch === 'ALL' ? 'selected' : ''}>All branches</option>
+    ${COFFEE_BRANCHES.map(b => `<option value="${escapeHTML(b)}" ${b === branch ? 'selected' : ''}>${escapeHTML(b)}</option>`).join('')}
+  </select>`;
+  const header = `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-rose-600 font-semibold">Expired log</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${branch === 'ALL' ? 'All branches' : escapeHTML(branch)}</h2>
+        <div class="text-xs text-slate-500 mt-1">Everything pulled as expired, logged during the daily count.</div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        ${branchSel}
+        <input type="month" value="${escapeHTML(ym)}" max="${escapeHTML(todayISO().slice(0,7))}"
+          onchange="expiredLogState.ym=this.value; render();" class="input !w-auto !py-2">
+      </div>
+    </div>`;
+
+  const need = elBranches();
+  if (need.some(b => !state.dailyExpiredCache[dcCacheKey(b, ym)])) {
+    need.forEach(b => loadDailyExpired(b, ym));
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(ym)}…</div>`;
+  }
+
+  const rows = elRows();
+  if (!rows.length) {
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">
+      Nothing logged as expired in ${escapeHTML(ym)}${branch === 'ALL' ? '' : ' at ' + escapeHTML(branch)}. That is good news — or nobody is logging.
+    </div>`;
+  }
+
+  const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  const distinct = new Set(rows.map(r => (r.itemName || '').toLowerCase())).size;
+  const tile = (label, val, cls) => `
+    <div class="bg-white rounded-2xl shadow-card p-4 text-center">
+      <div class="font-display text-3xl font-semibold ${cls} stat-numeral">${escapeHTML(String(val))}</div>
+      <div class="text-[10px] uppercase tracking-[0.14em] text-slate-400 font-semibold mt-1">${escapeHTML(label)}</div>
+    </div>`;
+
+  // Worst offenders: qty is the honest ranking, but a line with no qty still
+  // counts as an occurrence — show both so one big dump can't hide a daily drip.
+  const byItem = {};
+  rows.forEach(r => {
+    const k = (r.itemName || '—').trim();
+    (byItem[k] = byItem[k] || { name: k, qty: 0, n: 0 });
+    byItem[k].qty += Number(r.qty) || 0;
+    byItem[k].n   += 1;
+  });
+  const ranked = Object.values(byItem).sort((a, b) => b.qty - a.qty || b.n - a.n).slice(0, 8);
+  const maxQty = Math.max(...ranked.map(x => x.qty), 1);
+
+  const body = rows.map(r => {
+    const who = elLoggedBy(r.recordedBy);
+    return `<tr class="border-t border-slate-50">
+      <td class="px-3 py-2 whitespace-nowrap tabular-nums text-slate-500">${escapeHTML(fmtDate(r.countDate))}</td>
+      <td class="px-3 py-2 whitespace-nowrap text-slate-500 text-xs">${escapeHTML(r.branch || '')}</td>
+      <td class="px-3 py-2 text-slate-800">${escapeHTML(r.itemName || '—')}</td>
+      <td class="px-3 py-2 text-right tabular-nums text-rose-600 font-semibold">${r.qty != null ? escapeHTML(String(r.qty)) : '—'}</td>
+      <td class="px-3 py-2 text-slate-500">${escapeHTML(r.note || '')}</td>
+      <td class="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">${escapeHTML(who)}</td>
+    </tr>`;
+  }).join('');
+
+  return `${header}
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      ${tile('Lines logged', rows.length, 'text-slate-900')}
+      ${tile('Total qty', +totalQty.toFixed(2), 'text-rose-600')}
+      ${tile('Distinct items', distinct, 'text-slate-900')}
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-card p-4 mb-4">
+      <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold mb-3">Most expired this month</div>
+      <div class="space-y-2">
+        ${ranked.map(x => `
+          <div class="flex items-center gap-3">
+            <div class="w-40 shrink-0 text-sm text-slate-700 truncate" title="${escapeHTML(x.name)}">${escapeHTML(x.name)}</div>
+            <div class="flex-1 bg-slate-100 rounded-full h-2.5 overflow-hidden">
+              <div class="bg-rose-400 h-2.5 rounded-full" style="width:${Math.max(2, Math.round(x.qty / maxQty * 100))}%"></div>
+            </div>
+            <div class="w-24 text-right text-xs tabular-nums text-slate-500">${+x.qty.toFixed(2)} · ${x.n}&times;</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-2 mb-3">
+      <button onclick="exportExpiredLogCSV()" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+      <button onclick="window.print()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+            <th class="px-3 py-2 text-left">Date</th>
+            <th class="px-3 py-2 text-left">Branch</th>
+            <th class="px-3 py-2 text-left">Item</th>
+            <th class="px-3 py-2 text-right">Qty</th>
+            <th class="px-3 py-2 text-left">Note</th>
+            <th class="px-3 py-2 text-left">Logged by</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
+function exportExpiredLogCSV() {
+  const rows = elRows();
+  if (!rows.length) { toast('Nothing to export', 'info'); return; }
+  const out = [['Branch','Date','Item','Qty','Note','Logged by']];
+  rows.forEach(r => out.push([r.branch || '', r.countDate || '', r.itemName || '',
+    r.qty == null ? '' : r.qty, r.note || '', elLoggedBy(r.recordedBy)]));
+  const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `expired-${(expiredLogState.branch || 'all').toLowerCase()}-${expiredLogState.ym}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Expired log exported', 'success');
 }
 
 function renderDailyCountMonth(items, monthRows, ym, branch) {
@@ -27555,6 +27705,7 @@ function renderMain() {
     case 'suppliers':    content = hasRole('admin','head_barista','roaster') ? renderSuppliers() : renderRoleDashboard(); break;
     case 'inventory_hub': content = hasRole('admin','operations','head_barista','barista') ? renderInventoryHub() : renderRoleDashboard(); break;
     case 'daily_count':  content = hasRole('admin','head_barista','barista') ? renderDailyCount() : renderRoleDashboard(); break;
+    case 'expired_log':  content = hasRole('admin','head_barista','barista') ? renderExpiredLog() : renderRoleDashboard(); break;
     case 'weekly_count': content = hasRole('admin','head_barista','barista') ? renderWeeklyCount() : renderRoleDashboard(); break;
     case 'expiry_check': content = hasRole('admin','head_barista','barista') ? renderExpiryCheck() : renderRoleDashboard(); break;
     case 'bakery_transfers': content = hasRole('admin','bakery','operations') ? renderBakeryTransfers() : renderRoleDashboard(); break;
