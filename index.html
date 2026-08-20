@@ -25518,6 +25518,7 @@ const INV_USAGE_REASONS = [
   { key:'owner_coffee',  label:'Owner coffee' },
   { key:'owner_food',    label:'Owner sweet' },
   { key:'customer_comp', label:'Customer comp' },
+  { key:'expired',       label:'Expired' },
   { key:'rayyan_display', label:'Rayyan display' },
   { key:'other',         label:'Other' },
 ];
@@ -25972,6 +25973,7 @@ function invBuildDashboard(branch){
   // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
   // pooled. This is the "where did it go" breakdown that explains variance.
   const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
+  const expired = { coffeeG:0, sweets:0 };
   const ownerAgg = {}; const ownersTotal = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId) || null;
@@ -25980,6 +25982,10 @@ function invBuildDashboard(branch){
     const isCoffee = !!u.drinkId || (it && it.doseG!=null); // a drink or a bean = coffee
     const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
     if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
+    // Expired stock is waste with nobody to attribute it to. It MUST return
+    // before the staff fallthrough below, or it lands in someone's personal
+    // consumption and can trip the allowance warning.
+    if (u.reason==='expired'){ expired.coffeeG += grams; expired.sweets += pcs; return; }
     // Owners consume too, but they have no 1+1 allowance — aggregate per person.
     if (u.reason==='owner_coffee' || u.reason==='owner_food'){
       ownersTotal.coffeeG += grams; ownersTotal.sweets += pcs;
@@ -26005,12 +26011,13 @@ function invBuildDashboard(branch){
     .sort((x,y)=> (Number(y.over)-Number(x.over)) || ((y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000)));
   const staffOverCount = staffUsage.filter(a=>a.over).length;
   comps.coffeeG  = Math.round(comps.coffeeG);  comps.sweets  = Math.round(comps.sweets*100)/100;
+  expired.coffeeG = Math.round(expired.coffeeG); expired.sweets = Math.round(expired.sweets*100)/100;
   ownersTotal.coffeeG = Math.round(ownersTotal.coffeeG); ownersTotal.sweets = Math.round(ownersTotal.sweets*100)/100;
   const ownerUsage = Object.values(ownerAgg)
     .map(o=>({ ...o, coffeeG: Math.round(o.coffeeG), sweets: Math.round(o.sweets*100)/100 }))
     .filter(o=>o.coffeeG>0 || o.sweets>0)
     .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, expired, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 // Month-end roll-up for one branch+YYYY-MM: aggregates every shift in the
 // month into totals, per-category / per-item consumption, actual-vs-theoretical
@@ -26055,7 +26062,7 @@ function invBuildMonthReport(branch, ym){
   if (espHasActual||espHasSold) variance.push({ name:'Espresso (all)', unit:'kg', consumed:Math.round(espActual*1000)/1000, cups:espHasSold?espCups:null, theoretical:espHasSold?Math.round((espTheoG/1000)*1000)/1000:null, variance:espHasSold?Math.round(espActual*1000-espTheoG):null, varUnit:'g' });
   variance.sort((a,b)=>Math.abs(b.variance||0)-Math.abs(a.variance||0));
   // Staff / owner / comps usage over the month.
-  const staffAgg={}, comps={ coffeeG:0, sweets:0 }, ownerAgg={};
+  const staffAgg={}, comps={ coffeeG:0, sweets:0 }, expired={ coffeeG:0, sweets:0 }, ownerAgg={};
   shifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId) || null;
     if (!it && !u.drinkId) return;
@@ -26063,6 +26070,7 @@ function invBuildMonthReport(branch, ym){
     const isCoffee = !!u.drinkId || (it && it.doseG!=null);
     const pcs = isCoffee ? 0 : u.qty;
     if (u.reason==='customer_comp'){ comps.coffeeG+=grams; comps.sweets+=pcs; return; }
+    if (u.reason==='expired'){ expired.coffeeG+=grams; expired.sweets+=pcs; return; } // waste, not staff usage
     if (u.reason==='owner_coffee' || u.reason==='owner_food'){
       const ok = u.ownerId || ('emp:'+(u.employeeId||'_none'));
       const o = ownerAgg[ok] || (ownerAgg[ok]={ name:u.ownerId?invOwnerName(u.ownerId):invEmpName(u.employeeId), coffeeG:0, sweets:0 });
@@ -26077,10 +26085,11 @@ function invBuildMonthReport(branch, ym){
   const staff = Object.values(staffAgg).map(a=>({ ...a, coffeeDrinks:Math.round(a.coffeeDrinks*100)/100, coffeeG:Math.round(a.coffeeG), sweets:Math.round(a.sweets*100)/100 })).filter(a=>a.coffeeDrinks||a.sweets||a.coffeeG).sort((x,y)=>(y.coffeeG+y.sweets*1000)-(x.coffeeG+x.sweets*1000));
   const owners = Object.values(ownerAgg).map(o=>({ ...o, coffeeG:Math.round(o.coffeeG), sweets:Math.round(o.sweets*100)/100 })).filter(o=>o.coffeeG||o.sweets).sort((x,y)=>(y.coffeeG+y.sweets*1000)-(x.coffeeG+x.sweets*1000));
   comps.coffeeG=Math.round(comps.coffeeG); comps.sweets=Math.round(comps.sweets*100)/100;
+  expired.coffeeG=Math.round(expired.coffeeG); expired.sweets=Math.round(expired.sweets*100)/100;
   // Current needs-ordering snapshot (as of now, not month-historical).
   const lowList=[]; items.forEach(it=>{ const lc=invLatestClosing(branch, it.id); if(!lc) return; const thr=invThreshold(it); if(lc.qty<=thr) lowList.push({ name:it.name, category:DC_CATEGORIES[it.category]||it.category, onHand:lc.qty, thr, unit:it.unit }); });
   lowList.sort((a,b)=>(a.onHand-a.thr)-(b.onHand-b.thr));
-  return { branch, ym, shiftCount:shifts.length, closedCount:closed, daysWithData:dates.size, totalConsumed:Math.round(totalConsumed*100)/100, totalFoodics, waste, byCategory, byItem, variance, staff, owners, comps, lowList };
+  return { branch, ym, shiftCount:shifts.length, closedCount:closed, daysWithData:dates.size, totalConsumed:Math.round(totalConsumed*100)/100, totalFoodics, waste, byCategory, byItem, variance, staff, owners, comps, expired, lowList };
 }
 // Printable end-of-month inventory report for a branch. Loads the month on
 // demand, then opens the print window (letterhead + true-black tables, same
@@ -26158,7 +26167,7 @@ async function printInvMonthReport(branch, ym){
     <table class="rep"><thead><tr><th>Item</th><th>Actual</th><th>Theoretical</th><th>Variance</th></tr></thead><tbody>${varRows}</tbody></table>
 
     <h3>Staff consumption</h3>
-    <table class="rep"><thead><tr><th>Employee</th><th>Coffee</th><th>Sweets</th></tr></thead><tbody>${staffRows}${ownerRows?`<tr><td colspan="3" style="background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase">Owners</td></tr>${ownerRows}`:''}${(r.comps.coffeeG||r.comps.sweets)?`<tr><td>Customer comps</td><td class="r">${r.comps.coffeeG} g</td><td class="r">${r.comps.sweets||'—'}</td></tr>`:''}</tbody></table>
+    <table class="rep"><thead><tr><th>Employee</th><th>Coffee</th><th>Sweets</th></tr></thead><tbody>${staffRows}${ownerRows?`<tr><td colspan="3" style="background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase">Owners</td></tr>${ownerRows}`:''}${(r.comps.coffeeG||r.comps.sweets)?`<tr><td>Customer comps</td><td class="r">${r.comps.coffeeG} g</td><td class="r">${r.comps.sweets||'—'}</td></tr>`:''}${(r.expired&&(r.expired.coffeeG||r.expired.sweets))?`<tr><td>Expired</td><td class="r">${r.expired.coffeeG} g</td><td class="r">${r.expired.sweets||'—'}</td></tr>`:''}</tbody></table>
 
     <h3>Needs ordering / low stock (current)</h3>
     <table class="rep"><thead><tr><th>Item</th><th>Category</th><th>On hand</th><th>Reorder at</th><th>Status</th></tr></thead><tbody>${lowRows}</tbody></table>
@@ -26326,6 +26335,7 @@ function invBuildDashboardHTML(branch){
         <div class="flex items-center gap-2 flex-wrap">
           ${d.staffOverCount ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3.5 h-3.5')} ${d.staffOverCount} over allowance</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">all within allowance</span>`}
           ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span>${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
+          ${(d.expired && (d.expired.coffeeG||d.expired.sweets)) ? `<span class="text-[11px] text-rose-600">Expired: <span class="font-semibold">${d.expired.coffeeG} g</span>${d.expired.sweets?` · <span class="font-semibold">${d.expired.sweets}</span> sweets`:''}</span>` : ''}
         </div>
       </div>
       <div class="text-xs text-slate-500 mb-2">Allowance: <span class="font-medium text-slate-600">${INV_STAFF_ALLOWANCE.coffee} coffee + ${INV_STAFF_ALLOWANCE.sweet} sweet</span> per person/day. Anything beyond is over-allowance (excess cost), shown in red.</div>
