@@ -19315,9 +19315,36 @@ let expiredLogState = { branch:'ALL', ym:'' };
 function elBranches() {
   return expiredLogState.branch === 'ALL' ? COFFEE_BRANCHES.slice() : [expiredLogState.branch];
 }
+// Expired gets recorded in TWO places and both are real: the Daily count's
+// own expired panel (daily_expired), and the Inventory hub's shift-close
+// usage log (a usage row with reason 'expired'). A log that shows one and
+// not the other is worse than no log, so this normalises both into one shape.
+// Units differ between the two — daily-count qty is in that item's own unit,
+// shift-close qty is in servings — hence the Source column rather than a
+// single blended total.
 function elRows() {
   const ym = expiredLogState.ym, out = [];
-  elBranches().forEach(b => (state.dailyExpiredCache[dcCacheKey(b, ym)] || []).forEach(r => out.push(r)));
+  elBranches().forEach(b => {
+    (state.dailyExpiredCache[dcCacheKey(b, ym)] || []).forEach(r => out.push({
+      countDate: r.countDate || '', branch: r.branch || b,
+      itemName: r.itemName || '—', qty: r.qty, grams: null,
+      note: r.note || '', who: elLoggedBy(r.recordedBy), source: 'Daily count',
+    }));
+    (state.inventoryShiftsCache[invCacheKey(b, ym)] || []).forEach(sh => {
+      (sh.usage || []).filter(u => u.reason === 'expired').forEach(u => {
+        const it = (state.dailyCountItems || []).find(i => i.id === u.itemId) || null;
+        const dr = u.drinkId ? invDrinkById(u.drinkId) : null;
+        out.push({
+          countDate: sh.businessDate || '', branch: sh.branch || b,
+          itemName: dr ? dr.name : (it ? it.name : '—'),
+          qty: u.qty, grams: invUsageGrams(u, it) || null,
+          note: u.note || '',
+          who: u.employeeId ? invEmpName(u.employeeId) : (sh.closedByName || ''),
+          source: 'Shift close',
+        });
+      });
+    });
+  });
   return out.sort((a, b) => (b.countDate || '').localeCompare(a.countDate || '')
                          || (a.branch   || '').localeCompare(b.branch   || '')
                          || (a.itemName || '').localeCompare(b.itemName || ''));
@@ -19350,20 +19377,22 @@ function renderExpiredLog() {
     </div>`;
 
   const need = elBranches();
-  if (need.some(b => !state.dailyExpiredCache[dcCacheKey(b, ym)])) {
-    need.forEach(b => loadDailyExpired(b, ym));
+  const missing = need.some(b => !state.dailyExpiredCache[dcCacheKey(b, ym)]
+                              || !state.inventoryShiftsCache[invCacheKey(b, ym)]);
+  if (missing) {
+    need.forEach(b => { loadDailyExpired(b, ym); loadInventoryShifts(b, ym); });
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(ym)}…</div>`;
   }
 
   const rows = elRows();
   if (!rows.length) {
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">
-      Nothing logged as expired in ${escapeHTML(ym)}${branch === 'ALL' ? '' : ' at ' + escapeHTML(branch)}. That is good news — or nobody is logging.
+      Nothing logged as expired in ${escapeHTML(ym)}${branch === 'ALL' ? '' : ' at ' + escapeHTML(branch)} — from either the daily count or a shift close. That is good news, or nobody is logging.
     </div>`;
   }
 
-  const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
   const distinct = new Set(rows.map(r => (r.itemName || '').toLowerCase())).size;
+  const days     = new Set(rows.map(r => r.countDate)).size;
   const tile = (label, val, cls) => `
     <div class="bg-white rounded-2xl shadow-card p-4 text-center">
       <div class="font-display text-3xl font-semibold ${cls} stat-numeral">${escapeHTML(String(val))}</div>
@@ -19382,23 +19411,21 @@ function renderExpiredLog() {
   const ranked = Object.values(byItem).sort((a, b) => b.qty - a.qty || b.n - a.n).slice(0, 8);
   const maxQty = Math.max(...ranked.map(x => x.qty), 1);
 
-  const body = rows.map(r => {
-    const who = elLoggedBy(r.recordedBy);
-    return `<tr class="border-t border-slate-50">
+  const body = rows.map(r => `<tr class="border-t border-slate-50">
       <td class="px-3 py-2 whitespace-nowrap tabular-nums text-slate-500">${escapeHTML(fmtDate(r.countDate))}</td>
       <td class="px-3 py-2 whitespace-nowrap text-slate-500 text-xs">${escapeHTML(r.branch || '')}</td>
       <td class="px-3 py-2 text-slate-800">${escapeHTML(r.itemName || '—')}</td>
-      <td class="px-3 py-2 text-right tabular-nums text-rose-600 font-semibold">${r.qty != null ? escapeHTML(String(r.qty)) : '—'}</td>
+      <td class="px-3 py-2 text-right tabular-nums text-rose-600 font-semibold whitespace-nowrap">${r.qty != null ? escapeHTML(String(r.qty)) : '—'}${r.grams ? `<span class="text-[10px] font-normal text-slate-400"> · ${Math.round(r.grams)} g</span>` : ''}</td>
+      <td class="px-3 py-2 whitespace-nowrap"><span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.source === 'Shift close' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}">${escapeHTML(r.source)}</span></td>
       <td class="px-3 py-2 text-slate-500">${escapeHTML(r.note || '')}</td>
-      <td class="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">${escapeHTML(who)}</td>
-    </tr>`;
-  }).join('');
+      <td class="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">${escapeHTML(r.who || '')}</td>
+    </tr>`).join('');
 
   return `${header}
     <div class="grid grid-cols-3 gap-3 mb-4">
-      ${tile('Lines logged', rows.length, 'text-slate-900')}
-      ${tile('Total qty', +totalQty.toFixed(2), 'text-rose-600')}
+      ${tile('Lines logged', rows.length, 'text-rose-600')}
       ${tile('Distinct items', distinct, 'text-slate-900')}
+      ${tile('Days affected', days, 'text-slate-900')}
     </div>
 
     <div class="bg-white rounded-2xl shadow-card p-4 mb-4">
@@ -19428,6 +19455,7 @@ function renderExpiredLog() {
             <th class="px-3 py-2 text-left">Branch</th>
             <th class="px-3 py-2 text-left">Item</th>
             <th class="px-3 py-2 text-right">Qty</th>
+            <th class="px-3 py-2 text-left">Source</th>
             <th class="px-3 py-2 text-left">Note</th>
             <th class="px-3 py-2 text-left">Logged by</th>
           </tr>
@@ -19440,9 +19468,10 @@ function renderExpiredLog() {
 function exportExpiredLogCSV() {
   const rows = elRows();
   if (!rows.length) { toast('Nothing to export', 'info'); return; }
-  const out = [['Branch','Date','Item','Qty','Note','Logged by']];
+  const out = [['Branch','Date','Item','Qty','Coffee g','Source','Note','Logged by']];
   rows.forEach(r => out.push([r.branch || '', r.countDate || '', r.itemName || '',
-    r.qty == null ? '' : r.qty, r.note || '', elLoggedBy(r.recordedBy)]));
+    r.qty == null ? '' : r.qty, r.grams ? Math.round(r.grams) : '',
+    r.source || '', r.note || '', r.who || '']));
   const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   const a = document.createElement('a');
