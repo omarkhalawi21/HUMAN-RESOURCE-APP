@@ -5921,6 +5921,24 @@ CREATE TRIGGER notify_push_purchase
   );
 
 -- =============================================================
+-- 113. EXPIRY CHECKLIST -> DAILY COUNT LINK. The expiry checklist and the
+--      daily count are deliberately separate features with separate
+--      catalogs, so nothing connected an expiry-checklist item to the
+--      daily-count item that is physically the same thing. Without a link
+--      the daily count cannot show a countdown for a date the app already
+--      stores. Nullable on purpose: an expiry item that has no daily-count
+--      twin (or has not been paired yet) stays NULL and behaves exactly as
+--      before. ON DELETE SET NULL so retiring a daily-count item cannot
+--      cascade away expiry history.
+-- =============================================================
+ALTER TABLE public.expiry_check_items
+  ADD COLUMN IF NOT EXISTS dc_item_id uuid
+  REFERENCES public.daily_count_items(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS expiry_check_items_dc_item_idx
+  ON public.expiry_check_items(dc_item_id);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
