@@ -19315,9 +19315,36 @@ let expiredLogState = { branch:'ALL', ym:'' };
 function elBranches() {
   return expiredLogState.branch === 'ALL' ? COFFEE_BRANCHES.slice() : [expiredLogState.branch];
 }
+// Expired gets recorded in TWO places and both are real: the Daily count's
+// own expired panel (daily_expired), and the Inventory hub's shift-close
+// usage log (a usage row with reason 'expired'). A log that shows one and
+// not the other is worse than no log, so this normalises both into one shape.
+// Units differ between the two — daily-count qty is in that item's own unit,
+// shift-close qty is in servings — hence the Source column rather than a
+// single blended total.
 function elRows() {
   const ym = expiredLogState.ym, out = [];
-  elBranches().forEach(b => (state.dailyExpiredCache[dcCacheKey(b, ym)] || []).forEach(r => out.push(r)));
+  elBranches().forEach(b => {
+    (state.dailyExpiredCache[dcCacheKey(b, ym)] || []).forEach(r => out.push({
+      countDate: r.countDate || '', branch: r.branch || b,
+      itemName: r.itemName || '—', qty: r.qty, grams: null,
+      note: r.note || '', who: elLoggedBy(r.recordedBy), source: 'Daily count',
+    }));
+    (state.inventoryShiftsCache[invCacheKey(b, ym)] || []).forEach(sh => {
+      (sh.usage || []).filter(u => u.reason === 'expired').forEach(u => {
+        const it = (state.dailyCountItems || []).find(i => i.id === u.itemId) || null;
+        const dr = u.drinkId ? invDrinkById(u.drinkId) : null;
+        out.push({
+          countDate: sh.businessDate || '', branch: sh.branch || b,
+          itemName: dr ? dr.name : (it ? it.name : '—'),
+          qty: u.qty, grams: invUsageGrams(u, it) || null,
+          note: u.note || '',
+          who: u.employeeId ? invEmpName(u.employeeId) : (sh.closedByName || ''),
+          source: 'Shift close',
+        });
+      });
+    });
+  });
   return out.sort((a, b) => (b.countDate || '').localeCompare(a.countDate || '')
                          || (a.branch   || '').localeCompare(b.branch   || '')
                          || (a.itemName || '').localeCompare(b.itemName || ''));
@@ -19350,20 +19377,22 @@ function renderExpiredLog() {
     </div>`;
 
   const need = elBranches();
-  if (need.some(b => !state.dailyExpiredCache[dcCacheKey(b, ym)])) {
-    need.forEach(b => loadDailyExpired(b, ym));
+  const missing = need.some(b => !state.dailyExpiredCache[dcCacheKey(b, ym)]
+                              || !state.inventoryShiftsCache[invCacheKey(b, ym)]);
+  if (missing) {
+    need.forEach(b => { loadDailyExpired(b, ym); loadInventoryShifts(b, ym); });
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-400 text-sm">Loading ${escapeHTML(ym)}…</div>`;
   }
 
   const rows = elRows();
   if (!rows.length) {
     return `${header}<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">
-      Nothing logged as expired in ${escapeHTML(ym)}${branch === 'ALL' ? '' : ' at ' + escapeHTML(branch)}. That is good news — or nobody is logging.
+      Nothing logged as expired in ${escapeHTML(ym)}${branch === 'ALL' ? '' : ' at ' + escapeHTML(branch)} — from either the daily count or a shift close. That is good news, or nobody is logging.
     </div>`;
   }
 
-  const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
   const distinct = new Set(rows.map(r => (r.itemName || '').toLowerCase())).size;
+  const days     = new Set(rows.map(r => r.countDate)).size;
   const tile = (label, val, cls) => `
     <div class="bg-white rounded-2xl shadow-card p-4 text-center">
       <div class="font-display text-3xl font-semibold ${cls} stat-numeral">${escapeHTML(String(val))}</div>
@@ -19382,23 +19411,21 @@ function renderExpiredLog() {
   const ranked = Object.values(byItem).sort((a, b) => b.qty - a.qty || b.n - a.n).slice(0, 8);
   const maxQty = Math.max(...ranked.map(x => x.qty), 1);
 
-  const body = rows.map(r => {
-    const who = elLoggedBy(r.recordedBy);
-    return `<tr class="border-t border-slate-50">
+  const body = rows.map(r => `<tr class="border-t border-slate-50">
       <td class="px-3 py-2 whitespace-nowrap tabular-nums text-slate-500">${escapeHTML(fmtDate(r.countDate))}</td>
       <td class="px-3 py-2 whitespace-nowrap text-slate-500 text-xs">${escapeHTML(r.branch || '')}</td>
       <td class="px-3 py-2 text-slate-800">${escapeHTML(r.itemName || '—')}</td>
-      <td class="px-3 py-2 text-right tabular-nums text-rose-600 font-semibold">${r.qty != null ? escapeHTML(String(r.qty)) : '—'}</td>
+      <td class="px-3 py-2 text-right tabular-nums text-rose-600 font-semibold whitespace-nowrap">${r.qty != null ? escapeHTML(String(r.qty)) : '—'}${r.grams ? `<span class="text-[10px] font-normal text-slate-400"> · ${Math.round(r.grams)} g</span>` : ''}</td>
+      <td class="px-3 py-2 whitespace-nowrap"><span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.source === 'Shift close' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}">${escapeHTML(r.source)}</span></td>
       <td class="px-3 py-2 text-slate-500">${escapeHTML(r.note || '')}</td>
-      <td class="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">${escapeHTML(who)}</td>
-    </tr>`;
-  }).join('');
+      <td class="px-3 py-2 text-slate-400 text-xs whitespace-nowrap">${escapeHTML(r.who || '')}</td>
+    </tr>`).join('');
 
   return `${header}
     <div class="grid grid-cols-3 gap-3 mb-4">
-      ${tile('Lines logged', rows.length, 'text-slate-900')}
-      ${tile('Total qty', +totalQty.toFixed(2), 'text-rose-600')}
+      ${tile('Lines logged', rows.length, 'text-rose-600')}
       ${tile('Distinct items', distinct, 'text-slate-900')}
+      ${tile('Days affected', days, 'text-slate-900')}
     </div>
 
     <div class="bg-white rounded-2xl shadow-card p-4 mb-4">
@@ -19428,6 +19455,7 @@ function renderExpiredLog() {
             <th class="px-3 py-2 text-left">Branch</th>
             <th class="px-3 py-2 text-left">Item</th>
             <th class="px-3 py-2 text-right">Qty</th>
+            <th class="px-3 py-2 text-left">Source</th>
             <th class="px-3 py-2 text-left">Note</th>
             <th class="px-3 py-2 text-left">Logged by</th>
           </tr>
@@ -19440,9 +19468,10 @@ function renderExpiredLog() {
 function exportExpiredLogCSV() {
   const rows = elRows();
   if (!rows.length) { toast('Nothing to export', 'info'); return; }
-  const out = [['Branch','Date','Item','Qty','Note','Logged by']];
+  const out = [['Branch','Date','Item','Qty','Coffee g','Source','Note','Logged by']];
   rows.forEach(r => out.push([r.branch || '', r.countDate || '', r.itemName || '',
-    r.qty == null ? '' : r.qty, r.note || '', elLoggedBy(r.recordedBy)]));
+    r.qty == null ? '' : r.qty, r.grams ? Math.round(r.grams) : '',
+    r.source || '', r.note || '', r.who || '']));
   const csv = out.map(r => r.map(csvCell).join(',')).join('\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   const a = document.createElement('a');
@@ -25518,6 +25547,7 @@ const INV_USAGE_REASONS = [
   { key:'owner_coffee',  label:'Owner coffee' },
   { key:'owner_food',    label:'Owner sweet' },
   { key:'customer_comp', label:'Customer comp' },
+  { key:'expired',       label:'Expired' },
   { key:'rayyan_display', label:'Rayyan display' },
   { key:'other',         label:'Other' },
 ];
@@ -25972,6 +26002,7 @@ function invBuildDashboard(branch){
   // a pcs item (sweets) → pieces. Staff rows roll up per employee; comps are
   // pooled. This is the "where did it go" breakdown that explains variance.
   const staffAgg = {}; const comps = { coffeeG:0, sweets:0 };
+  const expired = { coffeeG:0, sweets:0 };
   const ownerAgg = {}; const ownersTotal = { coffeeG:0, sweets:0 };
   todayShifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId) || null;
@@ -25980,6 +26011,10 @@ function invBuildDashboard(branch){
     const isCoffee = !!u.drinkId || (it && it.doseG!=null); // a drink or a bean = coffee
     const pcs     = isCoffee ? 0 : u.qty;              // a sweet/pcs item
     if (u.reason==='customer_comp'){ comps.coffeeG += grams; comps.sweets += pcs; return; }
+    // Expired stock is waste with nobody to attribute it to. It MUST return
+    // before the staff fallthrough below, or it lands in someone's personal
+    // consumption and can trip the allowance warning.
+    if (u.reason==='expired'){ expired.coffeeG += grams; expired.sweets += pcs; return; }
     // Owners consume too, but they have no 1+1 allowance — aggregate per person.
     if (u.reason==='owner_coffee' || u.reason==='owner_food'){
       ownersTotal.coffeeG += grams; ownersTotal.sweets += pcs;
@@ -26005,12 +26040,13 @@ function invBuildDashboard(branch){
     .sort((x,y)=> (Number(y.over)-Number(x.over)) || ((y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000)));
   const staffOverCount = staffUsage.filter(a=>a.over).length;
   comps.coffeeG  = Math.round(comps.coffeeG);  comps.sweets  = Math.round(comps.sweets*100)/100;
+  expired.coffeeG = Math.round(expired.coffeeG); expired.sweets = Math.round(expired.sweets*100)/100;
   ownersTotal.coffeeG = Math.round(ownersTotal.coffeeG); ownersTotal.sweets = Math.round(ownersTotal.sweets*100)/100;
   const ownerUsage = Object.values(ownerAgg)
     .map(o=>({ ...o, coffeeG: Math.round(o.coffeeG), sweets: Math.round(o.sweets*100)/100 }))
     .filter(o=>o.coffeeG>0 || o.sweets>0)
     .sort((x,y)=> (y.coffeeG + y.sweets*1000) - (x.coffeeG + x.sweets*1000));
-  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
+  return { branch, items, days, catMap, lowList, varianceList, wasteToday, staffUsage, staffOverCount, comps, expired, ownersTotal, ownerUsage, morning, evening, foodicsToday, consumedToday, openCount: todayShifts.filter(s=>s.status==='open').length };
 }
 // Month-end roll-up for one branch+YYYY-MM: aggregates every shift in the
 // month into totals, per-category / per-item consumption, actual-vs-theoretical
@@ -26055,7 +26091,7 @@ function invBuildMonthReport(branch, ym){
   if (espHasActual||espHasSold) variance.push({ name:'Espresso (all)', unit:'kg', consumed:Math.round(espActual*1000)/1000, cups:espHasSold?espCups:null, theoretical:espHasSold?Math.round((espTheoG/1000)*1000)/1000:null, variance:espHasSold?Math.round(espActual*1000-espTheoG):null, varUnit:'g' });
   variance.sort((a,b)=>Math.abs(b.variance||0)-Math.abs(a.variance||0));
   // Staff / owner / comps usage over the month.
-  const staffAgg={}, comps={ coffeeG:0, sweets:0 }, ownerAgg={};
+  const staffAgg={}, comps={ coffeeG:0, sweets:0 }, expired={ coffeeG:0, sweets:0 }, ownerAgg={};
   shifts.forEach(s=> (s.usage||[]).forEach(u=>{
     const it = items.find(i=>i.id===u.itemId) || null;
     if (!it && !u.drinkId) return;
@@ -26063,6 +26099,7 @@ function invBuildMonthReport(branch, ym){
     const isCoffee = !!u.drinkId || (it && it.doseG!=null);
     const pcs = isCoffee ? 0 : u.qty;
     if (u.reason==='customer_comp'){ comps.coffeeG+=grams; comps.sweets+=pcs; return; }
+    if (u.reason==='expired'){ expired.coffeeG+=grams; expired.sweets+=pcs; return; } // waste, not staff usage
     if (u.reason==='owner_coffee' || u.reason==='owner_food'){
       const ok = u.ownerId || ('emp:'+(u.employeeId||'_none'));
       const o = ownerAgg[ok] || (ownerAgg[ok]={ name:u.ownerId?invOwnerName(u.ownerId):invEmpName(u.employeeId), coffeeG:0, sweets:0 });
@@ -26077,10 +26114,11 @@ function invBuildMonthReport(branch, ym){
   const staff = Object.values(staffAgg).map(a=>({ ...a, coffeeDrinks:Math.round(a.coffeeDrinks*100)/100, coffeeG:Math.round(a.coffeeG), sweets:Math.round(a.sweets*100)/100 })).filter(a=>a.coffeeDrinks||a.sweets||a.coffeeG).sort((x,y)=>(y.coffeeG+y.sweets*1000)-(x.coffeeG+x.sweets*1000));
   const owners = Object.values(ownerAgg).map(o=>({ ...o, coffeeG:Math.round(o.coffeeG), sweets:Math.round(o.sweets*100)/100 })).filter(o=>o.coffeeG||o.sweets).sort((x,y)=>(y.coffeeG+y.sweets*1000)-(x.coffeeG+x.sweets*1000));
   comps.coffeeG=Math.round(comps.coffeeG); comps.sweets=Math.round(comps.sweets*100)/100;
+  expired.coffeeG=Math.round(expired.coffeeG); expired.sweets=Math.round(expired.sweets*100)/100;
   // Current needs-ordering snapshot (as of now, not month-historical).
   const lowList=[]; items.forEach(it=>{ const lc=invLatestClosing(branch, it.id); if(!lc) return; const thr=invThreshold(it); if(lc.qty<=thr) lowList.push({ name:it.name, category:DC_CATEGORIES[it.category]||it.category, onHand:lc.qty, thr, unit:it.unit }); });
   lowList.sort((a,b)=>(a.onHand-a.thr)-(b.onHand-b.thr));
-  return { branch, ym, shiftCount:shifts.length, closedCount:closed, daysWithData:dates.size, totalConsumed:Math.round(totalConsumed*100)/100, totalFoodics, waste, byCategory, byItem, variance, staff, owners, comps, lowList };
+  return { branch, ym, shiftCount:shifts.length, closedCount:closed, daysWithData:dates.size, totalConsumed:Math.round(totalConsumed*100)/100, totalFoodics, waste, byCategory, byItem, variance, staff, owners, comps, expired, lowList };
 }
 // Printable end-of-month inventory report for a branch. Loads the month on
 // demand, then opens the print window (letterhead + true-black tables, same
@@ -26158,7 +26196,7 @@ async function printInvMonthReport(branch, ym){
     <table class="rep"><thead><tr><th>Item</th><th>Actual</th><th>Theoretical</th><th>Variance</th></tr></thead><tbody>${varRows}</tbody></table>
 
     <h3>Staff consumption</h3>
-    <table class="rep"><thead><tr><th>Employee</th><th>Coffee</th><th>Sweets</th></tr></thead><tbody>${staffRows}${ownerRows?`<tr><td colspan="3" style="background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase">Owners</td></tr>${ownerRows}`:''}${(r.comps.coffeeG||r.comps.sweets)?`<tr><td>Customer comps</td><td class="r">${r.comps.coffeeG} g</td><td class="r">${r.comps.sweets||'—'}</td></tr>`:''}</tbody></table>
+    <table class="rep"><thead><tr><th>Employee</th><th>Coffee</th><th>Sweets</th></tr></thead><tbody>${staffRows}${ownerRows?`<tr><td colspan="3" style="background:#f1f5f9;font-weight:700;font-size:10px;text-transform:uppercase">Owners</td></tr>${ownerRows}`:''}${(r.comps.coffeeG||r.comps.sweets)?`<tr><td>Customer comps</td><td class="r">${r.comps.coffeeG} g</td><td class="r">${r.comps.sweets||'—'}</td></tr>`:''}${(r.expired&&(r.expired.coffeeG||r.expired.sweets))?`<tr><td>Expired</td><td class="r">${r.expired.coffeeG} g</td><td class="r">${r.expired.sweets||'—'}</td></tr>`:''}</tbody></table>
 
     <h3>Needs ordering / low stock (current)</h3>
     <table class="rep"><thead><tr><th>Item</th><th>Category</th><th>On hand</th><th>Reorder at</th><th>Status</th></tr></thead><tbody>${lowRows}</tbody></table>
@@ -26326,6 +26364,7 @@ function invBuildDashboardHTML(branch){
         <div class="flex items-center gap-2 flex-wrap">
           ${d.staffOverCount ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-100 text-rose-700">${icon('warning','w-3.5 h-3.5')} ${d.staffOverCount} over allowance</span>` : `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700">all within allowance</span>`}
           ${(d.comps.coffeeG||d.comps.sweets) ? `<span class="text-[11px] text-slate-500">Comps: <span class="font-semibold text-slate-700">${d.comps.coffeeG} g</span>${d.comps.sweets?` · <span class="font-semibold text-slate-700">${d.comps.sweets}</span> sweets`:''}</span>` : ''}
+          ${(d.expired && (d.expired.coffeeG||d.expired.sweets)) ? `<span class="text-[11px] text-rose-600">Expired: <span class="font-semibold">${d.expired.coffeeG} g</span>${d.expired.sweets?` · <span class="font-semibold">${d.expired.sweets}</span> sweets`:''}</span>` : ''}
         </div>
       </div>
       <div class="text-xs text-slate-500 mb-2">Allowance: <span class="font-medium text-slate-600">${INV_STAFF_ALLOWANCE.coffee} coffee + ${INV_STAFF_ALLOWANCE.sweet} sweet</span> per person/day. Anything beyond is over-allowance (excess cost), shown in red.</div>
