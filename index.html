@@ -3715,11 +3715,30 @@ function renderShell(routeContent) {
         ${icon('close','w-3.5 h-3.5')} Exit preview
       </button>
     </div>` : '';
+  // An unsent punch follows the employee across every page, not just
+  // Attendance — the whole failure mode was someone walking away believing
+  // the day was recorded. It clears itself the moment the punch syncs.
+  const unsentPunchBanner = (() => {
+    const p = myPendingPunch();
+    if (!p) return '';
+    const what = p.clockOut ? `clock-out at ${p.clockOut}` : `clock-in at ${p.clockIn}`;
+    return `
+    <div class="bg-amber-400 text-amber-950 px-4 md:px-6 py-2 flex items-center justify-between gap-3 flex-wrap text-sm sticky top-0 z-30">
+      <div class="flex items-start gap-2 min-w-0">
+        <span class="shrink-0 mt-0.5">${icon('warning','w-4 h-4')}</span>
+        <span class="leading-snug"><strong>Your ${escapeHTML(what)} has not reached the system yet</strong> — it is saved on this phone and will send itself, with that same time, once you have signal. Do not clock in again.</span>
+      </div>
+      <button onclick="retryPendingPunchesNow()" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white text-amber-900 hover:bg-amber-50 text-xs font-semibold">
+        ${icon('clock','w-3.5 h-3.5')} Send now
+      </button>
+    </div>`;
+  })();
   return `
     <div class="flex min-h-screen ${lang==='ar'?'flex-row-reverse':''}">
       <div class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
       ${sidebar}
       <main class="flex-1 min-w-0">
+        ${unsentPunchBanner}
         ${previewBanner}
         ${topbar}
         <div class="p-4 md:p-6 fade-in" id="route-content">${routeContent}</div>
@@ -5886,6 +5905,18 @@ function renderAttendance() {
   const isOffToday = todayInfo.off;
   const offDayLabels = (myEx.offDays||[]).map(i=>dayNames()[i]).join(', ') || '—';
   const todayHoursLabel = isOffToday ? t('att_off_today') : `${todayInfo.start}–${todayInfo.end}`;
+  // A punch the network swallowed is held on this device. Show it in the tile,
+  // marked UNSENT, so the employee can still clock out normally and nobody has
+  // to guess whether the morning was recorded.
+  const pendPunch = myPendingPunch();
+  const shownIn   = myToday?.clockIn  || pendPunch?.clockIn  || '—';
+  const shownOut  = myToday?.clockOut || pendPunch?.clockOut || '—';
+  const shownHrs  = (shownIn !== '—' && shownOut !== '—')
+    ? minutesToHrs(attMinutes({ clockIn: shownIn, clockOut: shownOut, employeeId: me.id, date: today })) + 'h'
+    : '—';
+  const unsentPill = pendPunch
+    ? `<div class="mt-1 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">${icon('warning','w-3 h-3')} Not sent</div>`
+    : '';
   const clockTile = `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-6">
       <div class="flex items-center justify-between gap-4 flex-wrap">
@@ -5905,18 +5936,20 @@ function renderAttendance() {
         <div class="flex items-center gap-6">
           <div class="text-center">
             <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('clock_in'))}</div>
-            <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn || '—'}</div>
+            <div class="text-2xl font-bold ${pendPunch && !pendPunch.clockOut ? 'text-amber-700' : 'text-slate-900'}">${escapeHTML(shownIn)}</div>
+            ${pendPunch && !pendPunch.clockOut ? unsentPill : ''}
           </div>
           <div class="text-center">
             <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('clock_out'))}</div>
-            <div class="text-2xl font-bold text-slate-900">${myToday?.clockOut || '—'}</div>
+            <div class="text-2xl font-bold ${pendPunch && pendPunch.clockOut ? 'text-amber-700' : 'text-slate-900'}">${escapeHTML(shownOut)}</div>
+            ${pendPunch && pendPunch.clockOut ? unsentPill : ''}
           </div>
           <div class="text-center">
             <div class="text-xs text-slate-500 uppercase tracking-wider">${escapeHTML(t('att_hours'))}</div>
-            <div class="text-2xl font-bold text-slate-900">${myToday?.clockIn && myToday?.clockOut ? minutesToHrs(attMinutes(myToday))+'h' : '—'}</div>
+            <div class="text-2xl font-bold text-slate-900">${escapeHTML(shownHrs)}</div>
           </div>
-          ${!myToday ? `<button onclick="clockIn(event)" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
-            : !myToday.clockOut ? `<button onclick="clockOut(event)" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
+          ${!myToday && !pendPunch ? `<button onclick="clockIn(event)" class="btn btn-primary !py-3 !px-6">${icon('clock','w-5 h-5')} ${escapeHTML(t('clock_in'))}</button>`
+            : shownOut === '—' ? `<button onclick="clockOut(event)" class="btn btn-success !py-3 !px-6">${icon('check','w-5 h-5')} ${escapeHTML(t('clock_out'))}</button>`
             : `<div class="badge badge-green !px-4 !py-2">✓ ${escapeHTML(t('att_done_for_today'))}</div>`}
         </div>
       </div>
@@ -6148,6 +6181,198 @@ function miniStat(label, value, ico, color) {
     </div>
   `;
 }
+// --- Unsent-punch queue (the poor-wifi safety net) -----------------------
+// A clock action on a stalled connection used to fail SILENTLY: the Supabase
+// call had no timeout, so a half-open wifi link left the request hanging with
+// neither error nor success. The employee pocketed the phone believing they
+// had clocked in, and only discovered at clock-out that no record existed.
+// Now every punch is (a) hard-timed-out, (b) kept on the device WITH ITS REAL
+// PUNCH TIME when the network is at fault, and (c) retried until it lands.
+// The row that finally reaches the server carries the original clock time —
+// never the time the connection came back — so payroll stays honest.
+const PUNCH_QUEUE_KEY  = 'hassad_pending_punches_v1';
+const PUNCH_TIMEOUT_MS = 12000;   // hard ceiling on one clock request
+const PUNCH_RETRY_MS   = 20000;   // background retry cadence while anything is queued
+const PUNCH_QUEUE_MAX  = 20;      // sanity cap — a punch is one row per person per day
+
+function readPunchQueue() {
+  try { const a = JSON.parse(localStorage.getItem(PUNCH_QUEUE_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch (_) { return []; }   // localStorage unavailable (Safari private mode) or corrupt
+}
+function writePunchQueue(arr) {
+  try { localStorage.setItem(PUNCH_QUEUE_KEY, JSON.stringify(arr.slice(-PUNCH_QUEUE_MAX))); } catch (_) {}
+}
+// Entries are keyed by EMPLOYEE, not by device: branch iPads are shared and
+// RLS only lets a signed-in user insert their OWN attendance. Someone else's
+// unsent punch therefore waits, intact, until they sign in on this device again.
+function pendingPunch(empId, date) {
+  return readPunchQueue().find(p => p.employeeId === empId && p.date === date) || null;
+}
+function myPendingPunch() {
+  const me = currentEmployee();
+  return me ? pendingPunch(me.id, todayISO()) : null;
+}
+function queuePunch(entry) {
+  const q = readPunchQueue().filter(p => !(p.employeeId === entry.employeeId && p.date === entry.date));
+  q.push(entry);
+  writePunchQueue(q);
+  ensurePunchRetryTimer();
+}
+function dropPunch(lid) { writePunchQueue(readPunchQueue().filter(p => p.lid !== lid)); }
+function newPunchId() { return 'p' + Date.now() + Math.random().toString(36).slice(2, 7); }
+
+// Runs ONE PostgREST query under a hard timeout. `build(signal)` must return
+// the query builder with .abortSignal(signal) applied. Returns a plain
+// { data, error, timedOut } so callers never have to care whether the failure
+// arrived as a rejected promise or as PostgREST's error object.
+async function punchRequest(build) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PUNCH_TIMEOUT_MS);
+  try {
+    const res = await build(ctrl.signal);
+    return { data: (res && res.data) || null, error: (res && res.error) || null, timedOut: ctrl.signal.aborted };
+  } catch (e) {
+    return { data: null, error: e, timedOut: ctrl.signal.aborted };
+  } finally { clearTimeout(timer); }
+}
+// Separates "the network let us down — keep the punch and retry" from a real
+// rejection (RLS, constraint, bad payload) that no amount of retrying fixes.
+// Retrying the first is the whole point; queueing the second would hide a bug.
+function isConnectivityFailure(error, timedOut) {
+  if (timedOut) return true;
+  if (navigator.onLine === false) return true;
+  const m = String((error && (error.message || error.msg)) || error || '');
+  return /failed to fetch|networkerror|load failed|network ?request ?failed|abort|timed? ?out/i.test(m);
+}
+function mergeAttendanceRow(row) {
+  const rec = mapAttendanceFromDb(row);
+  const i = state.attendance.findIndex(a => a.id === rec.id);
+  if (i >= 0) state.attendance[i] = rec; else state.attendance.unshift(rec);
+  return rec;
+}
+function notePunchFailure(lid, res) {
+  const q = readPunchQueue();
+  const e = q.find(x => x.lid === lid);
+  if (!e) return;
+  e.attempts = (e.attempts || 0) + 1;
+  e.lastError = res.timedOut ? 'Timed out' : String((res.error && res.error.message) || 'No connection').slice(0, 120);
+  writePunchQueue(q);
+}
+
+let _punchSyncing = false;
+let _punchRetryId = null;
+// One shared interval, started only while something is queued and cleared the
+// moment the queue drains — same discipline as the dashboard clock ticker.
+function ensurePunchRetryTimer() {
+  if (_punchRetryId != null) return;
+  if (!readPunchQueue().length) return;
+  _punchRetryId = setInterval(() => {
+    if (!readPunchQueue().length) { clearInterval(_punchRetryId); _punchRetryId = null; return; }
+    syncPendingPunches({ quiet: true });
+  }, PUNCH_RETRY_MS);
+}
+// Pushes queued punches to Supabase. Safe to call at any moment: no-ops
+// without a session, skips other employees' entries (RLS would reject them),
+// and — critically — CHECKS THE SERVER FIRST. After a timeout we genuinely do
+// not know whether the write landed, so a blind re-insert could double-punch
+// the day. Resolves to true if at least one punch reached the server.
+async function syncPendingPunches(opts = {}) {
+  if (_punchSyncing) return false;
+  const me = state.session ? currentEmployee() : null;
+  if (!me) return false;
+  const mine = readPunchQueue().filter(p => p.employeeId === me.id);
+  if (!mine.length) return false;
+  _punchSyncing = true;
+  let landed = 0;
+  try {
+    for (const p of mine) {
+      const found = await punchRequest(s => sb.from('attendance').select('*')
+        .eq('employee_id', p.employeeId).eq('date', p.date).limit(1).abortSignal(s));
+      if (found.error) { notePunchFailure(p.lid, found); continue; }
+      const row = (found.data && found.data[0]) || null;
+      let saved = null;
+      if (row) {
+        // The original write DID land (or a manager entered the day by hand).
+        // Only fill in a clock-out this device captured while offline.
+        if (p.clockOut && !row.clock_out) {
+          const upd = await punchRequest(s => sb.from('attendance')
+            .update({ clock_out: p.clockOut }).eq('id', row.id).select().single().abortSignal(s));
+          if (upd.error) { notePunchFailure(p.lid, upd); continue; }
+          saved = upd.data;
+        } else saved = row;
+      } else {
+        const ins = await punchRequest(s => sb.from('attendance').insert({
+          employee_id: p.employeeId, date: p.date,
+          clock_in: p.clockIn, clock_out: p.clockOut || null, status: p.status,
+          location_lat: p.lat, location_lng: p.lng, location_label: p.locLabel,
+          branch_id: p.branchId,
+        }).select().single().abortSignal(s));
+        if (ins.error) { notePunchFailure(p.lid, ins); continue; }
+        saved = ins.data;
+      }
+      dropPunch(p.lid);
+      landed++;
+      if (saved) mergeAttendanceRow(saved);
+    }
+  } finally { _punchSyncing = false; }
+  if (landed) {
+    render();
+    toast(landed === 1
+      ? 'Saved — your clock record reached the system.'
+      : `Saved — ${landed} held clock records reached the system.`, 'success');
+  }
+  return landed > 0;
+}
+// Manual "Send now" from the banner or the unsent-punch modal.
+async function retryPendingPunchesNow() {
+  toast('Sending…');
+  const sent = await syncPendingPunches();
+  if (sent) return;
+  const still = myPendingPunch();
+  if (still) openPunchQueuedModal(still);
+  else toast('Nothing left to send.', 'success');
+}
+
+// Every failed clock action now ends in a modal the employee has to dismiss.
+// A toast was not enough: it fades within seconds, usually while they are
+// already walking onto the floor — which is exactly how people ended up
+// believing they had clocked in when they had not.
+function openClockFailedModal(action, message) {
+  const isIn = /in$/i.test(action);
+  openModal(`${action} did NOT go through`, `
+    <div class="rounded-xl border border-rose-200 bg-rose-50 p-4 flex items-start gap-3">
+      <div class="w-9 h-9 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">${icon('warning','w-5 h-5')}</div>
+      <div class="text-sm text-rose-900 min-w-0">
+        <div class="font-semibold">You are NOT ${isIn ? 'clocked in' : 'clocked out'}.</div>
+        <p class="mt-1">${escapeHTML(message)}</p>
+      </div>
+    </div>
+    <p class="mt-4 text-sm text-slate-600">Fix the problem above, then tap <strong>Try again</strong>. If it keeps failing, tell your manager now so your ${isIn ? 'start' : 'end'} time can be recorded by hand — do not just walk away.</p>
+  `, () => { setTimeout(() => { (isIn ? clockIn : clockOut)(); }, 0); }, { saveLabel: 'Try again', cancelLabel: 'Close' });
+}
+// Shown when the punch was captured but the network swallowed it. Different
+// message from the one above on purpose: the time IS safe, and clocking in a
+// second time is exactly the wrong reaction.
+function openPunchQueuedModal(entry) {
+  const isOut = !!entry.clockOut;
+  const what = isOut ? `Clock-out ${entry.clockOut}` : `Clock-in ${entry.clockIn}`;
+  openModal('Saved on this phone — not sent yet', `
+    <div class="rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-start gap-3">
+      <div class="w-9 h-9 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">${icon('clock','w-5 h-5')}</div>
+      <div class="text-sm text-amber-900 min-w-0">
+        <div class="font-semibold">${escapeHTML(what)} is being held on this phone.</div>
+        <p class="mt-1">The connection dropped before it reached the system. Your time is <strong>not lost</strong> — it is stored here and will be sent automatically, still stamped <strong>${escapeHTML(isOut ? entry.clockOut : entry.clockIn)}</strong>, as soon as you are back online.</p>
+      </div>
+    </div>
+    <ul class="mt-4 text-sm text-slate-600 space-y-1.5 list-disc ps-5">
+      <li><strong>Do not clock in again</strong> — that would create a second record for today.</li>
+      <li>Move somewhere with a better signal and tap <strong>Send now</strong>, or just keep using the app; it retries on its own.</li>
+      <li>Use this same phone — the record is held here, not on another device.</li>
+      <li>If the amber bar is still showing at the end of your shift, tell your manager.</li>
+    </ul>
+  `, () => { setTimeout(retryPendingPunchesNow, 0); }, { saveLabel: 'Send now', cancelLabel: 'OK' });
+}
+
 // --- Double-punch guard -------------------------------------------------
 // Network/GPS can make a clock action take several seconds, during which the
 // button still shows its OLD label. Users tap again → either a duplicate
@@ -6188,7 +6413,7 @@ async function captureClockLocation(action) {
   const requireBranch = branchesActive.length > 0;
   if (state.settings.requireLocation || requireBranch) {
     if (!navigator.geolocation) {
-      toast('This device does not support location. Ask your admin for help.', 'error');
+      openClockFailedModal(action, 'This device does not support location. Ask your admin for help.');
       return null;
     }
     toast('Capturing location...');
@@ -6196,7 +6421,7 @@ async function captureClockLocation(action) {
     try {
       pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, enableHighAccuracy: true }));
     } catch(e) {
-      toast('Could not get your location. Please enable location permissions and try again.', 'error');
+      openClockFailedModal(action, 'Could not get your location. Turn on location permission for this app, step outside if you are behind thick walls, and try again.');
       return null;
     }
     const lat = pos.coords.latitude, lng = pos.coords.longitude, acc = pos.coords.accuracy || 0;
@@ -6204,15 +6429,15 @@ async function captureClockLocation(action) {
     if (requireBranch) {
       const near = nearestBranch(lat, lng, acc);
       if (!near) {
-        toast('No active branches configured. Ask your admin.', 'error'); return null;
+        openClockFailedModal(action, 'No active branches are configured. Ask your admin.'); return null;
       }
       if (!near.within) {
         const dist = Math.round(near.distance);
-        toast(`You are ${dist}m from "${near.branch.name}". ${action} only works at a branch location.`, 'error');
+        openClockFailedModal(action, `You are ${dist}m from "${near.branch.name}". ${action} only works at a branch location.`);
         return null;
       }
       if (near.branch.isHeadOffice && !HEAD_OFFICE_ROLES.includes(realRole())) {
-        toast(`"${near.branch.name}" is the head office — ${action.toLowerCase()} here is for office staff only (admin, operations, accounting, marketing).`, 'error');
+        openClockFailedModal(action, `"${near.branch.name}" is the head office — ${action.toLowerCase()} here is for office staff only (admin, operations, accounting, marketing).`);
         return null;
       }
       branch = near.branch;
@@ -6232,6 +6457,11 @@ async function clockIn(ev) {
   if (state.attendance.find(a => a.employeeId===me.id && a.date===todayISO())) {
     toast('You are already clocked in today.'); return;
   }
+  // A punch still waiting on this device counts as clocked in — punching again
+  // would queue a second record for the same day.
+  if (pendingPunch(me.id, todayISO())) {
+    openPunchQueuedModal(pendingPunch(me.id, todayISO())); return;
+  }
   const now = nowHHMM();
   /* Use today's specific schedule; warn (but allow) if today is an off-day */
   const today = todaysShift(me.id);
@@ -6247,13 +6477,33 @@ async function clockIn(ev) {
   if (!geo) return;
   const location = geo.location, branch = geo.branch;
 
-  const { data, error } = await sb.from('attendance').insert({
-    employee_id: me.id, date: todayISO(),
-    clock_in: now, clock_out: null, status,
-    location_lat: location?.lat || null, location_lng: location?.lng || null, location_label: location?.label || null,
-    branch_id: branch?.id || null,
-  }).select().single();
-  if (error) { toast(humanizeError(error), 'error'); return; }
+  // Everything the row needs, captured NOW. If the network fails this exact
+  // payload is what gets held on the device and replayed later — so the punch
+  // keeps its real time, branch and GPS rather than the time it finally synced.
+  const punch = {
+    lid: newPunchId(), employeeId: me.id, date: todayISO(),
+    clockIn: now, clockOut: null, status,
+    lat: location?.lat ?? null, lng: location?.lng ?? null, locLabel: location?.label || null,
+    branchId: branch?.id || null, queuedAt: new Date().toISOString(),
+  };
+  const res = await punchRequest(s => sb.from('attendance').insert({
+    employee_id: punch.employeeId, date: punch.date,
+    clock_in: punch.clockIn, clock_out: null, status: punch.status,
+    location_lat: punch.lat, location_lng: punch.lng, location_label: punch.locLabel,
+    branch_id: punch.branchId,
+  }).select().single().abortSignal(s));
+  if (res.error) {
+    if (isConnectivityFailure(res.error, res.timedOut)) {
+      queuePunch(punch);
+      _clockLastAt = Date.now();   // it IS a punch — just not delivered yet
+      render();
+      openPunchQueuedModal(punch);
+      return;
+    }
+    openClockFailedModal('Clock-in', humanizeError(res.error));
+    return;
+  }
+  const data = res.data;
   _clockLastAt = Date.now();   // start the cooldown only on a real punch
   state.attendance.unshift(mapAttendanceFromDb(data));
   render();
@@ -6275,8 +6525,12 @@ async function clockOut(ev) {
   if (!me) return;
   const today = todayISO();
   const rec = state.attendance.find(a => a.employeeId===me.id && a.date===today);
-  if (!rec) { toast('No clock-in found', 'error'); return; }
-  if (rec.clockOut) { toast('You already clocked out today.'); return; }  // never double clock-out
+  // The morning punch may still be sitting in this device's queue — that is a
+  // real clock-in as far as the employee is concerned, so clocking out has to
+  // work off it exactly the same way.
+  const pend = pendingPunch(me.id, today);
+  if (!rec && !pend) { toast('No clock-in found', 'error'); return; }
+  if ((rec && rec.clockOut) || (pend && pend.clockOut)) { toast('You already clocked out today.'); return; }  // never double clock-out
   // Same physical-presence restriction as clock-in: you must be at a branch
   // (and pass the head-office role gate) to clock out. Gate only — clock-in's
   // captured location/branch on the row is preserved.
@@ -6286,14 +6540,48 @@ async function clockOut(ev) {
   // Catch the "clocked in & out at the same time" mistake: if the clock-in
   // was only minutes ago, make them confirm. Genuine short shifts still go
   // through; an accidental tap gets cancelled here.
-  const sinceIn = diffMinutes(rec.clockIn, newOut);
+  const sinceIn = diffMinutes(rec ? rec.clockIn : pend.clockIn, newOut);
   if (sinceIn >= 0 && sinceIn < CLOCK_MIN_SHIFT_MIN) {
     if (!confirm(`You clocked in only ${sinceIn} minute${sinceIn===1?'':'s'} ago. Are you sure you want to clock out?`)) return;
   }
-  const { data, error } = await sb.from('attendance').update({ clock_out: newOut }).eq('id', rec.id).select().single();
-  if (error) { toast(humanizeError(error), 'error'); return; }
+  // Clock-in never reached the server: stamp the clock-out onto that SAME
+  // queued entry so the two halves sync later as one complete row, instead of
+  // racing each other into two.
+  if (!rec) {
+    const q = readPunchQueue();
+    const held = q.find(x => x.lid === pend.lid) || pend;
+    held.clockOut = newOut;
+    writePunchQueue(q);
+    _clockLastAt = Date.now();
+    render();
+    if (await syncPendingPunches()) return;     // connection is back — it just landed
+    openPunchQueuedModal(held);
+    return;
+  }
+  const res = await punchRequest(s => sb.from('attendance')
+    .update({ clock_out: newOut }).eq('id', rec.id).select().single().abortSignal(s));
+  if (res.error) {
+    if (isConnectivityFailure(res.error, res.timedOut)) {
+      // The clock-in row exists on the server; hold just the clock-out. The
+      // sync pass finds that row and fills the column in.
+      const held = {
+        lid: newPunchId(), employeeId: me.id, date: today,
+        clockIn: rec.clockIn, clockOut: newOut, status: rec.status,
+        lat: rec.location?.lat ?? null, lng: rec.location?.lng ?? null,
+        locLabel: rec.location?.label || null, branchId: rec.branchId || null,
+        queuedAt: new Date().toISOString(),
+      };
+      queuePunch(held);
+      _clockLastAt = Date.now();
+      render();
+      openPunchQueuedModal(held);
+      return;
+    }
+    openClockFailedModal('Clock-out', humanizeError(res.error));
+    return;
+  }
   _clockLastAt = Date.now();   // start the cooldown only on a real punch
-  Object.assign(rec, mapAttendanceFromDb(data));
+  Object.assign(rec, mapAttendanceFromDb(res.data));
   render();
   toast('Clocked out — have a good rest!', 'success');
   } finally {
@@ -25086,6 +25374,7 @@ function openModal(title, bodyHTML, onSave, opts = {}) {
   _modalPrevFocus = document.activeElement;
   const titleId = 'modal-title-' + Date.now();
   const saveLabel = opts.saveLabel || t('save');
+  const cancelLabel = opts.cancelLabel || t('cancel');
   const m = el(`
     <div id="modal-root" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop fade-in"
          role="dialog" aria-modal="true" aria-labelledby="${titleId}">
@@ -25096,7 +25385,7 @@ function openModal(title, bodyHTML, onSave, opts = {}) {
         </div>
         <div class="p-5 overflow-y-auto">${bodyHTML}</div>
         <div class="flex justify-end gap-2 p-5 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
-          <button onclick="closeModal()" class="btn btn-ghost">${escapeHTML(t('cancel'))}</button>
+          <button onclick="closeModal()" class="btn btn-ghost">${escapeHTML(cancelLabel)}</button>
           <button id="modal-save-btn" onclick="submitModal()" class="btn btn-primary">${escapeHTML(saveLabel)}</button>
         </div>
       </div>
@@ -27815,6 +28104,10 @@ async function bootstrap() {
     }
   } catch(e) { console.error('Bootstrap error:', e); }
   render();
+  // Deliver any punch this device is still holding from a previous session —
+  // the employee may have clocked in on dead wifi and closed the app.
+  ensurePunchRetryTimer();
+  syncPendingPunches().catch(e => console.error('Punch sync failed:', e));
 
   // Force the "set new password" prompt if we arrived via a reset link.
   // The flag was captured up top BEFORE Supabase stripped the hash.
@@ -27846,12 +28139,29 @@ async function bootstrap() {
       await loadAll();
       initRealtime();
       render();
+      // A punch this person left queued on this shared device now has an
+      // owner session again, so RLS will finally accept it.
+      ensurePunchRetryTimer();
+      syncPendingPunches().catch(e => console.error('Punch sync failed:', e));
     } else if (event === 'TOKEN_REFRESHED') {
       // no-op
     }
   });
 }
 bootstrap();
+
+// The two moments a held punch is most likely to get through: the browser
+// reports the network is back, and the employee brings the app to the front
+// (unlocking the phone inside the branch's wifi). Both no-op when nothing is
+// queued, so they cost nothing on a normal day.
+window.addEventListener('online', () => {
+  syncPendingPunches().catch(e => console.error('Punch sync failed:', e));
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && readPunchQueue().length) {
+    syncPendingPunches({ quiet: true }).catch(e => console.error('Punch sync failed:', e));
+  }
+});
 
 // Live clock on dashboard. Started on first authenticated render and
 // cleared on logout via stopClockTicker().
