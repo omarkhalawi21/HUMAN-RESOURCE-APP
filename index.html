@@ -7536,6 +7536,86 @@ function holidayOtForEmployee(empId, ym, salary, holidaySet, attRows) {
 // historical/payslip compatibility; the choice of whether to carry
 // excess forward is left to the operator.
 const KSA_DEDUCTION_CAP_PCT = 0.5;
+/* ---------- Advance / loan balances (shared by payroll AND the Advances page) ----------
+   These live outside calcPayroll on purpose. The Advances page used to sum
+   the ORIGINAL amount of every unrepaid advance, so a 3,000 loan with 2,000
+   already recovered still read as 3,000 outstanding — the figure managers
+   look at before running payroll was overstated, sometimes badly. Payroll
+   itself was always right; it just kept the good logic to itself. One source
+   of truth now, so the page can never disagree with what payroll charges. */
+function advRound2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+// Loans are spread over at most 2 monthly installments (see the Advances page copy).
+function advLoanMonths(a) { return Math.min(2, Math.max(1, Number(a.installmentMonths) || 1)); }
+
+// GROUND-TRUTH advance recovery, from the money actually charged on issued
+// payslips — immune to the amount_recovered / installments_paid ledger
+// desyncing (a failed post-run bookkeeping update, or a column added after
+// an earlier run). Without this, a repayment that was charged but whose
+// ledger update didn't persist gets "forgotten" and re-charged next run —
+// the over-recovery bug (e.g. 500 in one month + full amount the next).
+// We sum each employee's advance/loan repayment lines across ALL payslips,
+// then allocate that pool across their approved advances oldest-first so
+// already-repaid ones consume their share and outstanding ones get the
+// correct remainder. Used as a FLOOR on "already recovered" — it can only
+// reduce what we take, never increase it.
+function buildAdvanceRecoveryMap() {
+  const recovered = new Map(); // advanceId -> amount already recovered (ground truth)
+  const poolByEmp = new Map();
+  for (const p of (state.payroll || [])) {
+    let sum = 0;
+    for (const adj of (p.adjustments || [])) {
+      if (adj.kind === 'deduction' && /^(advance|loan)\s+repayment/i.test(adj.label || '')) sum += Number(adj.amount) || 0;
+    }
+    if (sum) poolByEmp.set(p.employeeId, advRound2((poolByEmp.get(p.employeeId) || 0) + sum));
+  }
+  const advsByEmp = new Map();
+  for (const a of (state.advances || [])) {
+    if (a.status !== 'approved') continue;
+    if (!advsByEmp.has(a.employeeId)) advsByEmp.set(a.employeeId, []);
+    advsByEmp.get(a.employeeId).push(a);
+  }
+  for (const [empId, advs] of advsByEmp) {
+    let pool = poolByEmp.get(empId) || 0;
+    advs.sort((x, y) => String(x.requestedAt || '').localeCompare(String(y.requestedAt || '')));
+    for (const a of advs) {
+      const amt = advRound2(a.amount);
+      const alloc = Math.min(pool, amt);
+      pool = advRound2(pool - alloc);
+      const stored = advRound2(a.amountRecovered);
+      recovered.set(a.id, Math.max(stored, alloc));
+    }
+  }
+  return recovered;
+}
+// How much of this advance/loan has already been repaid. Falls back to the
+// stored ledger when there is no payslip history to reconstruct from.
+function advanceRecovered(a, recMap) {
+  if (recMap && recMap.has(a.id)) return recMap.get(a.id);
+  if (a.kind === 'loan') return advRound2(advRound2(advRound2(a.amount) / advLoanMonths(a)) * (Number(a.installmentsPaid) || 0));
+  return advRound2(a.amountRecovered);
+}
+// What is still owed.
+function advanceRemaining(a, recMap) {
+  return Math.max(0, advRound2(advRound2(a.amount) - advanceRecovered(a, recMap)));
+}
+// What the NEXT payroll run would deduct for this one. Mirrors the take rule
+// in calcPayroll: a loan takes one installment (the last clears the balance);
+// an advance takes its monthly cap if one is set, otherwise the full balance.
+function advanceDueNextRun(a, recMap) {
+  if (a.status !== 'approved' || a.repaidAt) return 0;
+  const remaining = advanceRemaining(a, recMap);
+  if (remaining <= 0) return 0;
+  if (a.kind === 'loan') {
+    const months = advLoanMonths(a);
+    const paid = Number(a.installmentsPaid) || 0;
+    if (paid >= months) return 0;
+    const per = advRound2(advRound2(a.amount) / months);
+    return Math.min(remaining, (paid + 1) >= months ? remaining : per);
+  }
+  const cap = advRound2(a.monthlyRepayment);
+  return cap > 0 ? Math.min(cap, remaining) : remaining;
+}
+
 function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
   const deductionUpdates = new Map(); // deductionId -> true (flip to 'applied' after run)
@@ -7573,34 +7653,7 @@ function calcPayroll(ym) {
   // already-repaid ones consume their share and outstanding ones get the
   // correct remainder. Used as a FLOOR on "already recovered" — it can only
   // reduce what we take, never increase it.
-  const priorRecoveredById = new Map(); // advanceId -> amount already recovered (ground truth)
-  {
-    const poolByEmp = new Map();
-    for (const p of (state.payroll || [])) {
-      let sum = 0;
-      for (const adj of (p.adjustments || [])) {
-        if (adj.kind === 'deduction' && /^(advance|loan)\s+repayment/i.test(adj.label || '')) sum += Number(adj.amount) || 0;
-      }
-      if (sum) poolByEmp.set(p.employeeId, Math.round(((poolByEmp.get(p.employeeId) || 0) + sum) * 100) / 100);
-    }
-    const advsByEmp = new Map();
-    for (const a of (state.advances || [])) {
-      if (a.status !== 'approved') continue;
-      if (!advsByEmp.has(a.employeeId)) advsByEmp.set(a.employeeId, []);
-      advsByEmp.get(a.employeeId).push(a);
-    }
-    for (const [empId, advs] of advsByEmp) {
-      let pool = poolByEmp.get(empId) || 0;
-      advs.sort((x, y) => String(x.requestedAt || '').localeCompare(String(y.requestedAt || '')));
-      for (const a of advs) {
-        const amt = Math.round((Number(a.amount) || 0) * 100) / 100;
-        const alloc = Math.min(pool, amt);
-        pool = Math.round((pool - alloc) * 100) / 100;
-        const stored = Math.round((Number(a.amountRecovered) || 0) * 100) / 100;
-        priorRecoveredById.set(a.id, Math.max(stored, alloc));
-      }
-    }
-  }
+  const priorRecoveredById = buildAdvanceRecoveryMap();
   // Skip terminated employees — they should not appear in payroll runs
   // after their termination date. Branch-device (iPad) accounts are
   // excluded too: they are login rows, not paid staff.
@@ -7619,7 +7672,7 @@ function calcPayroll(ym) {
     // (persisted in adjustments) instead of an opaque lump, and the
     // advance/loan is marked repaid when fully recovered.
     //   • advance → recovered IN FULL from this run.
-    //   • loan    → equal installments over installment_months (≤3); the
+    //   • loan    → equal installments over installment_months (≤2); the
     //               last installment takes the remaining balance so the
     //               installments sum to the loan amount exactly.
     const advanceItems = [];
@@ -11897,9 +11950,18 @@ function renderAdvances() {
   const mine = all.filter(a => a.employeeId === me.id);
   const pending = all.filter(a => a.status==='pending');
   const rows = advTab==='mine' ? mine : advTab==='pending' ? pending : all;
+  // Balances come from the same helper payroll uses, so this page can never
+  // report a different number than the run will actually charge.
+  const advRec = buildAdvanceRecoveryMap();
+  const live = all.filter(a => a.status==='approved' && !a.repaidAt);
   const myApproved = mine.filter(a => a.status==='approved').reduce((s,a)=>s+Number(a.amount||0),0);
   const myPending  = mine.filter(a => a.status==='pending') .reduce((s,a)=>s+Number(a.amount||0),0);
-  const totalOutstanding = all.filter(a => a.status==='approved' && !a.repaidAt).reduce((s,a)=>s+Number(a.amount||0),0);
+  // Was: the sum of the ORIGINAL amounts, which ignored every repayment
+  // already taken and overstated what staff still owe.
+  const totalOutstanding = live.reduce((s,a)=>s+advanceRemaining(a, advRec),0);
+  const dueNextRun       = live.reduce((s,a)=>s+advanceDueNextRun(a, advRec),0);
+  const myOutstanding    = mine.filter(a => a.status==='approved' && !a.repaidAt)
+                               .reduce((s,a)=>s+advanceRemaining(a, advRec),0);
 
   const tabs = admin ? `
     <div class="flex gap-1 border-b border-slate-200 mb-5">
@@ -11910,14 +11972,14 @@ function renderAdvances() {
 
   const stats = admin ? `
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-      ${miniStat('Total outstanding', fmtMoney(totalOutstanding), 'cash', 'amber')}
+      ${miniStat('Still owed', fmtMoney(totalOutstanding), 'cash', 'amber')}
+      ${miniStat('Due next payroll run', fmtMoney(dueNextRun), 'wallet', 'red')}
       ${miniStat('Pending requests', pending.length, 'clock', 'amber')}
       ${miniStat('Approved (all-time)', all.filter(a=>a.status==='approved').length, 'check', 'green')}
-      ${miniStat('Rejected (all-time)', all.filter(a=>a.status==='rejected').length, 'close', 'red')}
     </div>
   ` : `
     <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-      ${miniStat('My approved', fmtMoney(myApproved), 'cash', 'green')}
+      ${miniStat('I still owe', fmtMoney(myOutstanding), 'cash', 'amber')}
       ${miniStat('My pending',  fmtMoney(myPending),  'clock', 'amber')}
       ${miniStat('Salary',      fmtMoney(me.salary),  'wallet', 'blue')}
     </div>
@@ -11945,9 +12007,9 @@ function renderAdvances() {
       </div>
       <div class="overflow-x-auto">
         <table class="data">
-          <thead><tr>${admin && advTab!=='mine'?'<th>Employee</th>':''}<th>Type</th><th>${escapeHTML(t('amount'))}</th><th>${escapeHTML(t('reason'))}</th><th>Requested</th><th>Status</th><th>Decision</th><th>Repaid</th><th class="!text-end">${admin?'Action':'Slip'}</th></tr></thead>
+          <thead><tr>${admin && advTab!=='mine'?'<th>Employee</th>':''}<th>Type</th><th>${escapeHTML(t('amount'))}</th><th>${escapeHTML(t('reason'))}</th><th>Requested</th><th>Status</th><th>Repaid so far</th><th class="!text-end">Still owed</th><th class="!text-end">Next run</th><th class="!text-end">${admin?'Action':'Slip'}</th></tr></thead>
           <tbody>
-            ${rows.length===0 ? `<tr><td colspan="${admin?9:8}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
+            ${rows.length===0 ? `<tr><td colspan="${admin?10:9}" class="text-center text-slate-400 !py-10">${escapeHTML(t('no_data'))}</td></tr>` :
               rows.map(a => {
                 const e = getEmployee(a.employeeId);
                 return `
@@ -11957,15 +12019,16 @@ function renderAdvances() {
                   <td class="font-bold text-slate-900">${fmtMoney(a.amount)}</td>
                   <td class="text-slate-600 text-sm max-w-xs truncate" title="${escapeHTML(a.reason||'')}">${escapeHTML(a.reason||'—')}</td>
                   <td class="text-slate-500 text-xs">${fmtDate(a.requestedAt)}</td>
-                  <td>${statusBadge(a.status)}</td>
-                  <td class="text-slate-500 text-xs">${a.decidedAt?fmtDate(a.decidedAt):'—'}</td>
+                  <td>${statusBadge(a.status)}${a.decidedAt?`<div class="text-[11px] text-slate-400 mt-0.5">${escapeHTML(fmtDate(a.decidedAt))}</div>`:''}</td>
                   <td>${a.repaidAt
                         ? `<span class="badge badge-green">Repaid ${fmtDate(a.repaidAt)}</span>`
                         : a.status==='approved'
                           ? (a.kind==='loan'
-                              ? `<span class="badge badge-amber">${a.installmentsPaid||0}/${Math.min(2,Math.max(1,a.installmentMonths||1))} installments paid</span>`
-                              : '<span class="badge badge-amber">Outstanding</span>')
+                              ? `<span class="badge badge-amber">${a.installmentsPaid||0}/${advLoanMonths(a)} installments · ${fmtMoney(advanceRecovered(a, advRec))}</span>`
+                              : `<span class="badge badge-amber">${fmtMoney(advanceRecovered(a, advRec))}</span>`)
                           : '—'}</td>
+                  <td class="!text-end font-bold tabular-nums ${a.status==='approved' && !a.repaidAt && advanceRemaining(a, advRec)>0 ? 'text-amber-700' : 'text-slate-400'}">${a.status==='approved' && !a.repaidAt ? fmtMoney(advanceRemaining(a, advRec)) : '—'}</td>
+                  <td class="!text-end tabular-nums ${advanceDueNextRun(a, advRec)>0 ? 'text-rose-700 font-semibold' : 'text-slate-400'}">${advanceDueNextRun(a, advRec)>0 ? '−'+fmtMoney(advanceDueNextRun(a, advRec)) : '—'}</td>
                   <td class="!text-end whitespace-nowrap">
                     ${admin ? (
                       a.status==='pending'?`
