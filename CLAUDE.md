@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single deployable `index.html` (~14k lines) — plain HTML + vanilla JS, no framework, no bundler — for Hassad Coffee Roasters. Backend is Supabase (Auth + Postgres). Deployed static to GitHub Pages; the same file run locally connects to the same Supabase project. All application logic lives in one large inline `<script>` in `index.html`.
+A single deployable `index.html` (~28k lines) — plain HTML + vanilla JS, no framework, no bundler — for Hassad Coffee Roasters. Backend is Supabase (Auth + Postgres). Deployed static to GitHub Pages; the same file run locally connects to the same Supabase project. All application logic lives in one large inline `<script>` in `index.html`.
 
 ## Commands
 
