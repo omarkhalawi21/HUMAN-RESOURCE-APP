@@ -4162,12 +4162,102 @@ function rtOnPurchase(payload, isInsert) {
   }
   render();
 }
+/* -------------------- WHO SHOULD BE HERE AND ISN'T --------------------
+   The offline punch queue rescues a clock-in that failed to send. It cannot
+   help the other half of the problem: someone who never opened the app at
+   all. That stayed invisible until payroll, by which point the day is
+   guesswork. This surfaces it while the shift is still running.
+
+   Deliberately sharper than the dashboard's `absentToday` count, which flags
+   anyone without a clock-in regardless of the hour or their schedule — at
+   06:00 that is the whole company, and it counts people on their day off.
+   Here, someone is only "not clocked in" when they were genuinely expected:
+   on shift today, past a grace period, not on leave, and not on a holiday. */
+const MISSING_CLOCKIN_GRACE_MIN = 30;   // minutes after shift start before we flag it
+function missingClockIns() {
+  const today = todayISO();
+  const now = nowHHMM();
+  // A company holiday means nobody is expected — never flag the whole roster.
+  if ((state.holidays || []).some(h => h.date === today)) return [];
+  // ANY attendance row counts as accounted for, including one a manager
+  // entered as absent or on-leave — that day has already been dealt with.
+  const handled = new Set((state.attendance || []).filter(a => a.date === today).map(a => a.employeeId));
+  const out = [];
+  for (const e of (state.employees || [])) {
+    if (!isPayableEmployee(e)) continue;      // skips terminated, pending and iPad logins
+    if (handled.has(e.id)) continue;
+    const sh = todaysShift(e.id);
+    if (sh.off) continue;                     // scheduled day off
+    const start = sh.start || state.settings.workStart;
+    if (!start) continue;
+    // Negative = the shift hasn't started yet. Night shifts that began
+    // yesterday also land negative here, so they're left alone.
+    const lateBy = diffMinutes(start, now);
+    if (lateBy < MISSING_CLOCKIN_GRACE_MIN) continue;
+    if ((state.leaveRequests || []).some(r => r.status === 'approved' && r.employeeId === e.id
+        && r.startDate <= today && r.endDate >= today)) continue;
+    out.push({ employee: e, start, lateBy });
+  }
+  return out.sort((a, b) => b.lateBy - a.lateBy);   // most overdue first
+}
+function lateByLabel(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h}h ${m}m late` : `${m}m late`;
+}
+// Dashboard card. Returns '' when there's nothing to report, so it can be
+// dropped into any dashboard unconditionally (same shape as
+// inventorySnapshotHTML / tasksSnapshotHTML).
+function missingClockInHTML() {
+  if (!canViewAttendanceAndLeave()) return '';
+  const list = missingClockIns();
+  if (!list.length) return '';
+  const rows = list.slice(0, 6).map(x => {
+    const e = x.employee;
+    const ex = getEmpExtras(e.id);
+    const where = ((ex && ex.branch) || e.department || '').trim();
+    return `
+      <div class="flex items-center gap-3 py-2 border-t border-rose-100 first:border-t-0">
+        ${avatarHTML(e, 32)}
+        <div class="min-w-0 flex-1">
+          <a href="#/employee/${e.id}" class="font-medium text-slate-900 hover:text-brand-700 hover:underline truncate block">${escapeHTML((e.firstName + ' ' + (e.lastName || '')).trim())}</a>
+          <div class="text-xs text-slate-500 truncate">${escapeHTML(where)}${where ? ' · ' : ''}shift started ${escapeHTML(x.start)}</div>
+        </div>
+        <span class="shrink-0 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5 tabular-nums">${escapeHTML(lateByLabel(x.lateBy))}</span>
+      </div>`;
+  }).join('');
+  return `
+    <div class="bg-white border border-rose-200 rounded-2xl p-5 mb-5">
+      <div class="flex items-start gap-3 mb-2">
+        <div class="w-10 h-10 rounded-full bg-rose-50 text-rose-700 flex items-center justify-center shrink-0">${icon('clock','w-5 h-5')}</div>
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-slate-900">${list.length} ${list.length === 1 ? 'person has' : 'people have'} not clocked in</div>
+          <div class="text-sm text-slate-500">On shift today, more than ${MISSING_CLOCKIN_GRACE_MIN} minutes past their start, with no clock-in and no approved leave.</div>
+        </div>
+      </div>
+      ${rows}
+      ${list.length > 6 ? `<div class="text-xs text-slate-500 pt-2 border-t border-rose-100">and ${list.length - 6} more</div>` : ''}
+      <a href="#/attendance" class="btn btn-primary btn-sm mt-3">${icon('clock','w-4 h-4')} Open attendance</a>
+    </div>`;
+}
 function buildNotifications() {
   const me = currentEmployee();
   const today = todayISO();
   const isMgr = canManagePeople();                 // admin / hr
   const isOps = hasRole('admin','operations');
   const out = [];
+  // One aggregated item, not one per person — a whole late shift would
+  // otherwise bury every other notification. The key is per-DAY so the count
+  // changing as people arrive doesn't re-alert, and hiding today's doesn't
+  // hide tomorrow's.
+  if (isMgr || isOps) {
+    const noClock = missingClockIns();
+    if (noClock.length) {
+      const names = noClock.slice(0,3).map(x => (x.employee.firstName+' '+(x.employee.lastName||'')).trim()).join(', ');
+      out.push({ key:'noclock-'+today, icon:'clock', tone:'red',
+        title:`${noClock.length} not clocked in`,
+        detail:`${names}${noClock.length>3?` +${noClock.length-3} more`:''}`, href:'#/attendance' });
+    }
+  }
   if (isMgr) {
     (state.leaveRequests||[]).filter(r=>r.status==='pending').forEach(r=>{
       const e=getEmployee(r.employeeId);
@@ -4456,6 +4546,8 @@ function renderDashboard() {
       </div>
     </div>
     ` : ''}
+
+    ${missingClockInHTML()}
 
     <!-- Greeting + clock-in widget -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
@@ -6531,7 +6623,21 @@ async function syncPendingPunches(opts = {}) {
           location_lat: p.lat, location_lng: p.lng, location_label: p.locLabel,
           branch_id: p.branchId,
         }).select().single().abortSignal(s));
-        if (ins.error) { notePunchFailure(p.lid, ins); continue; }
+        if (ins.error) {
+          // 23505 = the unique(employee_id, date) index from SQL block 114.
+          // The row landed between our SELECT and this INSERT (another device,
+          // or a manager entering the day). The punch IS recorded — dropping
+          // it is correct; retrying would fight the constraint forever and
+          // leave the amber "not sent" banner up for good.
+          if (String(ins.error.code || '') === '23505') {
+            const again = await punchRequest(s2 => sb.from('attendance').select('*')
+              .eq('employee_id', p.employeeId).eq('date', p.date).limit(1).abortSignal(s2));
+            dropPunch(p.lid); landed++;
+            if (again.data && again.data[0]) mergeAttendanceRow(again.data[0]);
+            continue;
+          }
+          notePunchFailure(p.lid, ins); continue;
+        }
         saved = ins.data;
       }
       dropPunch(p.lid);
@@ -6717,6 +6823,18 @@ async function clockIn(ev) {
     branch_id: punch.branchId,
   }).select().single().abortSignal(s));
   if (res.error) {
+    // Same unique-index case as the sync path: today is already recorded, so
+    // "Clock-in did NOT go through" would be an outright lie. Pull the real
+    // row in and say so plainly.
+    if (String(res.error.code || '') === '23505') {
+      const found = await punchRequest(s2 => sb.from('attendance').select('*')
+        .eq('employee_id', punch.employeeId).eq('date', punch.date).limit(1).abortSignal(s2));
+      if (found.data && found.data[0]) mergeAttendanceRow(found.data[0]);
+      _clockLastAt = Date.now();
+      render();
+      toast('You were already clocked in today.');
+      return;
+    }
     if (isConnectivityFailure(res.error, res.timedOut)) {
       queuePunch(punch);
       _clockLastAt = Date.now();   // it IS a punch — just not delivered yet
@@ -17750,6 +17868,8 @@ function renderOperationsDashboard() {
         <div class="text-xs text-slate-500 mt-1">${absentToday.length === 0 ? 'all accounted for' : 'no clock-in or leave'}</div>
       </div>
     </div>
+
+    ${missingClockInHTML()}
 
     <!-- Cross-branch alerts (read-only) -->
     ${crossBranchAlertsHTML()}

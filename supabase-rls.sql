@@ -5939,6 +5939,43 @@ CREATE INDEX IF NOT EXISTS expiry_check_items_dc_item_idx
   ON public.expiry_check_items(dc_item_id);
 
 -- =============================================================
+-- 114. ATTENDANCE — one row per employee per day (enforced, not assumed)
+--
+--   Five places in the app already assume a single attendance row per
+--   employee per day: the clock-in guard, the clock-out lookup, the offline
+--   punch sync, the dashboard status roll-up and calcPayroll. Nothing in the
+--   database enforced it. A second row for the same day (a manager entering
+--   the day by hand while the employee also clocks in, or two devices racing)
+--   would be silently ignored by every one of those lookups — .find() takes
+--   the first match — so hours could quietly go missing from payroll.
+--
+--   The base `attendance` table was created outside this file, so this is the
+--   first place the constraint appears. Verified clean before writing this:
+--   the duplicate query below returned 0 rows on production (2026-08-24).
+--
+--   The guard refuses to create the index if duplicates HAVE appeared since,
+--   and says what to fix instead of failing with a bare Postgres error.
+--   Safe to re-run: index creation is IF NOT EXISTS.
+-- =============================================================
+DO $$
+DECLARE dup_count integer;
+BEGIN
+  SELECT count(*) INTO dup_count FROM (
+    SELECT employee_id, date
+      FROM public.attendance
+     GROUP BY employee_id, date
+    HAVING count(*) > 1
+  ) d;
+  IF dup_count > 0 THEN
+    RAISE EXCEPTION
+      'Attendance uniqueness NOT applied: % employee/date pair(s) already have more than one row. List them with:  SELECT employee_id, date, count(*) FROM public.attendance GROUP BY employee_id, date HAVING count(*) > 1;  — merge or delete the extras, then re-run this block.', dup_count;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS attendance_employee_date_uidx
+  ON public.attendance (employee_id, date);
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
