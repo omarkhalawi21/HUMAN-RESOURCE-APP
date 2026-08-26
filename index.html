@@ -19533,7 +19533,10 @@ const DC_STEPS = [
   { key:'sweets', label:'Sweets',         cats:['pastry'] },
   { key:'beans',  label:'Beans & Coffee', cats:['espresso','v60','retail_250g','premium','boxes','other'] },
 ];
-let dailyCountState = { branch:'', date:'', view:'entry', step:0, draft:null };
+// expOpen: the expired-items panel now sits on EVERY counting step, not only
+// on Review. Collapsed by default so it doesn't push the item cards down, and
+// it stays open once opened — a second expired find then costs no extra tap.
+let dailyCountState = { branch:'', date:'', view:'entry', step:0, draft:null, expOpen:false };
 const _dcLoading = new Set();
 const _deLoading = new Set();
 
@@ -19687,6 +19690,7 @@ function renderDailyCount() {
             ${list.map(it => dcItemCard(it, branch, date)).join('')}
           </div>
         `).join('')}
+        ${dcExpiredSection(items, { collapsible: true })}
       </div>`;
   }
 
@@ -19886,6 +19890,7 @@ function dcAddItemExpired(itemId) {
     const it = (state.dailyCountItems || []).find(x => x.id === itemId);
     d.expired.push({ itemId, name: it ? it.name : '', qty:'', note:'' });
   }
+  dailyCountState.expOpen = true;   // so the logged line is visible, not hidden behind a fold
   dcRerender('dc-x-' + itemId);
 }
 function dcRemoveItemExpired(itemId) {
@@ -19956,7 +19961,11 @@ function dcRenderReview(branch, date, items) {
 // Record-only expired-item log, shown in Review. A variable-length list of
 // {item name, qty, note} — never touches counts or variance. Item name uses
 // a datalist of the count catalog but free text is allowed.
-function dcExpiredSection(items) {
+// `opts.collapsible` renders it as a fold-away card for the counting steps.
+// On Review it stays fully open — that's the moment for a last look before saving.
+function dcExpiredSection(items, opts = {}) {
+  const collapsible = !!opts.collapsible;
+  const open = !collapsible || dailyCountState.expOpen;
   const d = dailyCountState.draft;
   if (d) {
     if (!Array.isArray(d.expired)) d.expired = [];
@@ -19971,7 +19980,7 @@ function dcExpiredSection(items) {
   // Card-logged lines first (name already known), free-text lines after.
   const linked = [], loose = [];
   rows.forEach((l, i) => (l.itemId ? linked : loose).push([l, i]));
-  const opts = (items || []).map(it => `<option value="${escapeHTML(it.name)}">`).join('');
+  const itemOpts = (items || []).map(it => `<option value="${escapeHTML(it.name)}">`).join('');
   const filled = rows.filter(l => (l.name||'').trim() !== '').length;
   // A line logged from an item card: name is fixed, only qty/note are editable.
   // The hidden name input keeps dcCaptureExpired's index mapping intact.
@@ -19997,17 +20006,33 @@ function dcExpiredSection(items) {
     </div>`;
   return `
     <div class="bg-white rounded-2xl shadow-card p-4">
-      <div class="flex items-center justify-between gap-3 mb-1">
-        <div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items${filled?` (${filled})`:''}</div>
+      <div class="flex items-center justify-between gap-3 ${open ? 'mb-1' : ''}">
+        ${collapsible
+          ? `<button type="button" onclick="dcToggleExpired()" class="flex items-center gap-2 min-w-0 text-start" aria-expanded="${open}" aria-controls="dc-exp-body">
+               <span class="text-rose-500 text-xs">${open ? '&#9662;' : '&#9656;'}</span>
+               <span class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items</span>
+               ${filled ? `<span class="text-[10px] font-bold text-white bg-rose-500 rounded-full px-1.5 py-0.5 tabular-nums">${filled}</span>` : ''}
+             </button>`
+          : `<div class="text-[11px] uppercase tracking-[0.14em] text-rose-600 font-semibold">Expired items${filled?` (${filled})`:''}</div>`}
         <button type="button" onclick="dcAddExpiredRow()" class="btn btn-ghost btn-sm">${icon('plus','w-4 h-4')} Add line</button>
       </div>
+      ${!open ? '' : `<div id="dc-exp-body">
       <div class="text-[11px] text-slate-500 mb-3">Items found expired and pulled today. Fastest way is <strong>${escapeHTML(t('fl_log_expired'))}</strong> on the item's own card while counting — those show up here with the name filled in. Record-only: it doesn't change on-hand or variance (put it in <strong>${escapeHTML(t('fl_wasted'))}</strong> too if you binned it).</div>
-      <datalist id="dc-exp-items">${opts}</datalist>
+      <datalist id="dc-exp-items">${itemOpts}</datalist>
       <div class="space-y-2">
         ${linked.map(([l,i]) => linkedHTML(l,i)).join('')}
         ${loose.map(([l,i]) => looseHTML(l,i)).join('')}
       </div>
+      </div>`}
     </div>`;
+}
+// Toggling captures first: the rows about to be hidden still hold whatever was
+// typed into them, and dcCaptureExpired only reads inputs that are in the DOM.
+function dcToggleExpired() {
+  dcCaptureStep();
+  dcCaptureExpired();
+  dailyCountState.expOpen = !dailyCountState.expOpen;
+  dcRerender();
 }
 // Pull the rendered expired-row inputs back into the draft before any
 // re-render (add/remove line, Back/Next, Save) so nothing typed is lost.
@@ -20027,6 +20052,7 @@ function dcAddExpiredRow() {
   dcCaptureExpired();
   if (!Array.isArray(d.expired)) d.expired = [];
   d.expired.push({ itemId:null, name:'', qty:'', note:'' });
+  dailyCountState.expOpen = true;   // "Add line" from a collapsed panel must reveal it
   dcRerender('dc-exp-name-' + (d.expired.length - 1));
 }
 function dcRemoveExpiredRow(i) {
