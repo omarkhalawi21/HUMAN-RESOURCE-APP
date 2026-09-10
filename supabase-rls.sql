@@ -5976,6 +5976,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS attendance_employee_date_uidx
   ON public.attendance (employee_id, date);
 
 -- =============================================================
+-- 115. INVENTORY — keep history: archive items instead of deleting them
+--
+--   Deleting an inventory item used to CASCADE-delete every movement ever
+--   logged for it — every transfer, roast, count and pickup — so a bean
+--   removed months later took its whole history (and past months of the
+--   Roaster → Transfers report) with it.
+--
+--   1. inventory_items.archived_at — the app's Delete now archives any item
+--      that has history: hidden from lists and stock totals, kept in every
+--      report, restorable. Items with no history can still be deleted.
+--   2. inventory_movements.item_id becomes ON DELETE RESTRICT, so the
+--      database itself refuses to delete an item that still has movements
+--      (roast_batches already works this way).
+--
+--   No RLS change: archiving is an UPDATE, allowed to the same roles
+--   (admin, head_barista, roaster) that could delete. Safe to re-run: the
+--   FK is dropped by lookup (whatever its name) and re-added.
+-- =============================================================
+ALTER TABLE public.inventory_items ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+
+DO $$
+DECLARE c text;
+BEGIN
+  FOR c IN
+    SELECT con.conname
+      FROM pg_constraint con
+      JOIN pg_attribute att
+        ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+     WHERE con.conrelid  = 'public.inventory_movements'::regclass
+       AND con.confrelid = 'public.inventory_items'::regclass
+       AND con.contype   = 'f'
+       AND att.attname   = 'item_id'
+  LOOP
+    EXECUTE format('ALTER TABLE public.inventory_movements DROP CONSTRAINT %I', c);
+  END LOOP;
+  ALTER TABLE public.inventory_movements
+    ADD CONSTRAINT inventory_movements_item_id_fkey
+    FOREIGN KEY (item_id) REFERENCES public.inventory_items(id) ON DELETE RESTRICT;
+END $$;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
