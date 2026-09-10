@@ -1250,6 +1250,7 @@ function emptyState() {
     inventoryShiftsCache: {}, // on-demand per branch+YYYY-MM: { "RAYYAN|2026-05": [{ id, branch, businessDate, shift, status, openedByName, closedByName, foodicsTotal, counts:[{itemId, openingQty, closingQty, receivedQty}] }] } — reuses the daily_count_items catalog
     bakeryProducts: [],     // catalog: [{ id, name, sortOrder, active }]
     bakeryTransfersCache: {}, // on-demand per YYYY-MM (all branches): { "2026-05": [{ id, productId, branch, transferDate, qty }] }
+    beanTransfersCache: {},   // on-demand per YYYY-MM: type='transfer' inventory_movements for Roaster → Transfers (a failed load caches [] with .failed)
     bakeryIngredients: [],  // catalog: [{ id, name, sortOrder, active }]
     bakeryStockCache: {},   // on-demand per YYYY-MM: { "2026-05": [{ id, ingredientId, stockDate, usedQty }] }
     bakeryPurchasesCache: {}, // on-demand per YYYY-MM: { "2026-05": [{ id, ingredientId, ym, w1, w2, w3, w4, monthlyPurchase }] }
@@ -2970,6 +2971,7 @@ async function loadAll() {
     state.expiryChecksCache  = {};
     state.bakeryProducts     = (bakeryProductsR.data || []).map(mapBakeryProductFromDb);
     state.bakeryTransfersCache = {};
+    state.beanTransfersCache = {};
     state.bakeryIngredients  = (bakeryIngredientsR.data || []).map(mapBakeryIngredientFromDb);
     state.bakeryStockCache   = {};
     state.bakeryPurchasesCache = {}; // sibling cache; was previously omitted from loadAll's reset (drift), so a re-loadAll left stale entries from the prior session.
@@ -23282,6 +23284,9 @@ async function logInventoryMovement(itemId, qtyDelta, opts = {}) {
 
   Object.assign(it, mapInventoryItemFromDb(qIns.data));
   state.inventoryMovements.unshift(newMovement);
+  // Every transfer (the transfer modal or a hand-picked 'Transfer' entry)
+  // is written here, so this is the one place its month cache goes stale.
+  if (newMovement.type === 'transfer') delete state.beanTransfersCache[(newMovement.occurredAt || '').slice(0,7)];
   return newMovement;
 }
 
@@ -23622,14 +23627,27 @@ function recalcRoastYield() {
 // with "→ {destination}". Keeps the schema simple — the destination
 // branch lives in the note. Phase D can pair this with a matching
 // destination item if/when items are branch-scoped duplicates.
+// A transfer's destination and bag size are stored only in its note
+// ("→ KHOBAR · 3 pcs × 250g · courier"): composeTransferNote writes it,
+// parseTransferNote reads it back for Roaster → Transfers. Change both together.
+const transferPackLabel = (pack, qty) => pack && pack !== 'loose' ? `${+qty} pcs × ${pack}g` : '';
+function composeTransferNote(toBranch, pack, qty, notes) {
+  return [`→ ${toBranch || '?'}`, transferPackLabel(pack, qty), (notes || '').trim()].filter(Boolean).join(' · ');
+}
+function parseTransferNote(note) {
+  const dest = /^→\s*([^·]*?)\s*(?:·\s*([\s\S]*))?$/.exec(note || '');
+  let rest = dest ? (dest[2] || '') : (note || '');
+  const bag = /^(\d+(?:\.\d+)?)\s*pcs\s*×\s*(\d+)g\s*(?:·\s*)?/.exec(rest);
+  if (bag) rest = rest.slice(bag[0].length);
+  return { to: dest ? dest[1] : '', pack: bag ? Number(bag[2]) : 0, bags: bag ? Number(bag[1]) : 0, notes: rest.trim() };
+}
+
 async function logTransfer(itemId, qty, fromBranch, toBranch, opts = {}) {
-  const trimmedNotes = (opts.notes || '').trim();
-  const composedNote = `→ ${toBranch || '?'}${trimmedNotes ? ' · ' + trimmedNotes : ''}`;
   return logInventoryMovement(itemId, -Math.abs(Number(qty) || 0), {
     type: 'transfer',
     branch: fromBranch || null,
     occurredAt: opts.occurredAt,
-    notes: composedNote,
+    notes: composeTransferNote(toBranch, opts.pack, qty, opts.notes),
   });
 }
 
@@ -23707,9 +23725,8 @@ function openTransferModal() {
     // item's own unit (kg). The pack form is in the note, like the
     // destination, so phase-2 can post the piece count to the
     // destination branch's pcs-based daily-count item.
-    const packLabel = pack === 'loose' ? '' : `${+qty} pcs × ${pack}g`;
-    const composed = [packLabel, notes].filter(Boolean).join(' · ');
-    const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, notes: composed });
+    const packLabel = transferPackLabel(pack, qty);
+    const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, pack, notes });
     if (!m) return false;
     // If this bean+pack is mapped to a daily-count item, drop a pending
     // "incoming" for the destination branch to confirm during its count.
@@ -23824,6 +23841,7 @@ async function deleteInventoryMovement(movementId) {
     Object.assign(it, mapInventoryItemFromDb(qUpd.data));
   }
   state.inventoryMovements = state.inventoryMovements.filter(x => x.id !== movementId);
+  if (m.type === 'transfer') delete state.beanTransfersCache[(m.occurredAt || '').slice(0,7)];
   // If the history modal is open, re-render it to reflect the deletion.
   if (document.getElementById('modal-root')) {
     closeModal();
@@ -23832,6 +23850,20 @@ async function deleteInventoryMovement(movementId) {
   render();
   toast('Movement deleted, quantity restored', 'success');
 }
+
+// Print styles shared by the roaster's letterhead reports (weekly, transfers).
+const ROASTER_REPORT_CSS = `
+  .page { max-width: 960px; }
+  h3.section { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#0f172a; margin:22px 0 8px; }
+  table.t { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px; }
+  table.t th { text-align:left; padding:8px 10px; background:#0f172a; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; }
+  table.t td { padding:7px 10px; border-bottom:1px solid #e5e7eb; vertical-align:top; }
+  table.t tr:nth-child(even) td { background:#fafafa; }
+  table.t td.r, table.t th.r { text-align:right; font-variant-numeric: tabular-nums; }
+  .branch-foot td { background:#fdf6e8 !important; font-weight:700; }
+  .small { color:#6b7280; font-size:11px; }
+  @media print { .actions { display:none; } }
+`;
 
 // Letterhead-styled weekly inventory report. Mirrors the spreadsheet
 // layout: green beans block, per-branch roasted shelf, packaging,
@@ -23880,16 +23912,7 @@ function printWeeklyInventoryReport() {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Weekly Roaster Report — ${escapeHTML(state.settings.companyName||'')}</title>
   <style>
     ${LETTERHEAD_CSS}
-    .page { max-width: 960px; }
-    h3.section { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#0f172a; margin:22px 0 8px; }
-    table.t { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px; }
-    table.t th { text-align:left; padding:8px 10px; background:#0f172a; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; }
-    table.t td { padding:7px 10px; border-bottom:1px solid #e5e7eb; vertical-align:top; }
-    table.t tr:nth-child(even) td { background:#fafafa; }
-    table.t td.r, table.t th.r { text-align:right; font-variant-numeric: tabular-nums; }
-    .branch-foot { background:#fdf6e8 !important; font-weight:700; }
-    .small { color:#6b7280; font-size:11px; }
-    @media print { .actions { display:none; } }
+    ${ROASTER_REPORT_CSS}
   </style></head><body>
   <div class="actions" style="margin:18px;"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
   <div class="page">
@@ -24122,13 +24145,335 @@ async function deleteInventoryItem(id) {
   const { error } = await sb.from('inventory_items').delete().eq('id', id);
   if (error) { toast(humanizeError(error), 'error'); return; }
   state.inventory = state.inventory.filter(i => i.id !== id);
+  state.beanTransfersCache = {}; // its movements (incl. transfers) cascade-deleted
   render();
   toast('Item deleted', 'success');
 }
 
 /* -------------------- ROASTER (admin / head_barista / roaster) -------------------- */
-let roasterTab = 'green'; // 'green' | 'shelf' | 'weekly' | 'batches'
+let roasterTab = 'green'; // 'green' | 'shelf' | 'packaged' | 'weekly' | 'batches' | 'transfers'
 function setRoasterTab(t) { roasterTab = t; render(); }
+
+/* ---- Roaster → Transfers: every transfer sent between branches, with
+   month and year totals. Each "Log transfer" is ONE type='transfer'
+   movement on the source item (qty_delta < 0); the destination and bag
+   size live in its note (see composeTransferNote / parseTransferNote).
+   For bags the note's piece count is the truth — qty_delta holds pieces,
+   not kg, and can be floored at the item's stock — so kg = bags × bag
+   size. Loaded on demand per YYYY-MM straight from the DB: the bulk
+   inventoryMovements slice is capped at 2000 rows and can miss a month. */
+let roasterTransfersState = { view:'month', ym: todayISO().slice(0,7), year: Number(todayISO().slice(0,4)) };
+const _xferLoading = new Set();
+
+// Fills state.beanTransfersCache[ym]; the caller renders (the year view
+// loads up to 12 months and renders once when they're all in).
+async function loadRoasterTransfers(ym) {
+  if (state.beanTransfersCache[ym] || _xferLoading.has(ym)) return;
+  _xferLoading.add(ym);
+  const [y, m] = ym.split('-').map(Number);
+  const from = ym + '-01';
+  const to   = ym + '-' + String(new Date(y, m, 0).getDate()).padStart(2,'0');
+  // Sent only (qty_delta < 0) — a positive 'transfer' logged by hand is a receipt.
+  const { data, error } = await sb.from('inventory_movements').select('*')
+    .eq('type', 'transfer').lt('qty_delta', 0).gte('occurred_at', from).lte('occurred_at', to)
+    .order('occurred_at').order('created_at');
+  _xferLoading.delete(ym);
+  if (error) {
+    toast('Failed to load transfers: ' + error.message, 'error');
+    // Cache an empty-but-flagged month so render() doesn't refetch in a
+    // loop, and shows "couldn't load" instead of a misleading zero total.
+    state.beanTransfersCache[ym] = Object.assign([], { failed: true });
+    return;
+  }
+  // The API returns at most 1000 rows — flag it rather than show a short total.
+  if (data.length >= 1000) toast(`${monthLabel(ym)}: over 1000 transfers — totals may be incomplete.`, 'error');
+  state.beanTransfersCache[ym] = data.map(mapMovementFromDb);
+}
+
+function xferRows(ym) {
+  const byId = new Map((state.inventory || []).map(i => [i.id, i]));
+  return (state.beanTransfersCache[ym] || []).map(m => {
+    const it = byId.get(m.itemId);
+    const n = parseTransferNote(m.notes);
+    return {
+      date: m.occurredAt || '', name: it?.name || '(deleted item)',
+      from: m.branch || '—', to: n.to || '—', pack: n.pack, bags: n.bags,
+      amount: n.pack ? n.bags * n.pack / 1000 : Math.abs(m.qtyDelta),
+      unit: n.pack ? 'kg' : (it?.unit || 'kg'),
+      notes: n.notes, recordedBy: m.recordedBy,
+    };
+  });
+}
+const xferIsKg   = u => String(u || '').toLowerCase() === 'kg';
+const xferN      = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const xfer3      = v => Math.round((Number(v) || 0) * 1000) / 1000;
+const xferCount  = n => `${n} transfer${n === 1 ? '' : 's'}`;
+const xferAmount = r => r.pack ? `${xferN(r.bags)} × ${r.pack}g (${xferN(r.amount)} kg)` : `${xferN(r.amount)} ${r.unit}`;
+// "12 × 250g · 4 × 125g · 6 units" — the bag / non-kg side of one destination.
+function xferBagsSub(d) {
+  return [
+    ...Object.keys(d.bags).sort((a,b) => b - a).map(p => `${xferN(d.bags[p])} × ${p}g`),
+    ...Object.keys(d.other).map(u => `${xferN(d.other[u])} ${u}`),
+  ].join(' · ');
+}
+function xferDestOrder(keys) {
+  return [...SUGGESTED_BRANCHES.filter(b => keys.includes(b)), ...keys.filter(b => !SUGGESTED_BRANCHES.includes(b)).sort()];
+}
+
+// Roll-up: kg per destination and per bean × destination, plus bag counts.
+// Items kept in another unit (e.g. packaged 'units') can't be added to kg,
+// so they're totalled on their own and left out of the kg figures.
+function xferTotals(rows) {
+  const dests = {}, items = {};
+  let kg = 0;
+  rows.forEach(r => {
+    const d = dests[r.to] || (dests[r.to] = { kg:0, count:0, bags:{}, other:{} });
+    const key = r.name + '|' + r.unit;
+    const i = items[key] || (items[key] = { name:r.name, unit:r.unit, byDest:{}, total:0 });
+    d.count++;
+    if (r.pack) d.bags[r.pack] = (d.bags[r.pack] || 0) + r.bags;
+    if (xferIsKg(r.unit)) { d.kg += r.amount; kg += r.amount; }
+    else d.other[r.unit] = (d.other[r.unit] || 0) + r.amount;
+    i.byDest[r.to] = (i.byDest[r.to] || 0) + r.amount;
+    i.total += r.amount;
+  });
+  return {
+    kg, count: rows.length, dests, destOrder: xferDestOrder(Object.keys(dests)),
+    items: Object.values(items).sort((a,b) => (xferIsKg(b.unit) - xferIsKg(a.unit)) || a.name.localeCompare(b.name)),
+  };
+}
+
+// Months of `year` up to the current one (no empty future months).
+function xferYearMonths(year) {
+  const cur = todayISO().slice(0,7);
+  return Array.from({ length:12 }, (_, i) => `${year}-${String(i+1).padStart(2,'0')}`).filter(ym => ym <= cur);
+}
+function xferYearData(year) {
+  const months = xferYearMonths(year).map(ym => ({ ym, t: xferTotals(xferRows(ym)) }));
+  const byDest = {};
+  months.forEach(({ t }) => t.destOrder.forEach(d => { byDest[d] = (byDest[d] || 0) + t.dests[d].kg; }));
+  return {
+    months, byDest, destOrder: xferDestOrder(Object.keys(byDest)),
+    kg: months.reduce((s, m) => s + m.t.kg, 0),
+    count: months.reduce((s, m) => s + m.t.count, 0),
+    hasOther: months.some(m => m.t.items.some(i => !xferIsKg(i.unit))),
+  };
+}
+const xferReady = months => months.every(ym => state.beanTransfersCache[ym] && !state.beanTransfersCache[ym].failed);
+function xferRetry() {
+  Object.keys(state.beanTransfersCache).forEach(ym => { if (state.beanTransfersCache[ym].failed) delete state.beanTransfersCache[ym]; });
+  render();
+}
+
+const xferCard = inner => `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-slate-500 text-sm">${inner}</div>`;
+// Kicks off any missing month loads (one render when they're all back);
+// returns a loading / error card until every month is in, '' once it is.
+function xferWaitHTML(months) {
+  const missing = months.filter(ym => !state.beanTransfersCache[ym] && !_xferLoading.has(ym));
+  if (missing.length) Promise.all(missing.map(ym => loadRoasterTransfers(ym))).then(render);
+  const failed = months.filter(ym => state.beanTransfersCache[ym]?.failed);
+  if (failed.length) return xferCard(`Couldn't load ${escapeHTML(failed.map(monthLabel).join(', '))}. <button onclick="xferRetry()" class="btn btn-ghost btn-sm ml-2">Retry</button>`);
+  if (!xferReady(months)) return xferCard('Loading transfers…');
+  return '';
+}
+
+function renderRoasterTransfers() {
+  const s = roasterTransfersState;
+  const curYm = todayISO().slice(0,7);
+  const seg = (key, label) => `<button onclick="roasterTransfersState.view='${key}'; render();" class="px-3 py-1.5 text-xs font-medium rounded ${s.view===key?'bg-brand-600 text-white':'text-slate-600 hover:bg-slate-50'}">${label}</button>`;
+  const picker = s.view === 'year'
+    ? `<div class="inline-flex items-center gap-1">
+         <button onclick="roasterTransfersState.year--; render();" class="btn btn-ghost btn-sm" aria-label="Previous year">‹</button>
+         <span class="font-semibold text-slate-900 tabular-nums px-1">${s.year}</span>
+         <button onclick="roasterTransfersState.year++; render();" class="btn btn-ghost btn-sm" aria-label="Next year" ${s.year >= Number(curYm.slice(0,4)) ? 'disabled' : ''}>›</button>
+       </div>`
+    : `<input type="month" value="${escapeHTML(s.ym)}" max="${escapeHTML(curYm)}" onchange="if (this.value) { roasterTransfersState.ym=this.value; render(); }" class="input !w-auto !py-2">`;
+  return `
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="inline-flex bg-white border border-slate-200 rounded-lg p-1">${seg('month','Month')}${seg('year','Year')}</div>
+        ${picker}
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="exportRoasterTransfersCSV()" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} Export CSV</button>
+        <button onclick="printRoasterTransfers()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Print</button>
+      </div>
+    </div>
+    ${s.view === 'year' ? xferYearHTML(s.year) : xferMonthHTML(s.ym)}`;
+}
+
+const XFER_TH = 'px-3 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-semibold';
+
+function xferMonthHTML(ym) {
+  const wait = xferWaitHTML([ym]);
+  if (wait) return wait;
+  const rows = xferRows(ym);
+  if (!rows.length) return xferCard(`No transfers logged in ${escapeHTML(monthLabel(ym))}.`);
+  const t = xferTotals(rows);
+  return `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      ${invStatCard(`Total sent · ${monthLabel(ym)}`, `${xferN(t.kg)} kg`, xferCount(t.count))}
+      ${t.destOrder.map(d => invStatCard(`→ ${d}`, `${xferN(t.dests[d].kg)} kg`,
+          escapeHTML([xferCount(t.dests[d].count), xferBagsSub(t.dests[d])].filter(Boolean).join(' · ')))).join('')}
+    </div>
+
+    <h3 class="font-display text-base font-semibold text-slate-900 mb-2">Totals by bean</h3>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto mb-5">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="${XFER_TH} text-left">Bean</th>
+          ${t.destOrder.map(d => `<th class="${XFER_TH} text-right whitespace-nowrap">→ ${escapeHTML(d)}</th>`).join('')}
+          <th class="${XFER_TH} text-right">Total</th>
+        </tr></thead>
+        <tbody>
+          ${t.items.map(i => `<tr class="border-t border-slate-50">
+            <td class="px-3 py-2 font-medium text-slate-800">${escapeHTML(i.name)} <span class="text-xs text-slate-500 font-normal">${escapeHTML(i.unit)}</span></td>
+            ${t.destOrder.map(d => `<td class="px-3 py-2 text-right tabular-nums text-slate-700">${i.byDest[d] ? xferN(i.byDest[d]) : '—'}</td>`).join('')}
+            <td class="px-3 py-2 text-right tabular-nums font-semibold text-slate-900">${xferN(i.total)}</td>
+          </tr>`).join('')}
+          <tr class="border-t-2 border-brand-200 bg-brand-50/50 font-semibold text-brand-800">
+            <td class="px-3 py-2">TOTAL (kg)</td>
+            ${t.destOrder.map(d => `<td class="px-3 py-2 text-right tabular-nums">${xferN(t.dests[d].kg)}</td>`).join('')}
+            <td class="px-3 py-2 text-right tabular-nums">${xferN(t.kg)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="font-display text-base font-semibold text-slate-900 mb-2">Every transfer (${rows.length})</h3>
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="${XFER_TH} text-left">Date</th><th class="${XFER_TH} text-left">Bean</th><th class="${XFER_TH} text-left">From → To</th>
+          <th class="${XFER_TH} text-right">Amount</th><th class="${XFER_TH} text-left">Logged by</th><th class="${XFER_TH} text-left">Notes</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `<tr class="border-t border-slate-50">
+          <td class="px-3 py-2 whitespace-nowrap text-slate-700">${escapeHTML(fmtDate(r.date))}</td>
+          <td class="px-3 py-2 font-medium text-slate-800">${escapeHTML(r.name)}</td>
+          <td class="px-3 py-2 whitespace-nowrap text-slate-700">${escapeHTML(r.from)} → ${escapeHTML(r.to)}</td>
+          <td class="px-3 py-2 text-right tabular-nums whitespace-nowrap text-slate-900">${escapeHTML(xferAmount(r))}</td>
+          <td class="px-3 py-2 text-slate-600">${escapeHTML(elLoggedBy(r.recordedBy))}</td>
+          <td class="px-3 py-2 text-slate-500">${escapeHTML(r.notes)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function xferYearHTML(year) {
+  const wait = xferWaitHTML(xferYearMonths(year));
+  if (wait) return wait;
+  const y = xferYearData(year);
+  return `
+    <div class="bg-white rounded-2xl shadow-card overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead><tr class="border-b border-slate-100">
+          <th class="${XFER_TH} text-left">Month</th>
+          ${y.destOrder.map(d => `<th class="${XFER_TH} text-right whitespace-nowrap">→ ${escapeHTML(d)} (kg)</th>`).join('')}
+          <th class="${XFER_TH} text-right">Total kg</th><th class="${XFER_TH} text-right">Transfers</th>
+        </tr></thead>
+        <tbody>
+          ${y.months.map(({ ym, t }) => `<tr class="border-t border-slate-50 cursor-pointer hover:bg-slate-50" onclick="roasterTransfersState.view='month'; roasterTransfersState.ym='${ym}'; render();">
+            <td class="px-3 py-2 font-medium text-slate-800">${escapeHTML(monthLabel(ym))}</td>
+            ${y.destOrder.map(d => `<td class="px-3 py-2 text-right tabular-nums text-slate-700">${t.dests[d] ? xferN(t.dests[d].kg) : '—'}</td>`).join('')}
+            <td class="px-3 py-2 text-right tabular-nums font-semibold text-slate-900">${t.count ? xferN(t.kg) : '—'}</td>
+            <td class="px-3 py-2 text-right tabular-nums text-slate-600">${t.count || '—'}</td>
+          </tr>`).join('')}
+          <tr class="border-t-2 border-brand-200 bg-brand-50/50 font-semibold text-brand-800">
+            <td class="px-3 py-2">TOTAL ${year}</td>
+            ${y.destOrder.map(d => `<td class="px-3 py-2 text-right tabular-nums">${xferN(y.byDest[d])}</td>`).join('')}
+            <td class="px-3 py-2 text-right tabular-nums">${xferN(y.kg)}</td>
+            <td class="px-3 py-2 text-right tabular-nums">${y.count}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-slate-500 mt-2">Click a month to see every transfer in it.${y.hasOther ? ' Items kept in units other than kg are left out of these kg totals — open the month to see them.' : ''}</p>`;
+}
+
+// The export, shared by CSV and Print: tables of raw cells (numbers stay
+// numbers, null = empty) that each output formats its own way. Null until
+// every month in view has loaded.
+function xferReport() {
+  const s = roasterTransfersState;
+  const months = s.view === 'year' ? xferYearMonths(s.year) : [s.ym];
+  if (!xferReady(months)) return null;
+  if (s.view === 'year') {
+    const y = xferYearData(s.year);
+    return {
+      name: String(s.year), heading: 'YEARLY TRANSFER REPORT.',
+      period: `${monthLabel(months[0])} — ${monthLabel(months[months.length-1])}`,
+      intro: `Beans sent from branch to branch each month, in kg (bags converted at their bag size). Logged in the Roaster.${y.hasOther ? ' Items kept in units other than kg are not included.' : ''}`,
+      tables: [{
+        head: ['Month', ...y.destOrder.map(d => `To ${d} (kg)`), 'Total kg', 'Transfers'],
+        rows: y.months.map(({ ym, t }) => [monthLabel(ym), ...y.destOrder.map(d => t.dests[d] ? t.dests[d].kg : null), t.count ? t.kg : null, t.count || null]),
+        foot: [`TOTAL ${s.year}`, ...y.destOrder.map(d => y.byDest[d]), y.kg, y.count],
+      }],
+    };
+  }
+  const rows = xferRows(s.ym);
+  const t = xferTotals(rows);
+  return {
+    name: s.ym, heading: 'MONTHLY TRANSFER REPORT.', period: monthLabel(s.ym),
+    intro: rows.length
+      ? 'Every transfer sent between branches, logged in the Roaster, with totals per destination and per bean. Bags are converted to kg at their bag size.'
+      : `No transfers logged in ${monthLabel(s.ym)}.`,
+    tables: !rows.length ? [] : [
+      { title: 'Totals by destination', head: ['To', 'Total kg', 'Transfers', 'Bags / other units'],
+        rows: t.destOrder.map(d => [d, t.dests[d].kg, t.dests[d].count, xferBagsSub(t.dests[d])]),
+        foot: ['TOTAL', t.kg, t.count, ''] },
+      { title: 'Totals by bean', head: ['Bean', 'Unit', ...t.destOrder.map(d => `To ${d}`), 'Total'],
+        rows: t.items.map(i => [i.name, i.unit, ...t.destOrder.map(d => i.byDest[d] ?? null), i.total]) },
+      { title: `Every transfer (${rows.length})`, head: ['Date', 'Bean', 'From', 'To', 'Bags', 'Bag size (g)', 'Amount', 'Unit', 'Logged by', 'Notes'],
+        rows: rows.map(r => [r.date, r.name, r.from, r.to, r.pack ? r.bags : null, r.pack || null, r.amount, r.unit, elLoggedBy(r.recordedBy), r.notes]) },
+    ],
+  };
+}
+
+function exportRoasterTransfersCSV() {
+  const rep = xferReport();
+  if (!rep) { toast('Wait for the transfers to finish loading.', 'error'); return; }
+  if (!rep.tables.length) { toast(rep.intro, 'error'); return; }
+  const cell = v => csvCell(typeof v === 'number' ? xfer3(v) : (v ?? ''));
+  const lines = rep.tables.flatMap(tb => [...(tb.title ? [[tb.title]] : []), tb.head, ...tb.rows, ...(tb.foot ? [tb.foot] : []), []]);
+  const blob = new Blob([lines.map(r => r.map(cell).join(',')).join('\n')], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `bean-transfers-${rep.name}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Transfers exported', 'success');
+}
+
+// Letterhead print, same look as the weekly roaster report.
+function printRoasterTransfers() {
+  const rep = xferReport();
+  if (!rep) { toast('Wait for the transfers to finish loading.', 'error'); return; }
+  const tableHTML = tb => {
+    const num = tb.head.map((_, c) => tb.rows.some(r => typeof r[c] === 'number'));
+    const cls = c => num[c] ? ' class="r"' : '';
+    const cell = v => escapeHTML(typeof v === 'number' ? xferN(v) : (v ?? '—'));
+    const tr = (r, foot) => `<tr${foot ? ' class="branch-foot"' : ''}>${r.map((v, c) => `<td${cls(c)}>${cell(v)}</td>`).join('')}</tr>`;
+    return `${tb.title ? `<h3 class="section">${escapeHTML(tb.title)}</h3>` : ''}
+      <table class="t">
+        <thead><tr>${tb.head.map((h, c) => `<th${cls(c)}>${escapeHTML(h)}</th>`).join('')}</tr></thead>
+        <tbody>${tb.rows.map(r => tr(r)).join('')}${tb.foot ? tr(tb.foot, true) : ''}</tbody>
+      </table>`;
+  };
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Transfer Report — ${escapeHTML(state.settings.companyName||'')}</title>
+  <style>
+    ${LETTERHEAD_CSS}
+    ${ROASTER_REPORT_CSS}
+  </style></head><body>
+  <div class="actions" style="margin:18px;"><button class="btn" onclick="window.print()">Print or Save as PDF</button></div>
+  <div class="page">
+    ${letterheadHTML(rep.heading)}
+    <div class="doc-date">${escapeHTML(rep.period)}</div>
+    <p class="doc-intro">${escapeHTML(rep.intro)}</p>
+    ${rep.tables.map(tableHTML).join('')}
+  </div>
+  </body></html>`;
+  if (!openPrintWindow(html)) return;
+}
 
 // Batches-tab search (serial / bean name / notes). Same debounce +
 // focus-restore pattern as setInventoryFilter — render() replaces the
@@ -24488,9 +24833,10 @@ function renderRoaster() {
       ${tabBtn('packaged', 'Packaged',     packaged.length)}
       ${tabBtn('weekly',   'This week',    weekly.length)}
       ${tabBtn('batches',  'Batches',      (state.roastBatches||[]).length)}
+      ${tabBtn('transfers', 'Transfers',   '')}
     </div>
 
-    ${roasterTab === 'batches' ? renderRoasterBatchesSection() : items.length === 0 ? `
+    ${roasterTab === 'batches' ? renderRoasterBatchesSection() : roasterTab === 'transfers' ? renderRoasterTransfers() : items.length === 0 ? `
       <div class="bg-white rounded-2xl shadow-card p-12 text-center">
         <div class="w-16 h-16 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-4">${icon('cash','w-8 h-8')}</div>
         <h3 class="font-display text-lg font-semibold text-slate-900">${
