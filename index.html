@@ -1224,6 +1224,7 @@ function emptyState() {
     archive: [],        // [{ id, name, category, mime, size, dataUrl, description, uploadedBy, uploadedAt }]
     receipts: [],       // [{ id, vendor, receiptDate, amount, currency, category, notes, mime, size, dataUrl, uploadedBy, uploadedAt }]
     inventory: [],          // [{ id, name, sku, category, unit, quantity, reorderThreshold, supplier, supplierId, branch, notes, createdBy, createdAt, updatedAt }]
+    inventoryArchived: [],  // same shape, archived_at set: hidden from lists + stock totals, still named in history & reports
     suppliers: [],          // [{ id, name, contactName, phone, email, notes, createdBy, createdAt, updatedAt }]
     inventoryMovements: [], // [{ id, itemId, qtyDelta, type, branch, occurredAt, notes, recordedBy, createdAt }]
     maintenance: [],        // [{ id, title, description, branch, location, asset, assetId, priority, status, reportedBy, assignedTo, resolution, resolvedAt, photoMime, photoSize, photoDataUrl, createdAt, updatedAt }]
@@ -2192,6 +2193,7 @@ function mapInventoryItemFromDb(r) {
     notes: r.notes || '',
     dcMap: r.dc_map || null,
     serialPrefix: r.serial_prefix || '',
+    archivedAt: r.archived_at || null,
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -2938,7 +2940,9 @@ async function loadAll() {
     state.signedDocuments = (signedDocumentsR?.data || []).map(mapSignedDocFromDb);
     state.archive      = (archiveR.data      || []).map(mapArchiveFromDb);
     state.receipts     = (receiptsR.data     || []).map(mapReceiptFromDb);
-    state.inventory          = (inventoryR.data    || []).map(mapInventoryItemFromDb);
+    const allInventory       = (inventoryR.data    || []).map(mapInventoryItemFromDb);
+    state.inventory          = allInventory.filter(i => !i.archivedAt);
+    state.inventoryArchived  = allInventory.filter(i => i.archivedAt);
     state.inventoryMovements = (movementsR.data    || []).map(mapMovementFromDb);
     state.roastBatches       = (roastBatchesR?.data || []).map(mapRoastBatchFromDb);
     state.b2bInvoices        = (b2bInvoicesR?.data || []).map(mapB2bInvoiceFromDb);
@@ -3011,9 +3015,13 @@ async function _resetStateImpl() {
   // employee_extras is intentionally NOT in this list — it's configuration
   // tied to surviving employees, and any extras for deleted employees
   // cascade automatically via the FK.
-  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','signed_documents','archive_documents','receipts','inventory_movements','inventory_items','maintenance_requests','tasks','checklist_runs','checklists'];
+  const tables = ['attendance','leave_requests','payroll','warnings','advances','deductions','certificates','signed_documents','archive_documents','receipts','inventory_movements','maintenance_requests','tasks','checklist_runs','checklists'];
   const results = await Promise.all(tables.map(t => sb.from(t).delete().neq('id', NIL)));
   results.forEach((r, i) => { if (r.error) console.error(`reset ${tables[i]} failed:`, r.error); });
+  // Items last: inventory_movements.item_id is ON DELETE RESTRICT (block 115),
+  // so items can only go once their movements are gone.
+  const invDel = await sb.from('inventory_items').delete().neq('id', NIL);
+  if (invDel.error) console.error('reset inventory_items failed:', invDel.error);
   await sb.from('employees').delete().is('user_id', null);
   await loadAll(); render();
 }
@@ -22951,7 +22959,10 @@ function renderInventory() {
           <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(t('inventory'))}</h2>
           <p class="text-slate-500 mt-1 text-sm max-w-md">Track stock on hand: beans, milk, cups, supplies. Items at or below their reorder threshold are flagged.</p>
         </div>
-        <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add item</button>
+        <div class="flex gap-2 flex-wrap">
+          ${archivedItemsButton()}
+          <button onclick="openInventoryItemModal()" class="btn btn-primary">${icon('plus','w-4 h-4')} Add item</button>
+        </div>
       </div>
     </div>
 
@@ -23232,7 +23243,7 @@ function invPrefixDupCheck(editingId) {
   if (!el || !warn) return;
   el.dataset.editingId = editingId || '';
   const v = el.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const clash = v && (state.inventory || []).find(i =>
+  const clash = v && [...(state.inventory || []), ...(state.inventoryArchived || [])].find(i =>
     i.id !== editingId && (i.serialPrefix || '').toUpperCase() === v);
   warn.classList.toggle('hidden', !clash);
   warn.textContent = clash
@@ -23348,7 +23359,7 @@ function roastYieldTone(pct, darker = false) {
 // state.inventoryMovements which the loader fetches with the most
 // recent 2000 entries (any role with inventory SELECT can see them).
 function openInventoryHistoryModal(itemId) {
-  const it = (state.inventory||[]).find(i => i.id === itemId);
+  const it = inventoryItemById(itemId);
   if (!it) return;
   const moves = (state.inventoryMovements||[])
     .filter(m => m.itemId === itemId)
@@ -23791,7 +23802,7 @@ function onTransferRecalc() {
 async function deleteInventoryMovement(movementId) {
   const m = (state.inventoryMovements||[]).find(x => x.id === movementId);
   if (!m) return;
-  const it = (state.inventory||[]).find(x => x.id === m.itemId);
+  const it = inventoryItemById(m.itemId);
   if (!it) return;
 
   // If this transfer auto-posted into a branch's daily count, find the
@@ -23904,7 +23915,7 @@ function printWeeklyInventoryReport() {
   // Per-bean roast totals over the week (sum of negative type='roast' deltas on green items, abs)
   const roastByBean = {};
   moves.filter(m => m.type === 'roast').forEach(m => {
-    const it = all.find(i => i.id === m.itemId);
+    const it = inventoryItemById(m.itemId);
     if (!it || it.category !== 'beans_raw') return;
     roastByBean[it.name] = (roastByBean[it.name] || 0) + Math.abs(m.qtyDelta);
   });
@@ -23979,7 +23990,7 @@ function printWeeklyInventoryReport() {
         <thead><tr><th>Date</th><th>Item</th><th>Type</th><th>Branch</th><th>Notes</th><th class="r">Qty</th></tr></thead>
         <tbody>
           ${movesSorted.map(m => {
-            const it = all.find(i => i.id === m.itemId);
+            const it = inventoryItemById(m.itemId);
             const recorder = getEmployee(m.recordedBy);
             const recorderName = recorder ? ((recorder.firstName||'')+' '+(recorder.lastName||'')).trim() : '';
             const positive = m.qtyDelta > 0;
@@ -24138,16 +24149,76 @@ function openLogMovementModal(prefilledItemId) {
   }, { saveLabel: 'Log entry' });
 }
 
+// Active or archived — for anything that names an item from its history
+// (movements, roast batches, reports). Lists and stock use state.inventory.
+function inventoryItemById(id) {
+  return (state.inventory || []).find(i => i.id === id) || (state.inventoryArchived || []).find(i => i.id === id);
+}
+
+// An item with history is archived, never deleted: a delete would take every
+// transfer, roast and count logged for it out of past reports. Since SQL
+// block 115 the database refuses those deletes too (movements are RESTRICT).
 async function deleteInventoryItem(id) {
   const it = (state.inventory||[]).find(i => i.id === id);
   if (!it) return;
+  const { count, error: cErr } = await sb.from('inventory_movements')
+    .select('id', { count: 'exact', head: true }).eq('item_id', id);
+  if (cErr) { toast(humanizeError(cErr), 'error'); return; }
+  if (count > 0) return archiveInventoryItem(it, `${count} logged entr${count === 1 ? 'y' : 'ies'} (transfers, roasts, counts…)`);
   if (!confirm(`Delete "${it.name}" from inventory? This cannot be undone.`)) return;
   const { error } = await sb.from('inventory_items').delete().eq('id', id);
+  // Still referenced elsewhere (e.g. a roast batch) — archive instead.
+  if (error?.code === '23503') return archiveInventoryItem(it, 'records that point to it (e.g. roast batches)');
   if (error) { toast(humanizeError(error), 'error'); return; }
   state.inventory = state.inventory.filter(i => i.id !== id);
-  state.beanTransfersCache = {}; // its movements (incl. transfers) cascade-deleted
   render();
   toast('Item deleted', 'success');
+}
+
+async function archiveInventoryItem(it, why) {
+  if (!confirm(`"${it.name}" has ${why}. Deleting it would erase that history, so it will be archived instead — hidden from lists and stock totals, but kept in every report. You can restore it from "Archived".\n\nArchive it?`)) return;
+  const { data, error } = await sb.from('inventory_items')
+    .update({ archived_at: new Date().toISOString() }).eq('id', it.id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  state.inventory = state.inventory.filter(i => i.id !== it.id);
+  state.inventoryArchived.push(mapInventoryItemFromDb(data));
+  render();
+  toast(`"${it.name}" archived — its history is kept`, 'success');
+}
+
+async function restoreInventoryItem(id) {
+  const { data, error } = await sb.from('inventory_items')
+    .update({ archived_at: null }).eq('id', id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  state.inventoryArchived = state.inventoryArchived.filter(i => i.id !== id);
+  state.inventory.push(mapInventoryItemFromDb(data));
+  state.inventory.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  closeModal();
+  render();
+  toast(`"${data.name}" restored`, 'success');
+  if (state.inventoryArchived.length) openArchivedItemsModal();
+}
+
+const archivedItemsButton = () => (state.inventoryArchived || []).length
+  ? `<button onclick="openArchivedItemsModal()" class="btn btn-ghost">${icon('box','w-4 h-4')} Archived (${state.inventoryArchived.length})</button>` : '';
+
+function openArchivedItemsModal() {
+  const list = (state.inventoryArchived || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const canRestore = hasRole('admin', 'head_barista', 'roaster');
+  const body = list.length === 0 ? `<div class="text-sm text-slate-500 text-center py-6">No archived items.</div>` : `
+    <p class="text-xs text-slate-500 mb-3">Archived items are hidden from lists and stock totals. Their history stays in every report.</p>
+    <div class="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-[55vh] overflow-y-auto">
+      ${list.map(it => `
+        <div class="px-4 py-3 flex items-center gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-slate-900 truncate">${escapeHTML(it.name || '—')}</div>
+            <div class="text-xs text-slate-500">${escapeHTML((INVENTORY_CATEGORIES[it.category] || INVENTORY_CATEGORIES.other).label)}${it.branch ? ' · ' + escapeHTML(it.branch) : ''} · archived ${escapeHTML(fmtDate(it.archivedAt))}</div>
+          </div>
+          <button onclick="openInventoryHistoryModal('${it.id}')" class="btn btn-ghost btn-sm">${icon('clock','w-4 h-4')} History</button>
+          ${canRestore ? `<button onclick="restoreInventoryItem('${it.id}')" class="btn btn-ghost btn-sm">${icon('refresh','w-4 h-4')} Restore</button>` : ''}
+        </div>`).join('')}
+    </div>`;
+  openModal(`Archived items (${list.length})`, body, async () => true, { saveLabel: 'Close' });
 }
 
 /* -------------------- ROASTER (admin / head_barista / roaster) -------------------- */
@@ -24191,7 +24262,7 @@ async function loadRoasterTransfers(ym) {
 }
 
 function xferRows(ym) {
-  const byId = new Map((state.inventory || []).map(i => [i.id, i]));
+  const byId = new Map([...(state.inventory || []), ...(state.inventoryArchived || [])].map(i => [i.id, i]));
   return (state.beanTransfersCache[ym] || []).map(m => {
     const it = byId.get(m.itemId);
     const n = parseTransferNote(m.notes);
@@ -24494,7 +24565,7 @@ function setRoasterBatchQ(v) {
 // weights and both loss stages. This is where a complaint gets traced —
 // search the RB serial from the bag.
 function renderRoasterBatchesSection() {
-  const itemName = id => (state.inventory || []).find(i => i.id === id)?.name || '—';
+  const itemName = id => inventoryItemById(id)?.name || '—';
   const q = (roasterBatchQ || '').trim().toLowerCase();
   const batches = (state.roastBatches || []).filter(b => {
     if (!q) return true;
@@ -24543,7 +24614,7 @@ function renderRoasterBatchesSection() {
         finalPct:  pct(o.sorted, o.green),
       }))
       .sort((a, b) => b.sortLoss - a.sortLoss);
-    const prefixOf = id => (state.inventory || []).find(i => i.id === id)?.serialPrefix || '';
+    const prefixOf = id => inventoryItemById(id)?.serialPrefix || '';
     originCard = `
       <div class="bg-white rounded-2xl shadow-card overflow-hidden mb-4">
         <div class="px-4 pt-4 pb-2">
@@ -24797,6 +24868,7 @@ function renderRoaster() {
           <p class="text-slate-500 mt-1 text-sm max-w-md">Track green beans, the daily roasted shelf, and what's moved this week. Bean items are kept in the main inventory under <em>beans_raw</em> and <em>beans_roast</em>.</p>
         </div>
         <div class="flex gap-2 flex-wrap">
+          ${archivedItemsButton()}
           <button onclick="printWeeklyInventoryReport()" class="btn btn-ghost">${icon('file','w-4 h-4')} Weekly report</button>
           <button onclick="openShelfCountModal()" class="btn btn-ghost">${icon('check','w-4 h-4')} Count shelf</button>
           <button onclick="openPackagedCountModal()" class="btn btn-ghost">${icon('box','w-4 h-4')} Weekly count</button>
