@@ -23662,24 +23662,117 @@ async function logTransfer(itemId, qty, fromBranch, toBranch, opts = {}) {
   });
 }
 
+/* ---- Log inter-branch transfer: one destination + date, many items.
+   _tfRows holds the modal's line items ([{ itemId, pack, qty }]) and is
+   cleared in closeModal(). Save logs ONE movement per line, so a run can
+   send several beans to the same branch at once; a line that fails (no
+   stock left) stays on screen while the others keep their movements. */
+let _tfRows = null;
+
+const tfItems = () => (state.inventory || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+function tfRowHTML(row, i, items) {
+  const it = items.find(x => x.id === row.itemId) || items[0];
+  const unit = it?.unit || 'kg';
+  const lbl = i === 0;
+  return `
+    <div class="grid grid-cols-12 gap-2">
+      <div class="col-span-12 md:col-span-6">
+        ${lbl ? '<label class="label">Item</label>' : ''}
+        <select id="tf-item-${i}" class="input !py-2" onchange="onTransferRowChange(${i})">
+          ${items.map(o => `<option value="${o.id}" ${o.id === row.itemId ? 'selected' : ''}>${escapeHTML(o.name)}${o.branch ? ' · ' + escapeHTML(o.branch) : ''} (${Number(o.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${escapeHTML(o.unit || 'units')})</option>`).join('')}
+        </select>
+      </div>
+      <div class="col-span-6 md:col-span-3">
+        ${lbl ? '<label class="label">Unit</label>' : ''}
+        <select id="tf-pack-${i}" class="input !py-2" onchange="onTransferRecalc(${i})">
+          <option value="loose" ${row.pack === 'loose' ? 'selected' : ''}>loose (${escapeHTML(unit)})</option>
+          <option value="250" ${row.pack === '250' ? 'selected' : ''}>250 g bags (pieces)</option>
+          <option value="125" ${row.pack === '125' ? 'selected' : ''}>125 g bags (pieces)</option>
+        </select>
+      </div>
+      <div class="col-span-5 md:col-span-2">
+        ${lbl ? '<label class="label">Quantity</label>' : ''}
+        <input id="tf-qty-${i}" type="text" inputmode="decimal" autocomplete="off" class="input !py-2" placeholder="e.g. 3" value="${escapeHTML(row.qty || '')}" oninput="onTransferRecalc(${i})">
+        <div id="tf-eq-${i}" class="text-[11px] text-slate-500 mt-1"></div>
+      </div>
+      <div class="col-span-1 flex justify-end ${lbl ? 'md:pt-6' : ''}">
+        <button type="button" onclick="tfRemoveRow(${i})" title="Remove line" aria-label="Remove line" class="text-slate-400 hover:text-rose-600 p-1.5 rounded hover:bg-rose-50">${icon('trash', 'w-4 h-4')}</button>
+      </div>
+    </div>`;
+}
+
+// DOM -> _tfRows, so a repaint (add / remove / item change) keeps what was typed.
+function tfCapture() {
+  (_tfRows || []).forEach((r, i) => {
+    const item = document.getElementById(`tf-item-${i}`);
+    const pack = document.getElementById(`tf-pack-${i}`);
+    const qty = document.getElementById(`tf-qty-${i}`);
+    if (item) r.itemId = item.value;
+    if (pack) r.pack = pack.value;
+    if (qty) r.qty = qty.value;
+  });
+}
+
+function tfPaint() {
+  const wrap = document.getElementById('tf-rows');
+  if (!wrap || !_tfRows) return;
+  const items = tfItems();
+  wrap.innerHTML = _tfRows.map((r, i) => tfRowHTML(r, i, items)).join('');
+  _tfRows.forEach((_, i) => onTransferRecalc(i));
+  const count = document.getElementById('tf-count');
+  if (count) count.textContent = `· ${_tfRows.length} line${_tfRows.length === 1 ? '' : 's'}`;
+}
+
+function tfAddRow() {
+  tfCapture();
+  const items = tfItems();
+  const used = new Set(_tfRows.map(r => r.itemId));
+  const next = items.find(i => !used.has(i.id)) || items[0];
+  _tfRows.push({ itemId: next.id, pack: 'loose', qty: '' });
+  tfPaint();
+  document.getElementById(`tf-qty-${_tfRows.length - 1}`)?.focus();
+}
+
+function tfRemoveRow(i) {
+  tfCapture();
+  _tfRows.splice(i, 1);
+  if (!_tfRows.length) _tfRows.push({ itemId: tfItems()[0].id, pack: 'loose', qty: '' });
+  tfPaint();
+}
+
+// First line drives the shared "from branch", as the single-item form did.
+function onTransferRowChange(i) {
+  tfCapture();
+  if (i === 0) {
+    const it = tfItems().find(x => x.id === _tfRows[0].itemId);
+    const from = document.getElementById('tf-from');
+    if (from && it?.branch && Array.from(from.options).some(o => o.value === it.branch)) from.value = it.branch;
+  }
+  tfPaint();
+}
+
+// Live hint under a line's quantity: 250g/125g move as PIECES, not kg.
+function onTransferRecalc(i) {
+  const eq = document.getElementById(`tf-eq-${i}`);
+  if (!eq) return;
+  const pack = document.getElementById(`tf-pack-${i}`)?.value;
+  const qty = dcNum(document.getElementById(`tf-qty-${i}`)?.value);
+  eq.textContent = (!qty || qty <= 0 || pack === 'loose') ? '' : `${+qty} ${+qty === 1 ? 'piece' : 'pieces'} of ${pack}g each`;
+}
+
 function openTransferModal() {
-  const items = (state.inventory||[]).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const items = tfItems();
   if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
   const branches = SUGGESTED_BRANCHES;
-  const today = todayISO();
+  _tfRows = [{ itemId: items[0].id, pack: 'loose', qty: '' }];
 
   const form = `
     <div class="space-y-4">
       <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-800">
-        ${icon('refresh','w-4 h-4 inline')} Records the move out of the source branch. The destination branch is captured in the entry's notes; if you also keep a separate item for the destination branch, log a matching restock there.
+        ${icon('refresh', 'w-4 h-4 inline')} Records the move out of the source branch. Add as many items as you like — they all go to the same branch on the same date, in one save. The destination is captured in each entry's notes; if you also keep a separate item for the destination branch, log a matching restock there.
       </div>
-      <div>
-        <label class="label">Item</label>
-        <select id="tf-item" class="input" onchange="onTransferItemChange()">
-          ${items.map(i => `<option value="${i.id}" data-branch="${escapeHTML(i.branch||'')}">${escapeHTML(i.name)}${i.branch?' · '+escapeHTML(i.branch):''} (${Number(i.quantity).toLocaleString(undefined,{maximumFractionDigits:2})} ${escapeHTML(i.unit||'units')})</option>`).join('')}
-        </select>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <label class="label">From branch</label>
           <select id="tf-from" class="input">
@@ -23694,105 +23787,85 @@ function openTransferModal() {
           </select>
         </div>
         <div>
-          <label class="label">Unit</label>
-          <select id="tf-pack" class="input" onchange="onTransferRecalc()">
-            <option value="loose" id="tf-pack-loose">loose (kg)</option>
-            <option value="250">250 g bags (pieces)</option>
-            <option value="125">125 g bags (pieces)</option>
-          </select>
-        </div>
-        <div>
-          <label class="label">Quantity</label>
-          <input id="tf-qty" type="text" inputmode="decimal" autocomplete="off" class="input" placeholder="e.g. 3" oninput="onTransferRecalc()">
-          <div id="tf-eq" class="text-[11px] text-slate-500 mt-1"></div>
-        </div>
-        <div>
           <label class="label">Date</label>
-          <input id="tf-date" type="date" class="input" value="${today}">
+          <input id="tf-date" type="date" class="input" value="${todayISO()}">
         </div>
-        <div class="md:col-span-2">
-          <label class="label">Notes (optional)</label>
-          <textarea id="tf-notes" class="input" rows="2" placeholder="vehicle, courier, batch, anything you want recorded"></textarea>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-1 gap-2">
+          <span class="label !mb-0">Items <span id="tf-count" class="text-slate-400 font-normal"></span></span>
+          <button type="button" onclick="tfAddRow()" class="btn btn-ghost btn-sm">${icon('plus', 'w-4 h-4')} Add item</button>
         </div>
+        <div id="tf-rows" class="space-y-2"></div>
+      </div>
+      <div>
+        <label class="label">Notes (optional)</label>
+        <textarea id="tf-notes" class="input" rows="2" placeholder="vehicle, courier, batch, anything you want recorded"></textarea>
       </div>
     </div>
   `;
-  openModal('Log inter-branch transfer', form, async () => {
-    const itemId = $('#tf-item').value;
-    const fromB  = $('#tf-from').value;
-    const toB    = $('#tf-to').value;
-    const qty    = dcNum($('#tf-qty').value);
-    const pack   = $('#tf-pack').value;
-    const date   = $('#tf-date').value;
-    const notes  = $('#tf-notes').value.trim();
-    if (!itemId)               { toast('Pick an item', 'error');             return false; }
-    if (!toB)                  { toast('Pick a destination branch', 'error'); return false; }
-    if (isNaN(qty) || qty <= 0){ toast('Enter a positive quantity', 'error'); return false; }
-    const it = (state.inventory||[]).find(i => i.id === itemId);
-    const sourceBranch = fromB || (it?.branch || '');
-    if (sourceBranch === toB)  { toast('Source and destination must differ', 'error'); return false; }
-    // 250g/125g are counted as pieces — the quantity IS the bag count
-    // and is recorded as-is (e.g. "3 pcs × 250g"). Loose moves in the
-    // item's own unit (kg). The pack form is in the note, like the
-    // destination, so phase-2 can post the piece count to the
-    // destination branch's pcs-based daily-count item.
-    const packLabel = transferPackLabel(pack, qty);
-    const m = await logTransfer(itemId, qty, sourceBranch, toB, { occurredAt: date, pack, notes });
-    if (!m) return false;
+  openModal('Log inter-branch transfer', form, onTransferSave, { saveLabel: 'Log transfer' });
+  // Paint the lines and pre-select the from-branch once the modal mounts.
+  setTimeout(() => { tfPaint(); onTransferRowChange(0); }, 0);
+}
+
+async function onTransferSave() {
+  tfCapture();
+  const fromB = $('#tf-from').value;
+  const toB = $('#tf-to').value;
+  const date = $('#tf-date').value;
+  const notes = $('#tf-notes').value.trim();
+  if (!toB) { toast('Pick a destination branch', 'error'); return false; }
+
+  const items = tfItems();
+  const lines = [];
+  for (const r of _tfRows) {
+    if (!r.itemId || !String(r.qty || '').trim()) continue; // line never filled in
+    const it = items.find(x => x.id === r.itemId);
+    if (!it) continue;
+    const qty = dcNum(r.qty);
+    if (isNaN(qty) || qty <= 0) { toast(`Enter a positive quantity for ${it.name}`, 'error'); return false; }
+    const sourceBranch = fromB || (it.branch || '');
+    if (sourceBranch === toB) { toast(`${it.name}: source and destination must differ`, 'error'); return false; }
+    lines.push({ row: r, it, qty, pack: r.pack, sourceBranch });
+  }
+  if (!lines.length) { toast('Enter a quantity for at least one item', 'error'); return false; }
+
+  // 250g/125g move as PIECES — the quantity IS the bag count, recorded as-is
+  // (e.g. "3 pcs × 250g" in the note). Loose moves in the item's own unit.
+  const me = currentEmployee();
+  const failed = [];
+  let posted = 0;
+  for (const line of lines) {
+    const m = await logTransfer(line.it.id, line.qty, line.sourceBranch, toB, { occurredAt: date, pack: line.pack, notes });
+    if (!m) { failed.push(line.row); continue; }
     // If this bean+pack is mapped to a daily-count item, drop a pending
     // "incoming" for the destination branch to confirm during its count.
-    let posted = '';
-    const dcItemId = it?.dcMap && typeof it.dcMap === 'object' ? it.dcMap[pack] : null;
-    if (dcItemId) {
-      const me = currentEmployee();
-      const { data: itRow, error: itErr } = await sb.from('incoming_transfers').insert({
-        dc_item_id: dcItemId, to_branch: toB, from_branch: sourceBranch || null,
-        transfer_date: date, pack, dispatched_qty: qty, status: 'pending',
-        source_item_id: itemId, source_movement_id: m.id || null,
-        created_by: me?.id || null,
-      }).select().single();
-      if (itErr) { toast('Transfer saved, but the incoming link failed: ' + itErr.message, 'error'); }
-      else {
-        state.incomingTransfers = state.incomingTransfers || [];
-        state.incomingTransfers.push(mapIncomingTransferFromDb(itRow));
-        const dci = (state.dailyCountItems||[]).find(d => d.id === dcItemId);
-        posted = ` · pending in ${escapeHTML(toB)} (${escapeHTML(dci?.name||'daily count')})`;
-      }
-    }
-    render();
-    toast(`Transfer logged — ${packLabel || (+qty + ' ' + (it?.unit||'kg'))} → ${toB}${posted}`, 'success');
-    return true;
-  }, { saveLabel: 'Log transfer' });
-  // Pre-select the from-branch from the chosen item once the modal mounts.
-  setTimeout(onTransferItemChange, 0);
-}
+    const dcItemId = line.it.dcMap && typeof line.it.dcMap === 'object' ? line.it.dcMap[line.pack] : null;
+    if (!dcItemId) continue;
+    const { data: itRow, error: itErr } = await sb.from('incoming_transfers').insert({
+      dc_item_id: dcItemId, to_branch: toB, from_branch: line.sourceBranch || null,
+      transfer_date: date, pack: line.pack, dispatched_qty: line.qty, status: 'pending',
+      source_item_id: line.it.id, source_movement_id: m.id || null,
+      created_by: me?.id || null,
+    }).select().single();
+    if (itErr) { toast(`${line.it.name}: transfer saved, but the incoming link failed — ${itErr.message}`, 'error'); continue; }
+    state.incomingTransfers = state.incomingTransfers || [];
+    state.incomingTransfers.push(mapIncomingTransferFromDb(itRow));
+    posted++;
+  }
 
-function onTransferItemChange() {
-  const sel = document.getElementById('tf-item');
-  const from = document.getElementById('tf-from');
-  if (!sel || !from) return;
-  const opt = sel.options[sel.selectedIndex];
-  const b = opt?.dataset?.branch || '';
-  if (b && Array.from(from.options).some(o => o.value === b)) from.value = b;
-  onTransferRecalc();
-}
-
-// Live: relabel the "loose" pack option with the item's own unit and
-// show the kg-equivalent for 250g/125g packs so the barista sees how
-// much actually leaves stock before saving.
-function onTransferRecalc() {
-  const sel = document.getElementById('tf-item');
-  const packEl = document.getElementById('tf-pack');
-  const eq = document.getElementById('tf-eq');
-  if (!sel || !packEl || !eq) return;
-  const it = (state.inventory||[]).find(i => i.id === sel.value);
-  const unit = it?.unit || 'kg';
-  const looseOpt = document.getElementById('tf-pack-loose');
-  if (looseOpt) looseOpt.textContent = `loose (${unit})`;
-  const qty = dcNum(document.getElementById('tf-qty')?.value);
-  const pack = packEl.value;
-  if (!qty || qty <= 0 || pack === 'loose') { eq.textContent = ''; return; }
-  eq.textContent = `${+qty} ${(+qty===1?'piece':'pieces')} of ${pack}g each`;
+  render();
+  const okCount = lines.length - failed.length;
+  const tail = posted ? ` · ${posted} pending in ${toB}'s daily count` : '';
+  if (failed.length) {
+    _tfRows = failed; // keep only what didn't go through, to fix and retry
+    tfPaint();
+    toast(`${okCount} of ${lines.length} logged → ${toB}${tail}. ${failed.length} left — check the stock on hand.`, 'error');
+    return false;
+  }
+  toast(`${okCount} transfer${okCount === 1 ? '' : 's'} logged → ${toB}${tail}`, 'success');
+  return true;
 }
 
 // Delete a movement and restore the item quantity. Item qty change is
@@ -26441,6 +26514,7 @@ function closeModal() {
   modalOnSave = null;
   // Reset transient form state so it can't bleed into the next modal.
   _taskDetailId = null;
+  _tfRows = null;
   if (typeof _pendingPhoto !== 'undefined')  _pendingPhoto = null;
   if (typeof _archiveFile !== 'undefined')   _archiveFile = null;
   if (typeof _travelFile !== 'undefined')    _travelFile = null;
