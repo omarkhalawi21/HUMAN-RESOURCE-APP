@@ -23661,12 +23661,26 @@ function parseTransferNote(note) {
   return { to: dest ? dest[1] : '', pack: bag ? Number(bag[2]) : 0, bags: bag ? Number(bag[1]) : 0, notes: rest.trim() };
 }
 
+// What a 250g/125g line actually takes off stock. For an item counted in
+// packs/bags/units the bag count IS the movement (5 bags out = 5 off), which
+// is what the May 2026 "count pieces, not kg" decision was about. For an item
+// measured by weight the bags are packed out of that weight, so 5 × 250g is
+// 1.25 kg off — the note and the daily-count hand-off keep the piece count
+// either way. Loose always moves in the item's own unit.
+const TRANSFER_GRAMS_PER_UNIT = { kg: 1000, g: 1 };
+function transferStockQty(item, pack, qty) {
+  const perUnit = TRANSFER_GRAMS_PER_UNIT[String(item?.unit || '').toLowerCase()];
+  return (pack && pack !== 'loose' && perUnit) ? qty * Number(pack) / perUnit : qty;
+}
+
 async function logTransfer(itemId, qty, fromBranch, toBranch, opts = {}) {
-  return logInventoryMovement(itemId, -Math.abs(Number(qty) || 0), {
+  const pieces = Math.abs(Number(qty) || 0);
+  const stockQty = transferStockQty(inventoryItemById(itemId), opts.pack, pieces);
+  return logInventoryMovement(itemId, -stockQty, {
     type: 'transfer',
     branch: fromBranch || null,
     occurredAt: opts.occurredAt,
-    notes: composeTransferNote(toBranch, opts.pack, qty, opts.notes),
+    notes: composeTransferNote(toBranch, opts.pack, pieces, opts.notes),
   });
 }
 
@@ -23760,13 +23774,18 @@ function onTransferRowChange(i) {
   tfPaint();
 }
 
-// Live hint under a line's quantity: 250g/125g move as PIECES, not kg.
+// Live hint under a line's quantity: how many bags, and — for an item held
+// by weight — how much that actually takes off stock.
 function onTransferRecalc(i) {
   const eq = document.getElementById(`tf-eq-${i}`);
   if (!eq) return;
   const pack = document.getElementById(`tf-pack-${i}`)?.value;
   const qty = dcNum(document.getElementById(`tf-qty-${i}`)?.value);
-  eq.textContent = (!qty || qty <= 0 || pack === 'loose') ? '' : `${+qty} ${+qty === 1 ? 'piece' : 'pieces'} of ${pack}g each`;
+  if (!qty || qty <= 0 || pack === 'loose') { eq.textContent = ''; return; }
+  const it = inventoryItemById(document.getElementById(`tf-item-${i}`)?.value);
+  const stock = transferStockQty(it, pack, qty);
+  const off = stock === qty ? '' : ` · ${+stock.toFixed(3)} ${it?.unit || 'kg'} off stock`;
+  eq.textContent = `${+qty} ${+qty === 1 ? 'piece' : 'pieces'} of ${pack}g each${off}`;
 }
 
 function openTransferModal() {
