@@ -23691,6 +23691,12 @@ async function logTransfer(itemId, qty, fromBranch, toBranch, opts = {}) {
    stock left) stays on screen while the others keep their movements. */
 let _tfRows = null;
 
+// Transfers always leave the roastery; the cafés are destinations only.
+// Kept local to the transfer form — SUGGESTED_BRANCHES stays the staff /
+// attendance / payroll list and must not gain a ROASTERY entry.
+const TRANSFER_ORIGIN = 'ROASTERY';
+const TRANSFER_DESTINATIONS = ['KHOBAR', 'RAYYAN', 'FAISALIYAH'];
+
 const tfItems = () => (state.inventory || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
 function tfRowHTML(row, i, items) {
@@ -23763,14 +23769,9 @@ function tfRemoveRow(i) {
   tfPaint();
 }
 
-// First line drives the shared "from branch", as the single-item form did.
-function onTransferRowChange(i) {
+// Item changed: repaint so the "loose" label follows the item's own unit.
+function onTransferRowChange() {
   tfCapture();
-  if (i === 0) {
-    const it = tfItems().find(x => x.id === _tfRows[0].itemId);
-    const from = document.getElementById('tf-from');
-    if (from && it?.branch && Array.from(from.options).some(o => o.value === it.branch)) from.value = it.branch;
-  }
   tfPaint();
 }
 
@@ -23791,26 +23792,22 @@ function onTransferRecalc(i) {
 function openTransferModal() {
   const items = tfItems();
   if (items.length === 0) { toast('Add an inventory item first.', 'error'); return; }
-  const branches = SUGGESTED_BRANCHES;
   _tfRows = [{ itemId: items[0].id, pack: 'loose', qty: '' }];
 
   const form = `
     <div class="space-y-4">
       <div class="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-800">
-        ${icon('refresh', 'w-4 h-4 inline')} Records the move out of the source branch. Add as many items as you like — they all go to the same branch on the same date, in one save. The destination is captured in each entry's notes; if you also keep a separate item for the destination branch, log a matching restock there.
+        ${icon('refresh', 'w-4 h-4 inline')} Records stock leaving the roastery. Add as many items as you like — they all go to the same branch on the same date, in one save. The destination is captured in each entry's notes; if you also keep a separate item for that branch, log a matching restock there.
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
-          <label class="label">From branch</label>
-          <select id="tf-from" class="input">
-            <option value="">— Auto from item —</option>
-            ${branches.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
-          </select>
+          <label class="label">From</label>
+          <div class="input flex items-center bg-slate-50 text-slate-700 font-medium">${escapeHTML(TRANSFER_ORIGIN)}</div>
         </div>
         <div>
           <label class="label">To branch</label>
           <select id="tf-to" class="input">
-            ${branches.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
+            ${TRANSFER_DESTINATIONS.map(b => `<option value="${escapeHTML(b)}">${escapeHTML(b)}</option>`).join('')}
           </select>
         </div>
         <div>
@@ -23831,14 +23828,12 @@ function openTransferModal() {
       </div>
     </div>
   `;
-  openModal('Log inter-branch transfer', form, onTransferSave, { saveLabel: 'Log transfer' });
-  // Paint the lines and pre-select the from-branch once the modal mounts.
-  setTimeout(() => { tfPaint(); onTransferRowChange(0); }, 0);
+  openModal('Log transfer from the roastery', form, onTransferSave, { saveLabel: 'Log transfer' });
+  setTimeout(tfPaint, 0);
 }
 
 async function onTransferSave() {
   tfCapture();
-  const fromB = $('#tf-from').value;
   const toB = $('#tf-to').value;
   const date = $('#tf-date').value;
   const notes = $('#tf-notes').value.trim();
@@ -23852,9 +23847,7 @@ async function onTransferSave() {
     if (!it) continue;
     const qty = dcNum(r.qty);
     if (isNaN(qty) || qty <= 0) { toast(`Enter a positive quantity for ${it.name}`, 'error'); return false; }
-    const sourceBranch = fromB || (it.branch || '');
-    if (sourceBranch === toB) { toast(`${it.name}: source and destination must differ`, 'error'); return false; }
-    lines.push({ row: r, it, qty, pack: r.pack, sourceBranch });
+    lines.push({ row: r, it, qty, pack: r.pack, sourceBranch: TRANSFER_ORIGIN });
   }
   if (!lines.length) { toast('Enter a quantity for at least one item', 'error'); return false; }
 

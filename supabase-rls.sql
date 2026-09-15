@@ -6167,6 +6167,27 @@ REVOKE ALL ON FUNCTION public.admin_delete_signup(uuid) FROM anon;
 GRANT EXECUTE ON FUNCTION public.admin_delete_signup(uuid) TO authenticated;
 
 -- =============================================================
+-- 117. TRANSFERS LEAVE THE ROASTERY
+--
+--   The transfer form no longer asks for a source branch: stock always
+--   leaves the roastery, and the cafés (KHOBAR / RAYYAN / FAISALIYAH) are
+--   destinations. Existing transfers recorded the roaster's own branch
+--   (FAISALIYAH) as their origin, so reports would read inconsistently
+--   across the changeover. Owner asked for them to be relabelled.
+--
+--   Only 'transfer' movements are touched — roast, count, pickup, sale
+--   and adjust rows keep the branch they happened at. Safe to re-run.
+-- =============================================================
+UPDATE public.inventory_movements
+   SET branch = 'ROASTERY'
+ WHERE type = 'transfer'
+   AND branch IS DISTINCT FROM 'ROASTERY';
+
+UPDATE public.incoming_transfers
+   SET from_branch = 'ROASTERY'
+ WHERE from_branch IS DISTINCT FROM 'ROASTERY';
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
