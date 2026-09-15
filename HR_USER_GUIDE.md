@@ -72,6 +72,8 @@ Run through this once, before anyone else uses the app.
 
 The employee then needs to **sign up** at the live URL using the same email — they'll get a link to create their own password. They cannot clock in until they've done this.
 
+Adding them here is what lets them sign up: **sign-up is invite-only**. An email you haven't added is refused, and nothing is stored for it, so strangers who find the URL can't fill your directory. If someone does turn up under **Pending approval** who shouldn't be there, **Reject** deletes their record and their login outright.
+
 ---
 
 ## Daily attendance

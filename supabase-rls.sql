@@ -6017,6 +6017,156 @@ BEGIN
 END $$;
 
 -- =============================================================
+-- 116. SIGNUP IS INVITE-ONLY, AND REJECTING A SIGNUP DELETES IT
+--
+--   Anyone who found the URL could register: handle_new_user created a
+--   'pending' employees row for ANY email, so strangers piled up in the
+--   directory — and in auth.users, which the app cannot delete. Reject
+--   only marked the row 'terminated', so they stayed visible forever.
+--
+--   (a) handle_new_user now refuses an email nobody added: no employees
+--       row is created, and because the trigger runs inside the signup
+--       transaction, the RAISE rolls back the auth.users insert too —
+--       nothing at all is stored. HR adds the person (email) in
+--       Employees first; the existing "invited" branch above then links
+--       their signup to that row, exactly as before. The first-ever
+--       signup still bootstraps an admin so a new deployment can start.
+--
+--   (b) admin_delete_signup(emp_id): admin/HR only, PENDING signups
+--       only, deletes the employees row AND its auth.users row. Limited
+--       to pending rows on purpose — it must never become a way to wipe
+--       a real employee and their history. Terminate does that job.
+--
+--   Safe to re-run.
+-- =============================================================
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  is_first       boolean;
+  invited_emp_id uuid;
+  meta           jsonb;
+  new_emp_id     uuid;
+  signup_branch  text;
+BEGIN
+  meta := COALESCE(NEW.raw_user_meta_data, '{}'::jsonb);
+  signup_branch := NULLIF(TRIM(COALESCE(meta->>'branch', '')), '');
+
+  -- 1. Already linked.
+  IF EXISTS (SELECT 1 FROM public.employees WHERE user_id = NEW.id) THEN
+    RETURN NEW;
+  END IF;
+
+  -- 2. HR pre-added this email — link to that row and fill the gaps.
+  SELECT id INTO invited_emp_id
+    FROM public.employees
+   WHERE LOWER(email) = LOWER(NEW.email)
+     AND user_id IS NULL
+   ORDER BY hire_date NULLS LAST
+   LIMIT 1;
+
+  IF invited_emp_id IS NOT NULL THEN
+    UPDATE public.employees
+       SET user_id   = NEW.id,
+           phone     = COALESCE(NULLIF(TRIM(phone),'')    , NULLIF(TRIM(meta->>'phone'),'')),
+           job_title = COALESCE(NULLIF(TRIM(job_title),''), NULLIF(TRIM(meta->>'role'),''),  job_title)
+     WHERE id = invited_emp_id;
+
+    IF signup_branch IS NOT NULL THEN
+      INSERT INTO public.employee_extras (employee_id, branch)
+      VALUES (invited_emp_id, signup_branch)
+      ON CONFLICT (employee_id) DO UPDATE
+        SET branch = COALESCE(NULLIF(TRIM(public.employee_extras.branch),''), EXCLUDED.branch);
+    END IF;
+
+    RETURN NEW;
+  END IF;
+
+  -- 3. Nobody added this email. Only the very first signup (empty
+  --    employees table) may create its own account — as the admin.
+  SELECT NOT EXISTS (SELECT 1 FROM public.employees) INTO is_first;
+
+  IF NOT is_first THEN
+    RAISE EXCEPTION 'This email has not been registered by your HR team. Ask them to add you in Employees first, then sign up with the same email.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  INSERT INTO public.employees (
+    user_id, email, first_name, last_name, phone,
+    system_role, status, job_title, department, hire_date, salary
+  ) VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(meta->>'first_name', ''),
+    COALESCE(meta->>'last_name', ''),
+    NULLIF(TRIM(meta->>'phone'), ''),
+    'admin',
+    'active',
+    COALESCE(NULLIF(TRIM(meta->>'role'), ''), 'Admin'),
+    COALESCE(NULLIF(TRIM(meta->>'role'), ''), 'Management'),
+    CURRENT_DATE,
+    0
+  )
+  RETURNING id INTO new_emp_id;
+
+  IF signup_branch IS NOT NULL AND new_emp_id IS NOT NULL THEN
+    INSERT INTO public.employee_extras (employee_id, branch)
+    VALUES (new_emp_id, signup_branch)
+    ON CONFLICT (employee_id) DO UPDATE SET branch = EXCLUDED.branch;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- (b) Delete a pending signup outright: employees row + login account.
+CREATE OR REPLACE FUNCTION public.admin_delete_signup(emp_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  target_status text;
+  target_role   text;
+  target_uid    uuid;
+BEGIN
+  IF NOT public.has_role(ARRAY['admin','hr']) THEN
+    RAISE EXCEPTION 'Only an admin or HR can delete a signup.';
+  END IF;
+
+  SELECT status, system_role, user_id
+    INTO target_status, target_role, target_uid
+    FROM public.employees WHERE id = emp_id;
+
+  IF target_status IS NULL THEN
+    RAISE EXCEPTION 'That signup no longer exists.';
+  END IF;
+  IF target_status <> 'pending' THEN
+    RAISE EXCEPTION 'Only a pending signup can be deleted this way (this one is %). Use Terminate instead, which keeps their records.', target_status;
+  END IF;
+  IF target_role = 'admin' THEN
+    RAISE EXCEPTION 'Refusing to delete an admin account.';
+  END IF;
+  IF target_uid IS NOT NULL AND target_uid = auth.uid() THEN
+    RAISE EXCEPTION 'You cannot delete your own account.';
+  END IF;
+
+  DELETE FROM public.employees WHERE id = emp_id;
+  IF target_uid IS NOT NULL THEN
+    DELETE FROM auth.users WHERE id = target_uid;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_delete_signup(uuid) FROM public;
+REVOKE ALL ON FUNCTION public.admin_delete_signup(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.admin_delete_signup(uuid) TO authenticated;
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

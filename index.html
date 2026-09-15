@@ -3752,7 +3752,7 @@ function renderLogin() {
               Create account
               <svg class="w-4 h-4 ${isAr?'rtl-flip':''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
-            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">After signup, your HR team will configure your salary, schedule, and document expiries.</p>
+            <p class="text-[11px] text-slate-500 text-center px-2 leading-relaxed">Use the email your HR team registered for you — sign-up only works for staff they have already added. They then approve you and set up your salary, schedule and document expiries.</p>
           </form>
           <div class="mt-8 pt-6 border-t border-brand-100 text-center">
             <span class="text-sm text-slate-500">Already have an account? </span>
@@ -3803,7 +3803,15 @@ async function doSignup() {
     } },
   });
   if (btn) { btn.disabled = false; btn.style.opacity=''; }
-  if (error) { toast(error.message || 'Sign up failed', 'error'); return; }
+  if (error) {
+    // Sign-up is invite-only: the trigger refuses an email HR hasn't added
+    // (SQL block 116), which Supabase surfaces as a generic database error.
+    const msg = String(error.message || '');
+    toast(/database error saving new user|not been registered/i.test(msg)
+      ? "This email isn't registered yet. Ask your HR team to add you in Employees first, then sign up with the same email."
+      : (msg || 'Sign up failed'), 'error');
+    return;
+  }
   // If Supabase has email confirmation ON, data.session will be null
   // until the user clicks the link. If it's OFF, Supabase auto-creates
   // a session and we'd otherwise auto-login the user — explicitly
@@ -11060,17 +11068,17 @@ function renderHelp() {
           </ul>
         </li>
         <li><strong>IQAMA &amp; Baladiya</strong> &mdash; numbers and expiry dates. The system reminds you 5 days before an IQAMA expires and 2 months before a Baladiya health card expires.</li>
-        <li>Save. Or skip this step entirely &mdash; the employee can sign themselves up at the live URL (filling in their own name, phone, position, branch). Either way, after they sign up they land in <strong>Pending approval</strong> &mdash; you must explicitly approve them before they can use the system (see next section). After approval, fill in their salary and schedule.</li>
+        <li>Save. Adding them here <strong>with their email</strong> is what lets them sign up at all &mdash; sign-up is invite-only, and an email you haven&rsquo;t added is refused. They then sign up at the live URL with that same email, land in <strong>Pending approval</strong>, and you approve them (see next section). After approval, fill in their salary and schedule.</li>
       </ol>
 
       <h2 id="guide-approve">Approving new signups</h2>
-      <p>Anyone can sign up at the live URL, but no one can use the system until an admin approves them. This is your access control.</p>
+      <p>Only people you have already added in <strong>Employees</strong> can sign up, and even then no one can use the system until an admin approves them. That is your access control: a stranger who finds the live URL is refused at sign-up, and nothing is stored for them.</p>
       <ol>
         <li>When someone signs up, an amber alert appears at the top of your <strong>Dashboard</strong>: <em>"X employees are awaiting your approval."</em> Click <strong>Review now</strong>.</li>
         <li>In the <strong>Employees</strong> directory, pending signups have an <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-xs font-semibold">Pending approval</span> badge in their status column.</li>
         <li>Verify the submitted info (name, email, phone, position, branch) is plausible &mdash; e.g. the email matches someone you actually hired.</li>
         <li>Click <strong>Approve</strong> &mdash; their status flips to Active and they can log in normally on next refresh.</li>
-        <li>Click <strong>Reject</strong> if they shouldn&rsquo;t have access &mdash; they are permanently blocked. (You can later reinstate them from the directory if it was a mistake.)</li>
+        <li>Click <strong>Reject</strong> if they shouldn&rsquo;t have access &mdash; their record and their login are deleted outright, leaving nothing behind. If that was a mistake, add them again in <strong>Employees</strong> and ask them to sign up with the same email.</li>
       </ol>
       <p>The pending employee sees an <strong>Awaiting approval</strong> screen if they try to log in before you decide. They cannot reach the app.</p>
       ` : ''}
@@ -26624,25 +26632,21 @@ async function approvePendingEmployee(empId) {
   toast(`${e.firstName} approved`, 'success');
 }
 
-// Reject a pending signup — marks them as terminated with a "signup
-// not approved" reason. Their auth account stays (Supabase admin
-// API would be needed to delete) but they're permanently blocked.
+// Reject a pending signup — deletes the employees row AND the Supabase
+// login account via admin_delete_signup (SQL block 116), so someone who
+// found the URL leaves nothing behind. That function only accepts
+// 'pending' rows: real staff are terminated, never deleted.
 async function rejectPendingEmployee(empId) {
   const e = getEmployee(empId);
-  const me = currentEmployee();
-  if (!e || !me || !canManagePeople()) return;
-  if (!confirm(`Reject ${e.firstName}'s signup? They will be permanently blocked from logging in. To approve later you'd need to reinstate them from the directory.`)) return;
-  const updates = {
-    status: 'terminated',
-    termination_date: todayISO(),
-    termination_reason: 'Signup not approved',
-    terminated_by: me.id,
-  };
-  const { data, error } = await sb.from('employees').update(updates).eq('id', empId).select().single();
-  if (error) { toast(humanizeError(error), 'error'); return; }
-  Object.assign(e, mapEmployeeFromDb(data));
+  if (!e || !canManagePeople()) return;
+  const name = (e.firstName + ' ' + (e.lastName || '')).trim();
+  if (!confirm(`Delete ${name}'s signup completely?\n\nTheir record and their login (${e.email || 'no email'}) are removed — nothing is left in the system. This cannot be undone: if it was a mistake, add them again in Employees and ask them to sign up with the same email.`)) return;
+  const { error } = await sb.rpc('admin_delete_signup', { emp_id: empId });
+  if (error) { toast(error.message || humanizeError(error), 'error'); return; }
+  state.employees = state.employees.filter(x => x.id !== empId);
+  delete state.leaveBalances[empId];
   render();
-  toast(`${e.firstName} rejected`, 'success');
+  toast(`${name}'s signup deleted`, 'success');
 }
 
 /* -------------------- NOT-AUTHORIZED GATE -------------------- */
