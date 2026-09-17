@@ -7120,6 +7120,35 @@ function _clockGuardExit(g) {
   _clockBusy = false;
   if (g && g.btn) { g.btn.disabled = false; g.btn.style.opacity = ''; g.btn.style.pointerEvents = ''; }
 }
+// A single getCurrentPosition indoors often returns a coarse Wi-Fi/cell fix
+// that is 200m+ off while reporting a small accuracy, rejecting people who
+// are standing inside the branch. Instead, watch the position for up to ~12s:
+// stop as soon as a reading lands inside an active branch (or is tight,
+// ≤20m), otherwise return the reading that came closest to a branch edge.
+function getBestClockFix(requireBranch) {
+  return new Promise((resolve, reject) => {
+    let best = null, bestScore = Infinity, lastErr = null, done = false, id = null;
+    const finish = () => {
+      if (done) return; done = true;
+      if (id != null) navigator.geolocation.clearWatch(id);
+      clearTimeout(timer);
+      best ? resolve(best) : reject(lastErr || new Error('No location fix'));
+    };
+    const timer = setTimeout(finish, 12000);
+    id = navigator.geolocation.watchPosition(p => {
+      const acc = p.coords.accuracy || 0;
+      if (!requireBranch) { best = p; return finish(); }
+      const near = nearestBranch(p.coords.latitude, p.coords.longitude, acc);
+      const score = near ? near.distance - near.branch.radius - acc : acc;
+      if (score < bestScore) { best = p; bestScore = score; }
+      if ((near && near.within) || acc <= 20) finish();
+    }, err => {
+      lastErr = err;
+      // Permission denied won't recover — fail now. Timeouts/unavailable keep waiting.
+      if (err && err.code === 1) finish();
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 });
+  });
+}
 // Shared location capture + branch geofence for BOTH clock-in and clock-out,
 // so the same physical-presence restriction applies to each. Returns
 // { location, branch } on success ({location:null} when location isn't
@@ -7137,7 +7166,7 @@ async function captureClockLocation(action) {
     toast('Capturing location...');
     let pos;
     try {
-      pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, enableHighAccuracy: true }));
+      pos = await getBestClockFix(requireBranch);
     } catch(e) {
       openClockFailedModal(action, 'Could not get your location. Turn on location permission for this app, step outside if you are behind thick walls, and try again.');
       return null;
@@ -7151,7 +7180,7 @@ async function captureClockLocation(action) {
       }
       if (!near.within) {
         const dist = Math.round(near.distance);
-        openClockFailedModal(action, `You are ${dist}m from "${near.branch.name}". ${action} only works at a branch location.`);
+        openClockFailedModal(action, `You are ${dist}m from "${near.branch.name}" (GPS accuracy ±${Math.round(acc)}m). ${action} only works at a branch location. If you are inside the branch: turn Wi-Fi ON, stand near a window or the door, wait 10 seconds and try again.`);
         return null;
       }
       if (near.branch.isHeadOffice && !HEAD_OFFICE_ROLES.includes(realRole())) {
