@@ -7874,12 +7874,15 @@ function renderPayroll() {
     <div class="bg-rose-50 border border-rose-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
       <span class="shrink-0 text-rose-600">${icon('warning','w-5 h-5')}</span>
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-rose-900">Payroll bookkeeping partially failed — ${escapeHTML(_pendingBookkeeping.ym)}</div>
+        <div class="font-semibold text-rose-900">Payroll ${_pendingBookkeeping.undo ? 'undo' : 'bookkeeping'} partially failed — ${escapeHTML(_pendingBookkeeping.ym)}</div>
         <p class="text-sm text-rose-800 mt-1">
           ${_pendingBookkeeping.advanceFailures.length} advance update${_pendingBookkeeping.advanceFailures.length===1?'':'s'}
           and ${_pendingBookkeeping.deductionFailures.length} deduction update${_pendingBookkeeping.deductionFailures.length===1?'':'s'}
-          didn't apply during the run. The payslips are correct but those advances are still showing as not-fully-repaid
-          and those deductions are still pending. Click <strong>Retry bookkeeping</strong> to re-apply only the failed
+          ${_pendingBookkeeping.undo
+            ? `didn't revert when the run was undone. The payslips are gone, but those advances still show the repayment as taken
+          and those deductions still show as applied — the next run would skip them. Click`
+            : `didn't apply during the run. The payslips are correct but those advances are still showing as not-fully-repaid
+          and those deductions are still pending. Click`} <strong>Retry bookkeeping</strong> to re-apply only the failed
           pieces (safe to click repeatedly — each update is idempotent).
         </p>
         <div class="flex gap-2 mt-3 flex-wrap">
@@ -7898,6 +7901,7 @@ function renderPayroll() {
       </div>
       <div class="flex gap-2 flex-wrap">
         ${filteredPeriodsList.length===1 ? `<button onclick="generatePayrollReport('${filteredPeriodsList[0]}')" class="btn btn-ghost">${icon('report','w-4 h-4')} Open Report</button>` : ''}
+        ${hasRole('admin') && baseRecords.length ? `<button onclick="undoPayrollRun()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} Undo a run</button>` : ''}
         <button onclick="runPayroll()" class="btn btn-primary">${icon('plus','w-4 h-4')} ${escapeHTML(t('run_payroll'))}</button>
       </div>
     </div>
@@ -8269,18 +8273,20 @@ function holidayDayHours(empId) {
 // run-payroll preview doesn't re-scan all of state.attendance per
 // employee on every keystroke.
 function holidayOtForEmployee(empId, ym, salary, holidaySet, attRows) {
-  if (!holidaySet.size) return { hours: 0, amount: 0 };
+  if (!holidaySet.size) return { hours: 0, amount: 0, days: [], dayHours: holidayDayHours(empId), hourlyRate: 0 };
   let mins = 0;
+  const days = []; // [{ date, clockIn, clockOut, hours }] — shown in the Run Payroll preview
   for (const a of (attRows || [])) {
     if (a.date.slice(0,7) !== ym) continue;
     if (!holidaySet.has(a.date)) continue;
     const d = attMinutes(a);
-    if (d > 0) mins += d;
+    if (d > 0) { mins += d; days.push({ date: a.date, clockIn: a.clockIn, clockOut: a.clockOut, hours: Math.round((d / 60) * 100) / 100 }); }
   }
   const hours = Math.round((mins / 60) * 100) / 100;
-  const hourlyRate = (Number(salary) || 0) / 30 / holidayDayHours(empId);
+  const dayHours = holidayDayHours(empId);
+  const hourlyRate = (Number(salary) || 0) / 30 / dayHours;
   const amount = Math.round(hours * hourlyRate * HOLIDAY_OT_MULTIPLIER * 100) / 100;
-  return { hours, amount };
+  return { hours, amount, days: days.sort((x, y) => x.date.localeCompare(y.date)), dayHours, hourlyRate };
 }
 
 // KSA Labour Law Article 92 caps single-month wage deductions at
@@ -8379,6 +8385,7 @@ function calcPayroll(ym) {
   const advanceUpdates = new Map(); // advanceId -> { installmentsPaid, repaid }
   const deductionUpdates = new Map(); // deductionId -> true (flip to 'applied' after run)
   const advanceLines = [];           // [{ employeeId, name, label, amount }] advance/loan repayments taken this run (for the modal breakdown)
+  const otLines = [];                // [{ employeeId, name, salary, dayHours, hourlyRate, hours, amount, days }] holiday OT per employee (for the modal breakdown)
   const warnings = [];               // [{ employeeId, name, gross, deductions, cap50, rawNet, overCap, negativeNet, overCapBy, negativeBy }]
   const holidaySet = new Set((state.holidays || []).map(h => h.date));
   // Bucket attendance by employee ONCE (only when there are holidays
@@ -8477,6 +8484,12 @@ function calcPayroll(ym) {
     });
     const base = e.salary;
     const ot = holidayOtForEmployee(e.id, ym, e.salary, holidaySet, attByEmp ? attByEmp.get(e.id) : null);
+    if (ot.hours > 0) otLines.push({
+      employeeId: e.id,
+      name: ((e.firstName||'')+' '+(e.lastName||'')).trim() || e.email || e.id,
+      salary: Number(e.salary) || 0, dayHours: ot.dayHours, hourlyRate: ot.hourlyRate,
+      hours: ot.hours, amount: ot.amount, days: ot.days,
+    });
     // Manual adjustment lines for this employee (entered in the Run
     // Payroll modal). Bonus lines add to bonus; deduction lines add
     // to deductions. Persisted itemised on the payslip.
@@ -8544,7 +8557,8 @@ function calcPayroll(ym) {
       manualBonus: s.manualBonus + mb,
     };
   }, { base:0, bonus:0, deductions:0, net:0, otHours:0, otBonus:0, manualBonus:0 });
-  return { rows, advanceUpdates, deductionUpdates, advanceLines, totals, isRerun, warnings };
+  otLines.sort((a, b) => a.name.localeCompare(b.name));
+  return { rows, advanceUpdates, deductionUpdates, advanceLines, otLines, totals, isRerun, warnings };
 }
 
 function runPayroll() {
@@ -8713,6 +8727,27 @@ function renderRunPayrollPreview() {
         </div>
       ` : ''}
     </div>
+    ${calc.otLines.length ? `
+      <!-- Per-employee holiday OT so the operator can check it BEFORE running:
+           which holiday shifts counted, the day length used and the rate. -->
+      <details class="bg-white border border-slate-200 rounded-xl p-3 mt-3 text-xs">
+        <summary class="cursor-pointer font-semibold text-slate-700">Holiday overtime breakdown · ${calc.otLines.length} employee${calc.otLines.length===1?'':'s'}</summary>
+        <div class="mt-3 space-y-3">
+          ${calc.otLines.map(o => `
+            <div class="border-t border-slate-100 pt-2">
+              <div class="flex items-baseline justify-between gap-2">
+                <span class="font-semibold text-slate-800">${escapeHTML(o.name)}</span>
+                <span class="font-semibold text-emerald-700 tabular-nums">+${fmtMoney(o.amount)}</span>
+              </div>
+              <div class="text-slate-500 mt-0.5">${fmtMoney(o.salary)} ÷ 30 ÷ ${o.dayHours}h = ${fmtMoney(Math.round(o.hourlyRate*100)/100)}/hr × 1.5 × ${o.hours} hr${o.hours===1?'':'s'}</div>
+              <ul class="mt-1 text-slate-600">
+                ${o.days.map(d => `<li>${escapeHTML(d.date)} · ${escapeHTML(String(d.clockIn||''))}–${escapeHTML(String(d.clockOut||''))} · <strong>${d.hours} h</strong>${d.hours > 14 ? ' <span class="text-rose-700 font-semibold">(check clock-out)</span>' : ''}</li>`).join('')}
+              </ul>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+    ` : ''}
   `;
 }
 
@@ -8953,6 +8988,188 @@ function dismissPayrollBookkeeping() {
   if (!confirm('Dismiss the bookkeeping warning?\n\nThe failed updates won\'t be retried automatically — you\'ll need to fix them manually (mark the advance repaid, set the deduction to applied, etc.) or the next payroll re-run for this period will skip them.')) return;
   _pendingBookkeeping = null;
   render();
+}
+
+// Undo a payroll run: delete every payslip for the month and put back the
+// advance/loan and registered-deduction bookkeeping the run applied, so the
+// month can be run again cleanly (a plain re-run only ADDS a second set of
+// payslips). Nothing extra is stored at run time — the reversal is derived
+// from the itemised deduction lines on the payslips themselves:
+//   • "Loan repayment[: reason] (installment n/m)" → that loan's
+//     installments_paid goes back to n-1, repaid_at cleared.
+//   • "Advance repayment[: reason][ (…)]" → amount_recovered minus that
+//     amount, installments_paid minus 1, repaid_at cleared.
+//   • a registered deduction for the month whose "reason (incident date)"
+//     line + amount is on the employee's payslip → back to 'pending'.
+// Only advances that were unrepaid before the run are ever charged, so
+// clearing repaid_at is exact. Lines that can't be matched are listed in
+// the confirmation so they can be fixed by hand on the Advances page.
+// Admin only — payroll DELETE is RLS-gated to admin.
+function planPayrollUndo(ym) {
+  const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const slips = (state.payroll || []).filter(p => p.period === ym);
+  const nameOf = id => { const e = getEmployee(id); return e ? (((e.firstName||'')+' '+(e.lastName||'')).trim() || e.email || '—') : '—'; };
+  const advances = (state.advances || []).filter(a => a.status === 'approved')
+    .sort((x, y) => String(x.requestedAt || '').localeCompare(String(y.requestedAt || '')));
+  const pendingDeds = (state.deductions || []).filter(d => d.period === ym && d.status === 'applied');
+  const advanceReverts = new Map();   // advanceId -> { aid, name, lines:[label], updates }
+  const deductionReverts = [];        // { did, name, label, amount, updates }
+  const unmatched = [];               // { name, label, amount }
+  const usedDed = new Set();
+  for (const p of slips) {
+    for (const adj of (p.adjustments || [])) {
+      if (adj.kind !== 'deduction') continue;
+      const label = adj.label || '';
+      const amount = round2(adj.amount);
+      const isLoan = /^loan\s+repayment/i.test(label);
+      const isAdv  = /^advance\s+repayment/i.test(label);
+      if (isLoan || isAdv) {
+        const prefixOf = a => `${isLoan ? 'Loan' : 'Advance'} repayment${(a.reason||'').trim() ? ': ' + (a.reason||'').trim() : ''}`;
+        const cands = advances.filter(a => {
+          if (a.employeeId !== p.employeeId || (a.kind === 'loan') !== isLoan) return false;
+          const pre = prefixOf(a);
+          if (label !== pre && !label.startsWith(pre + ' (')) return false;
+          if (isLoan) {
+            const months = Math.min(2, Math.max(1, Number(a.installmentMonths) || 1));
+            const prior = advanceReverts.get(a.id);
+            const paid = prior ? prior.updates.installments_paid : (Number(a.installmentsPaid) || 0);
+            return label.endsWith(`(installment ${paid}/${months})`);
+          }
+          return true;
+        });
+        // Prefer an advance whose ledger actually carries this amount.
+        const a = cands.find(c => isLoan || (advanceReverts.get(c.id)?.updates.amount_recovered ?? round2(c.amountRecovered)) >= amount - 0.001) || cands[0];
+        if (!a) { unmatched.push({ name: nameOf(p.employeeId), label, amount }); continue; }
+        const cur = advanceReverts.get(a.id) || {
+          aid: a.id, name: nameOf(a.employeeId), lines: [],
+          updates: { installments_paid: Number(a.installmentsPaid) || 0, amount_recovered: round2(a.amountRecovered), repaid_at: null },
+        };
+        cur.updates.installments_paid = Math.max(0, cur.updates.installments_paid - 1);
+        if (!isLoan) cur.updates.amount_recovered = Math.max(0, round2(cur.updates.amount_recovered - amount));
+        cur.lines.push({ label, amount });
+        advanceReverts.set(a.id, cur);
+        continue;
+      }
+      const d = pendingDeds.find(x => !usedDed.has(x.id) && x.employeeId === p.employeeId
+        && `${x.reason||'Deduction'}${x.incidentDate?` (${x.incidentDate})`:''}` === label
+        && Math.abs(round2(x.amount) - amount) < 0.005);
+      if (d) {
+        usedDed.add(d.id);
+        deductionReverts.push({ did: d.id, name: nameOf(d.employeeId), label, amount, updates: { status: 'pending', applied_at: null } });
+      }
+      // Anything else is a manual line typed into the Run Payroll modal —
+      // it lived only on the payslip, so deleting the payslip undoes it.
+    }
+  }
+  // Loans never had amount_recovered written by the run — don't touch it.
+  for (const r of advanceReverts.values()) {
+    const a = advances.find(x => x.id === r.aid);
+    if (a && a.kind === 'loan') delete r.updates.amount_recovered;
+  }
+  return {
+    ym, slips,
+    net: round2(slips.reduce((s, p) => s + (Number(p.net) || 0), 0)),
+    advanceReverts: [...advanceReverts.values()],
+    deductionReverts, unmatched,
+  };
+}
+
+function undoPayrollRun() {
+  if (!hasRole('admin')) { toast('Only admins can undo a payroll run', 'error'); return; }
+  const periods = [...new Set((state.payroll || []).map(p => p.period))].sort().reverse();
+  if (!periods.length) { toast('No payroll runs to undo', 'error'); return; }
+  const form = `
+    <div class="space-y-4">
+      <div>
+        <label class="label">Month to undo</label>
+        <select id="up-period" class="input" onchange="renderUndoPayrollPreview()">
+          ${periods.map(p => `<option value="${escapeHTML(p)}">${escapeHTML(p)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="up-preview"></div>
+      <div>
+        <label class="label">Type the month (e.g. <span id="up-hint" class="font-mono">${escapeHTML(periods[0])}</span>) to confirm</label>
+        <input id="up-confirm" class="input font-mono" autocomplete="off" placeholder="YYYY-MM">
+      </div>
+    </div>`;
+  openModal('Undo payroll run', form, async () => {
+    const ym = $('#up-period').value;
+    if (($('#up-confirm').value || '').trim() !== ym) { toast(`Type ${ym} to confirm`, 'error'); return false; }
+    const plan = planPayrollUndo(ym);
+    if (!plan.slips.length) { toast('Nothing to undo for that month', 'error'); return false; }
+
+    // 1. Payslips first — one DELETE statement, so it either all goes or
+    //    none does. .select() returns the rows actually removed: RLS
+    //    silently deletes nothing when not permitted.
+    const { data: gone, error } = await sb.from('payroll').delete().eq('period', ym).select('id');
+    if (error) { toast(humanizeError(error), 'error'); return false; }
+    if (!gone || !gone.length) { toast('No payslips were deleted — your account may not have permission. Nothing was changed.', 'error'); return false; }
+    const goneIds = new Set(gone.map(r => r.id));
+    state.payroll = state.payroll.filter(p => !goneIds.has(p.id));
+
+    // 2. Put the advance / deduction bookkeeping back. Absolute values
+    //    (not increments), so a retry from the banner can't double-revert.
+    const advanceFailures = [];
+    await Promise.all(plan.advanceReverts.map(async r => {
+      const { data, error } = await sb.from('advances').update(r.updates).eq('id', r.aid).select().single();
+      if (error) { console.error('Advance revert failed:', error); advanceFailures.push({ aid: r.aid, updates: r.updates, error: error.message }); return; }
+      const a = state.advances.find(x => x.id === r.aid);
+      if (a) Object.assign(a, mapAdvanceFromDb(data));
+    }));
+    const deductionFailures = [];
+    await Promise.all(plan.deductionReverts.map(async r => {
+      const { data, error } = await sb.from('deductions').update(r.updates).eq('id', r.did).select().single();
+      if (error) { console.error('Deduction revert failed:', error); deductionFailures.push({ did: r.did, updates: r.updates, error: error.message }); return; }
+      const d = state.deductions.find(x => x.id === r.did);
+      if (d) Object.assign(d, mapDeductionFromDb(data));
+    }));
+
+    if (advanceFailures.length || deductionFailures.length) {
+      _pendingBookkeeping = { ym, runAt: new Date().toISOString(), undo: true, advanceFailures, deductionFailures };
+      toast(`Payroll for ${ym} undone (${gone.length} payslips deleted), but ${advanceFailures.length + deductionFailures.length} advance/deduction update(s) failed. See the banner on the Payroll page to retry.`, 'error');
+    } else {
+      toast(`Payroll for ${ym} undone — ${gone.length} payslips deleted`
+        + (plan.advanceReverts.length ? `, ${plan.advanceReverts.length} advance/loan repayment(s) restored` : '')
+        + (plan.deductionReverts.length ? `, ${plan.deductionReverts.length} deduction(s) back to pending` : '')
+        + '. You can run it again now.', 'success');
+    }
+    render();
+    return true;
+  }, { saveLabel: 'Undo payroll run' });
+  setTimeout(renderUndoPayrollPreview, 0);
+}
+
+function renderUndoPayrollPreview() {
+  const target = $('#up-preview');
+  if (!target) return;
+  const ym = $('#up-period')?.value || '';
+  const hint = $('#up-hint'); if (hint) hint.textContent = ym;
+  const plan = planPayrollUndo(ym);
+  const li = (name, label, amount) => `<li><strong>${escapeHTML(name)}</strong> — ${escapeHTML(label)} · ${fmtMoney(amount)}</li>`;
+  target.innerHTML = `
+    <div class="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-900 space-y-2">
+      <div class="font-semibold">This permanently deletes ${plan.slips.length} payslip${plan.slips.length===1?'':'s'} for ${escapeHTML(ym)} (net ${fmtMoney(plan.net)}).</div>
+      <div>Only do this if the payroll has <strong>not</strong> been sent to the bank. Employees who already downloaded a payslip will have a copy of the old figures.</div>
+      ${(state.payroll || []).some(p => p.period > ym) ? `<div class="font-semibold">A later month has already been run. Undo the latest month first. Undoing an older month now can leave advance balances wrong.</div>` : ''}
+    </div>
+    <div class="bg-slate-50 rounded-xl p-3 mt-3 text-xs text-slate-700 space-y-3">
+      <div>
+        <div class="font-semibold mb-1">Advance / loan repayments to restore (${plan.advanceReverts.length})</div>
+        ${plan.advanceReverts.length ? `<ul class="space-y-0.5">${plan.advanceReverts.flatMap(r => r.lines.map(l => li(r.name, l.label, l.amount))).join('')}</ul>` : '<div class="text-slate-500">None</div>'}
+      </div>
+      <div>
+        <div class="font-semibold mb-1">Registered deductions back to pending (${plan.deductionReverts.length})</div>
+        ${plan.deductionReverts.length ? `<ul class="space-y-0.5">${plan.deductionReverts.map(r => li(r.name, r.label, r.amount)).join('')}</ul>` : '<div class="text-slate-500">None</div>'}
+      </div>
+      <div class="text-slate-500">Manual bonus/deduction lines typed into Run Payroll aren't saved anywhere else, so re-enter them when you run it again.</div>
+    </div>
+    ${plan.unmatched.length ? `
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mt-3 text-xs text-amber-900">
+        <div class="font-semibold mb-1">${plan.unmatched.length} repayment line${plan.unmatched.length===1?'':'s'} couldn't be matched to an advance — fix these by hand on the Advances page after undoing:</div>
+        <ul class="space-y-0.5">${plan.unmatched.map(u => li(u.name, u.label, u.amount)).join('')}</ul>
+      </div>
+    ` : ''}
+  `;
 }
 
 /* -------------------- REPORTS -------------------- */
