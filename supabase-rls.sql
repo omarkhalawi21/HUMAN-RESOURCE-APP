@@ -6188,6 +6188,49 @@ UPDATE public.incoming_transfers
  WHERE from_branch IS DISTINCT FROM 'ROASTERY';
 
 -- =============================================================
+-- 118. AI ASSISTANT USAGE LOG (admin-only assistant)
+--
+--   One row per question asked on the AI Assistant page. The ai-assistant
+--   Edge Function writes it AS THE CALLER (their JWT, not the service
+--   role), counts the last 24h of rows to enforce the per-admin daily cap,
+--   and records token usage so cost can be tracked. The question text is
+--   kept for audit; answers are not stored.
+--
+--   RLS: admins only. An admin can insert rows only for themselves; rows
+--   are never updated. Safe to re-run.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.ai_assistant_log (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users(id) ON DELETE CASCADE,
+  employee_id   uuid references public.employees(id) ON DELETE SET NULL,
+  question      text,
+  status        text not null default 'ok',
+  model         text,
+  input_tokens  integer not null default 0,
+  output_tokens integer not null default 0,
+  tool_calls    integer not null default 0,
+  created_at    timestamptz not null default now()
+);
+CREATE INDEX IF NOT EXISTS ai_assistant_log_user_time_idx
+  ON public.ai_assistant_log(user_id, created_at DESC);
+
+ALTER TABLE public.ai_assistant_log ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='ai_assistant_log'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.ai_assistant_log', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "ai_log_select_admin" ON public.ai_assistant_log FOR SELECT TO authenticated
+  USING (public.is_admin());
+CREATE POLICY "ai_log_insert_self_admin" ON public.ai_assistant_log FOR INSERT TO authenticated
+  WITH CHECK (public.is_admin() AND user_id = auth.uid());
+CREATE POLICY "ai_log_update_none" ON public.ai_assistant_log FOR UPDATE TO authenticated
+  USING (false) WITH CHECK (false);
+CREATE POLICY "ai_log_delete_admin" ON public.ai_assistant_log FOR DELETE TO authenticated
+  USING (public.is_admin());
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
