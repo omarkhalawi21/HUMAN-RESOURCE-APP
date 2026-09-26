@@ -330,6 +330,7 @@ const ICONS = {
   wrench:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
   grip:     `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>`,
   copy:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
+  sparkle:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg>`,
 };
 
 // Wraps the SVG in inline-block so width/height classes (w-4 h-4 etc) apply.
@@ -472,6 +473,7 @@ const I18N = {
     holidays: "Holidays",
     resources: "Resources",
     analytics: "Analytics",
+    ai_assistant: "AI Assistant",
     deductions: "Deductions",
     // Resources page
     team_library: "Team Library",
@@ -908,6 +910,7 @@ const I18N = {
     holidays: "العطلات",
     resources: "المراجع",
     analytics: "التحليلات",
+    ai_assistant: "المساعد الذكي",
     deductions: "الخصومات",
     // Resources page
     team_library: "مكتبة الفريق",
@@ -3644,7 +3647,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'expired_log', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'expired_log', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'assistant', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -3903,6 +3906,7 @@ async function logout() {
   bakeryStockState     = { date:'', view:'entry', draft:null };
   bakeryPurchasesState = { ym:'', draft:null };
   inventoryHubState   = { branch:'', view:'dashboard', shift:'morning', draft:null };
+  _aiChat             = { messages: [], busy: false, draft: '', remaining: null };
   deviceState         = { staffId:'', staffName:'', view:'today', shift:'morning', draft:null, search:'' };
   // Sec #7 — drop any unresolved partial-failure bookkeeping. The DB
   // state survives logout, so the next admin login can still inspect
@@ -4099,6 +4103,7 @@ function renderShell(routeContent) {
     { key:'dashboard',    icon:'dashboard', label:t('dashboard'),    show:true,  group:'main' },
     { key:'my_work',      icon:'check',     label:t('my_work'),         show:true,  group:'main' },
     { key:'work_management', icon:'check',  label:t('work_management'),  show:hasRole('admin','operations'), group:'main' },
+    { key:'assistant',    icon:'sparkle',   label:t('ai_assistant'),    show:isAdmin(), group:'main' },
     { key:'meetings',     icon:'calendar',  label:t('meetings'),         show:hasRole('admin','operations','hr'), group:'main' },
     { key:'marketing',    icon:'report',    label:t('marketing'),     show:canManageMarketing(), group:'main' },
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
@@ -11337,6 +11342,189 @@ function convertApplicationToEmployee(id) {
   if (a.status !== 'hired') updateApplicationStatus(id, 'hired');
   _applicationPrefill = a;
   openEmployeeModal();
+}
+
+/* -------------------- AI ASSISTANT (admin-only) -------------------- */
+// Chat page backed by the ai-assistant Edge Function. The function checks the
+// caller's REAL role server-side and runs every lookup with their JWT, so RLS
+// still applies; the isAdmin() gates here only hide the page. The chat lives
+// in page-level state (not a modal), so it survives re-renders and navigation
+// until "New chat" or sign-out.
+let _aiChat = { messages: [], busy: false, draft: '', remaining: null };
+const AI_ASSISTANT_SUGGESTIONS = {
+  en: [
+    'Who was late the most this month?',
+    'Which permits (iqama / baladiya) expire in the next 60 days?',
+    'Total payroll by month for the last 3 months',
+    'Open maintenance requests by branch',
+  ],
+  ar: [
+    'من أكثر موظف تأخر هذا الشهر؟',
+    'ما الإقامات أو رخص البلدية التي تنتهي خلال ٦٠ يومًا؟',
+    'إجمالي الرواتب لكل شهر في آخر ٣ أشهر',
+    'طلبات الصيانة المفتوحة حسب الفرع',
+  ],
+};
+
+// Minimal, escape-first markdown for assistant replies: paragraphs, lists,
+// pipe tables, headings, **bold**, *italic*, `code`. Everything is HTML-escaped
+// before any tag is added, so model output can never inject markup.
+function aiMarkdown(src) {
+  const inline = s => escapeHTML(s)
+    .replace(/`([^`]+)`/g, '<code class="px-1 rounded bg-slate-100 text-[0.9em]">$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  const lines = String(src || '').replace(/\r/g, '').split('\n');
+  const out = [];
+  let i = 0;
+  const isRow = l => /^\s*\|.*\|\s*$/.test(l);
+  const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    if (/^```/.test(line.trim())) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) buf.push(lines[i++]);
+      i++;
+      out.push(`<pre class="bg-slate-50 rounded-lg p-3 text-xs overflow-x-auto">${escapeHTML(buf.join('\n'))}</pre>`);
+      continue;
+    }
+    if (isRow(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')) {
+      const head = cells(line); i += 2;
+      const body = [];
+      while (i < lines.length && isRow(lines[i])) body.push(cells(lines[i++]));
+      out.push(`<div class="overflow-x-auto my-2"><table class="data"><thead><tr>${head.map(h => `<th>${inline(h)}</th>`).join('')}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    const h = line.match(/^\s*#{1,6}\s+(.*)$/);
+    if (h) { out.push(`<div class="font-semibold text-slate-900 mt-2">${inline(h[1])}</div>`); i++; continue; }
+    if (/^\s*([-*•]|\d+[.)])\s+/.test(line)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(line);
+      const items = [];
+      const marker = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*•]\s+/;
+      while (i < lines.length && marker.test(lines[i])) items.push(lines[i++].replace(marker, ''));
+      const tag = ordered ? 'ol' : 'ul';
+      out.push(`<${tag} class="${ordered ? 'list-decimal' : 'list-disc'} ps-5 space-y-0.5">${items.map(it => `<li>${inline(it)}</li>`).join('')}</${tag}>`);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !isRow(lines[i]) && !/^\s*(#{1,6}\s|[-*•]\s|\d+[.)]\s|```)/.test(lines[i])) para.push(lines[i++]);
+    if (!para.length) para.push(lines[i++]);
+    out.push(`<p>${para.map(inline).join('<br>')}</p>`);
+  }
+  return out.join('');
+}
+
+function renderAssistantLog() {
+  const ar = state.settings.lang === 'ar';
+  if (!_aiChat.messages.length) {
+    const chips = AI_ASSISTANT_SUGGESTIONS[ar ? 'ar' : 'en'];
+    return `
+      <div class="text-center py-10 px-4">
+        <div class="w-14 h-14 mx-auto rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mb-3">${icon('sparkle','w-7 h-7')}</div>
+        <div class="font-display text-lg font-semibold text-slate-900">${ar ? 'اسأل عن بيانات الشركة' : 'Ask about your company data'}</div>
+        <div class="text-sm text-slate-500 mt-1 max-w-md mx-auto">${ar ? 'الحضور، الرواتب، الإجازات، المخزون، الصيانة وغيرها. المساعد يقرأ فقط ولا يغيّر أي شيء.' : 'Attendance, payroll, leave, stock, maintenance and more. The assistant only reads data; it never changes anything.'}</div>
+        <div class="flex flex-wrap justify-center gap-2 mt-5">
+          ${chips.map((q, i) => `<button type="button" onclick="askAssistantSuggestion(${i})" class="text-sm px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:text-brand-700" dir="auto">${escapeHTML(q)}</button>`).join('')}
+        </div>
+      </div>`;
+  }
+  const bubbles = _aiChat.messages.map(m => m.role === 'user'
+    ? `<div class="flex justify-end"><div class="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 text-white px-4 py-2.5 text-sm whitespace-pre-wrap" dir="auto">${escapeHTML(m.content)}</div></div>`
+    : `<div class="flex justify-start"><div class="ai-answer max-w-[92%] rounded-2xl rounded-bl-md ${m.error ? 'bg-red-50 text-red-800 border border-red-200' : 'bg-slate-50 text-slate-800 border border-slate-100'} px-4 py-3 text-sm space-y-2" dir="auto">${m.error ? escapeHTML(m.content) : aiMarkdown(m.content)}</div></div>`
+  ).join('');
+  const thinking = _aiChat.busy
+    ? `<div class="flex justify-start"><div class="rounded-2xl rounded-bl-md bg-slate-50 border border-slate-100 px-4 py-3 text-sm text-slate-500">${ar ? 'يبحث في البيانات…' : 'Looking through the data…'}</div></div>`
+    : '';
+  return `<div class="space-y-3">${bubbles}${thinking}</div>`;
+}
+
+function paintAssistant() {
+  const log = document.getElementById('ai-log');
+  if (!log) return;
+  log.innerHTML = renderAssistantLog();
+  log.scrollTop = log.scrollHeight;
+  const btn = document.getElementById('ai-send');
+  if (btn) btn.disabled = _aiChat.busy;
+  const rem = document.getElementById('ai-remaining');
+  if (rem) rem.textContent = _aiChat.remaining == null ? '' : (state.settings.lang === 'ar' ? `متبقٍ اليوم: ${_aiChat.remaining}` : `${_aiChat.remaining} questions left today`);
+}
+
+function renderAssistant() {
+  const ar = state.settings.lang === 'ar';
+  // Paint the log after the shell lands so it scrolls to the latest message.
+  setTimeout(paintAssistant, 0);
+  return `
+    <div class="flex items-end justify-between mb-6 flex-wrap gap-4">
+      <div>
+        <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('sparkle','w-3.5 h-3.5')} ${ar ? 'للمشرفين فقط' : 'Admins only'}</div>
+        <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${t('ai_assistant')}</h2>
+        <div class="text-xs text-slate-500 mt-1 max-w-2xl">${ar
+          ? 'يجيب على أسئلتك من بيانات التطبيق، بنفس صلاحياتك. لا يرى أرقام الهوية أو التواقيع أو الصور أو الملفات، ولا يستطيع تعديل أي شيء. يتم إرسال الأسئلة والبيانات المطلوبة للإجابة إلى Anthropic (Claude) للمعالجة.'
+          : 'Answers questions from the app’s data, with your permissions. It can’t see ID numbers, signatures, photos or files, and it can’t change anything. Questions and the data needed to answer them are sent to Anthropic (Claude) for processing.'}</div>
+      </div>
+      <button type="button" onclick="resetAssistantChat()" class="btn btn-ghost">${icon('refresh','w-4 h-4')} ${ar ? 'محادثة جديدة' : 'New chat'}</button>
+    </div>
+    <div class="bg-white rounded-2xl shadow-card flex flex-col" style="height:calc(100vh - 16rem);min-height:420px">
+      <div id="ai-log" class="flex-1 overflow-y-auto p-4 md:p-5"></div>
+      <form onsubmit="sendAssistantMessage(event)" class="border-t border-slate-100 p-3 md:p-4 flex items-end gap-2">
+        <textarea id="ai-input" rows="2" dir="auto" maxlength="4000"
+          class="input flex-1 resize-none"
+          placeholder="${ar ? 'اكتب سؤالك…' : 'Ask a question…'}"
+          oninput="_aiChat.draft = this.value"
+          onkeydown="if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendAssistantMessage(event); }">${escapeHTML(_aiChat.draft)}</textarea>
+        <button id="ai-send" type="submit" class="btn btn-primary" ${_aiChat.busy ? 'disabled' : ''}>${ar ? 'إرسال' : 'Send'}</button>
+      </form>
+      <div id="ai-remaining" class="px-4 pb-2 text-[11px] text-slate-400 text-end"></div>
+    </div>`;
+}
+
+function askAssistantSuggestion(i) {
+  const q = AI_ASSISTANT_SUGGESTIONS[state.settings.lang === 'ar' ? 'ar' : 'en'][i];
+  if (q) sendAssistantMessage(null, q);
+}
+
+function resetAssistantChat() {
+  if (_aiChat.busy) return;
+  _aiChat = { messages: [], busy: false, draft: '', remaining: _aiChat.remaining };
+  const input = document.getElementById('ai-input');
+  if (input) input.value = '';
+  paintAssistant();
+}
+
+async function sendAssistantMessage(ev, preset) {
+  if (ev) ev.preventDefault();
+  if (_aiChat.busy) return;
+  const input = document.getElementById('ai-input');
+  const text = (preset || input?.value || '').trim();
+  if (!text) return;
+  _aiChat.messages.push({ role: 'user', content: text });
+  _aiChat.busy = true;
+  _aiChat.draft = '';
+  if (input) input.value = '';
+  paintAssistant();
+  try {
+    // Error replies are shown in the chat but never sent back as history.
+    const history = _aiChat.messages.filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
+    const { data, error } = await sb.functions.invoke('ai-assistant', { body: { messages: history } });
+    if (error) {
+      const status = error.context?.status;
+      let msg = error.message || 'Request failed';
+      try { const body = await error.context?.json?.(); if (body?.error) msg = body.error; } catch (_) { /* non-JSON body */ }
+      if (status === 404) msg = 'The ai-assistant function is not deployed yet.';
+      throw new Error(msg);
+    }
+    if (data?.error) throw new Error(data.error);
+    _aiChat.messages.push({ role: 'assistant', content: data?.answer || '(no answer)' });
+    if (typeof data?.remaining_today === 'number') _aiChat.remaining = data.remaining_today;
+  } catch (e) {
+    console.error('AI assistant failed:', e);
+    _aiChat.messages.push({ role: 'assistant', content: e?.message || 'Something went wrong.', error: true });
+  } finally {
+    _aiChat.busy = false;
+    if (getRoute() === 'assistant') paintAssistant();
+    document.getElementById('ai-input')?.focus();
+  }
 }
 
 function renderHelp() {
@@ -29502,6 +29690,7 @@ function renderMain() {
     case 'assets':       content = hasRole('admin','maintenance') ? renderAssets() : renderRoleDashboard(); break;
     case 'reports':      content = canManagePeople() ? renderReports() : renderRoleDashboard(); break;
     case 'analytics':    content = isAdmin() ? renderAnalytics() : renderRoleDashboard(); break;
+    case 'assistant':    content = isAdmin() ? renderAssistant() : renderRoleDashboard(); break;
     case 'spend_report': content = hasRole('admin','accounting') ? renderSpendReport() : renderRoleDashboard(); break;
     case 'settings':     content = isAdmin() ? renderSettings() : renderRoleDashboard(); break;
     case 'applications': content = hasRole('admin','operations') ? renderApplications() : renderRoleDashboard(); break;
