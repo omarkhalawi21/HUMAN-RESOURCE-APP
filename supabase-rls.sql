@@ -6231,6 +6231,22 @@ CREATE POLICY "ai_log_delete_admin" ON public.ai_assistant_log FOR DELETE TO aut
   USING (public.is_admin());
 
 -- =============================================================
+-- 119. ROASTERS CAN UNDO A MISTYPED TRANSFER
+--     Roaster → Transfers now has an Undo button. Undoing a transfer
+--     that a branch hasn't confirmed yet cancels its pending incoming
+--     (status 'pending' → 'rejected'). Roasters could delete the
+--     movement but not touch incoming_transfers, so the branch would
+--     still have been asked to confirm the wrong amount. This lets a
+--     roaster do exactly that one flip — nothing else. Reversing a
+--     CONFIRMED incoming stays admin / head barista (block 37).
+-- =============================================================
+DROP POLICY IF EXISTS "it_update_roaster_cancel_pending" ON public.incoming_transfers;
+CREATE POLICY "it_update_roaster_cancel_pending"
+  ON public.incoming_transfers FOR UPDATE TO authenticated
+  USING (status = 'pending' AND public.has_role(ARRAY['roaster']))
+  WITH CHECK (status = 'rejected' AND public.has_role(ARRAY['roaster']));
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

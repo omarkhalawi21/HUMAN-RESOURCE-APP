@@ -23931,7 +23931,7 @@ function openInventoryHistoryModal(itemId) {
   const unit = escapeHTML(it.unit || 'units');
 
   const body = `
-    <div class="space-y-4">
+    <div class="space-y-4" data-inv-history>
       <div class="grid grid-cols-3 gap-3">
         <div class="bg-slate-50 rounded-xl p-3">
           <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Current</div>
@@ -24443,8 +24443,12 @@ async function onTransferSave() {
 // movement was a positive in and qty has since dropped below |delta|
 // (because of subsequent outs), we can only restore to zero.
 async function deleteInventoryMovement(movementId) {
-  const m = (state.inventoryMovements||[]).find(x => x.id === movementId);
+  // Roaster → Transfers rows come from the per-month cache, which can hold
+  // movements older than the capped state.inventoryMovements slice.
+  const m = (state.inventoryMovements||[]).find(x => x.id === movementId)
+    || Object.values(state.beanTransfersCache || {}).flat().find(x => x.id === movementId);
   if (!m) return;
+  const historyOpen = !!document.querySelector('#modal-root [data-inv-history]');
   const it = inventoryItemById(m.itemId);
   if (!it) return;
 
@@ -24456,6 +24460,12 @@ async function deleteInventoryMovement(movementId) {
       .eq('source_movement_id', movementId).limit(1).maybeSingle();
     if (data) linked = mapIncomingTransferFromDb(data);
   }
+  // Reversing a confirmed incoming rewrites the branch's daily count —
+  // only admin / head barista may do that (RLS block 37).
+  if (linked && linked.status === 'confirmed' && !hasRole('admin','head_barista')) {
+    alert(`${linked.toBranch} has already confirmed this transfer in its daily count, so it can't be undone from here.\n\nAsk an admin or head barista to undo it.`);
+    return;
+  }
   let reverseNote = '';
   if (linked && linked.status === 'confirmed') {
     const dci = (state.dailyCountItems||[]).find(d => d.id === linked.dcItemId);
@@ -24463,7 +24473,11 @@ async function deleteInventoryMovement(movementId) {
   } else if (linked && linked.status === 'pending') {
     reverseNote = `\n\nThe pending incoming at ${linked.toBranch} will be cancelled.`;
   }
-  if (!confirm(`Delete this ${(MOVEMENT_TYPES[m.type]||MOVEMENT_TYPES.other).label.toLowerCase()} of ${m.qtyDelta>0?'+':''}${m.qtyDelta} ${it.unit||'units'} on ${fmtDate(m.occurredAt||'')}?\n\nThe item quantity will be restored.${reverseNote}`)) return;
+  const ask = m.type === 'transfer'
+    ? (() => { const n = parseTransferNote(m.notes); const amt = n.pack ? `${n.bags} × ${n.pack}g` : `${Math.abs(m.qtyDelta)} ${it.unit||'units'}`;
+        return `Undo this transfer: ${amt} of ${it.name} → ${n.to || '?'} on ${fmtDate(m.occurredAt||'')}?\n\nThe stock goes back to ${m.branch || 'the roastery'} and the transfer is removed. Then log it again with the right amount.${reverseNote}`; })()
+    : null;
+  if (!confirm(ask || `Delete this ${(MOVEMENT_TYPES[m.type]||MOVEMENT_TYPES.other).label.toLowerCase()} of ${m.qtyDelta>0?'+':''}${m.qtyDelta} ${it.unit||'units'} on ${fmtDate(m.occurredAt||'')}?\n\nThe item quantity will be restored.${reverseNote}`)) return;
 
   // Reverse the daily-count side first (before the movement row is gone).
   if (linked && linked.status === 'confirmed') {
@@ -24479,8 +24493,9 @@ async function deleteInventoryMovement(movementId) {
     if (rv.error) { toast('Reversal flag failed: ' + rv.error.message, 'error'); return; }
     delete state.dailyCountsCache[dcCacheKey(linked.toBranch, linked.transferDate.slice(0,7))];
   } else if (linked && linked.status === 'pending') {
-    const rj = await sb.from('incoming_transfers').update({ status: 'rejected' }).eq('id', linked.id);
-    if (rj.error) { toast('Could not cancel the pending incoming: ' + rj.error.message, 'error'); return; }
+    // .select() so an RLS-filtered no-op (0 rows) is caught, not silently ignored.
+    const rj = await sb.from('incoming_transfers').update({ status: 'rejected' }).eq('id', linked.id).select();
+    if (rj.error || !(rj.data || []).length) { toast('Could not cancel the pending incoming at ' + linked.toBranch + (rj.error ? ': ' + rj.error.message : ' — permission denied') + '. Nothing was changed.', 'error'); return; }
     state.incomingTransfers = (state.incomingTransfers||[]).filter(x => x.id !== linked.id);
   }
 
@@ -24497,12 +24512,12 @@ async function deleteInventoryMovement(movementId) {
   state.inventoryMovements = state.inventoryMovements.filter(x => x.id !== movementId);
   if (m.type === 'transfer') delete state.beanTransfersCache[(m.occurredAt || '').slice(0,7)];
   // If the history modal is open, re-render it to reflect the deletion.
-  if (document.getElementById('modal-root')) {
+  if (historyOpen) {
     closeModal();
     openInventoryHistoryModal(it.id);
   }
   render();
-  toast('Movement deleted, quantity restored', 'success');
+  toast(m.type === 'transfer' ? 'Transfer undone — stock restored' : 'Movement deleted, quantity restored', 'success');
 }
 
 // Print styles shared by the roaster's letterhead reports (weekly, transfers).
@@ -24910,7 +24925,7 @@ function xferRows(ym) {
     const it = byId.get(m.itemId);
     const n = parseTransferNote(m.notes);
     return {
-      date: m.occurredAt || '', name: it?.name || '(deleted item)',
+      id: m.id, date: m.occurredAt || '', name: it?.name || '(deleted item)',
       from: m.branch || '—', to: n.to || '—', pack: n.pack, bags: n.bags,
       amount: n.pack ? n.bags * n.pack / 1000 : Math.abs(m.qtyDelta),
       unit: n.pack ? 'kg' : (it?.unit || 'kg'),
@@ -25024,6 +25039,7 @@ function xferMonthHTML(ym) {
   const rows = xferRows(ym);
   if (!rows.length) return xferCard(`No transfers logged in ${escapeHTML(monthLabel(ym))}.`);
   const t = xferTotals(rows);
+  const canUndo = hasRole('admin','head_barista','roaster');
   return `
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
       ${invStatCard(`Total sent · ${monthLabel(ym)}`, `${xferN(t.kg)} kg`, xferCount(t.count))}
@@ -25060,6 +25076,7 @@ function xferMonthHTML(ym) {
         <thead><tr class="border-b border-slate-100">
           <th class="${XFER_TH} text-left">Date</th><th class="${XFER_TH} text-left">Bean</th><th class="${XFER_TH} text-left">From → To</th>
           <th class="${XFER_TH} text-right">Amount</th><th class="${XFER_TH} text-left">Logged by</th><th class="${XFER_TH} text-left">Notes</th>
+          ${canUndo ? `<th class="${XFER_TH}"></th>` : ''}
         </tr></thead>
         <tbody>${rows.map(r => `<tr class="border-t border-slate-50">
           <td class="px-3 py-2 whitespace-nowrap text-slate-700">${escapeHTML(fmtDate(r.date))}</td>
@@ -25068,6 +25085,7 @@ function xferMonthHTML(ym) {
           <td class="px-3 py-2 text-right tabular-nums whitespace-nowrap text-slate-900">${escapeHTML(xferAmount(r))}</td>
           <td class="px-3 py-2 text-slate-600">${escapeHTML(elLoggedBy(r.recordedBy))}</td>
           <td class="px-3 py-2 text-slate-500">${escapeHTML(r.notes)}</td>
+          ${canUndo ? `<td class="px-3 py-2 text-right"><button onclick="deleteInventoryMovement('${escapeHTML(r.id)}')" title="Undo this transfer (restores the stock)" class="btn btn-ghost btn-sm whitespace-nowrap text-rose-600">${icon('refresh','w-4 h-4')} Undo</button></td>` : ''}
         </tr>`).join('')}</tbody>
       </table>
     </div>`;
