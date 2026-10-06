@@ -5519,6 +5519,7 @@ function renderEmployees() {
             </label>
           ` : ''}
           <button onclick="exportCSV('employees')" class="btn btn-ghost btn-sm">${icon('download','w-4 h-4')} ${escapeHTML(t('export'))}</button>
+          <button onclick="openOfferLetterModal()" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Offer letter</button>
           <button onclick="openEmployeeModal()" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} ${escapeHTML(t('add_employee'))}</button>
         </div>
       </div>
@@ -11126,6 +11127,7 @@ function renderApplications() {
             <code class="text-xs text-slate-700 truncate max-w-[280px]">${escapeHTML(applyUrl)}</code>
             <button onclick="navigator.clipboard.writeText('${applyUrl}').then(()=>toast('Link copied','success'))" class="btn btn-ghost btn-sm">${icon('file','w-3 h-3')} Copy</button>
           </div>
+          <button onclick="openOfferLetterModal()" class="btn btn-primary btn-sm justify-center">${icon('file','w-4 h-4')} Offer letter</button>
         </div>
       </div>
     </div>
@@ -11207,6 +11209,7 @@ function renderApplicationDetail(id) {
         <select onchange="updateApplicationStatus('${a.id}', this.value)" class="input !py-1.5 !text-sm !w-auto">
           ${Object.entries(APPLY_STATUS_META).map(([k,v]) => `<option value="${k}" ${a.status===k?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}
         </select>
+        <button onclick="openOfferLetterModal('${a.id}')" class="btn btn-ghost btn-sm">${icon('file','w-4 h-4')} Offer letter</button>
         ${a.status === 'hired' ? `<button onclick="convertApplicationToEmployee('${a.id}')" class="btn btn-primary btn-sm">${icon('plus','w-4 h-4')} Convert to employee</button>` : ''}
       </div>
     </div>
@@ -17386,6 +17389,132 @@ function printCertificate(id) {
   </div>
   </body></html>`;
   if (!openPrintWindow(html)) return;
+}
+
+/* -------------------- OFFER LETTER (hiring template) --------------------
+   Fill-in-and-print version of the owner's offer letter (logo, "Offer for
+   Mr. X", benefits table, terms, signature/date lines). Nothing is saved to
+   the database — it's a print template. The standing terms (location,
+   hours, benefits wording…) are remembered per browser so only the name
+   and salary usually need typing. */
+const OFFER_LETTER_DEFAULTS = {
+  company:       'Hassad Roastery',
+  salary:        '',
+  medical:       'Provided by Hassad Roastery',
+  accommodation: 'Provided by Hassad Roastery',
+  ticketsEvery:  '2 years',
+  tickets:       'Provided by Hassad Roastery',
+  location:      'Saudi Arabia – Khobar City or Dammam City',
+  hours:         '10 hours per day',
+  offDay:        'one day off per week',
+  contract:      '2 years',
+};
+const OFFER_LETTER_KEY = 'hassad_offer_letter_terms';
+function offerLetterTerms() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(OFFER_LETTER_KEY) || '{}') || {}; } catch (_) {}
+  return { ...OFFER_LETTER_DEFAULTS, ...saved };
+}
+function openOfferLetterModal(applicationId) {
+  const a = applicationId ? (state.applications || []).find(x => x.id === applicationId) : null;
+  const name = a ? (a.firstName + ' ' + (a.lastName || '')).trim() : '';
+  const d = offerLetterTerms();
+  const field = (id, label, val, extra = '') => `<div><label class="label">${label}</label><input id="${id}" class="input" value="${escapeHTML(val)}" ${extra}></div>`;
+  const form = `
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="label">Title</label>
+        <select id="ol-title" class="input">
+          <option value="Mr.">Mr.</option><option value="Ms.">Ms.</option><option value="Mrs.">Mrs.</option><option value="">(none)</option>
+        </select>
+      </div>
+      ${field('ol-name', 'Candidate full name', name, 'placeholder="e.g. David Kyania"')}
+      ${field('ol-salary', 'Total monthly salary (Saudi Riyal)', d.salary, 'type="number" min="0" step="any" placeholder="e.g. 2500"')}
+      ${field('ol-company', 'Company name on the letter', d.company)}
+      ${field('ol-medical', 'Medical insurance', d.medical)}
+      ${field('ol-accommodation', 'Accommodation', d.accommodation)}
+      ${field('ol-tickets-every', 'Tickets — every', d.ticketsEvery)}
+      ${field('ol-tickets', 'Tickets', d.tickets)}
+      <div class="col-span-2"><label class="label">Location</label><input id="ol-location" class="input" value="${escapeHTML(d.location)}"></div>
+      ${field('ol-hours', 'Working hours', d.hours)}
+      ${field('ol-offday', 'Off day', d.offDay)}
+      ${field('ol-contract', 'Contract length', d.contract)}
+    </div>
+    <p class="text-xs text-slate-500 mt-4">Leave a line empty to drop it from the letter. The terms you type are remembered on this device for the next letter.</p>
+  `;
+  openModal('Offer letter', form, async () => {
+    const v = id => ($('#' + id)?.value || '').trim();
+    const o = {
+      title: v('ol-title'), name: v('ol-name'), salary: v('ol-salary'), company: v('ol-company') || OFFER_LETTER_DEFAULTS.company,
+      medical: v('ol-medical'), accommodation: v('ol-accommodation'), ticketsEvery: v('ol-tickets-every'), tickets: v('ol-tickets'),
+      location: v('ol-location'), hours: v('ol-hours'), offDay: v('ol-offday'), contract: v('ol-contract'),
+    };
+    if (!o.name) { toast('Candidate name required', 'error'); return false; }
+    if (!o.salary) { toast('Salary required', 'error'); return false; }
+    const { title, name: _n, ...terms } = o;
+    try { localStorage.setItem(OFFER_LETTER_KEY, JSON.stringify(terms)); } catch (_) {}
+    await printOfferLetter(o);
+    return false; // keep the form open behind the preview so a typo is a quick fix
+  }, { saveLabel: 'Preview & print', cancelLabel: t('close') });
+}
+async function printOfferLetter(o) {
+  const logo = await logoDataURL();
+  const who = (o.title ? o.title + ' ' : '') + o.name;
+  const salaryNum = Number(o.salary);
+  const salaryTxt = (isFinite(salaryNum) && o.salary !== '' ? salaryNum.toLocaleString('en-US') : o.salary) + ' Saudi Riyal (monthly)';
+  const rows = [
+    ['Total Salary', salaryTxt],
+    ['Medical Insurance', o.medical],
+    ['Accommodation', o.accommodation],
+    ['Tickets' + (o.ticketsEvery ? ` (Every ${o.ticketsEvery})` : ''), o.tickets],
+  ].filter(r => r[1]);
+  const terms = [
+    ['Location', o.location], ['Working Hours', o.hours], ['Off Day', o.offDay], ['Contract', o.contract],
+  ].filter(r => r[1]);
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Offer Letter — ${escapeHTML(o.name)}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family:'Inter', system-ui, -apple-system, sans-serif; color:#111; margin:0; padding:0; background:#f3f4f6; font-size:14px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+    .page { background:#fff; max-width:820px; min-height:1060px; box-sizing:border-box; margin:24px auto; padding:48px 56px 64px; box-shadow:0 6px 24px rgba(15,23,42,0.08); }
+    .logo { display:block; width:150px; height:150px; object-fit:contain; margin:0 auto 24px; }
+    h1 { font-size:15px; font-weight:700; text-align:center; margin:0 0 44px; }
+    p { margin:0 0 10px; }
+    table { width:84%; margin:44px auto 56px; border-collapse:collapse; }
+    td { border:1px solid #222; padding:9px 10px; width:50%; font-size:15px; }
+    tr:first-child td { background:#d9d9d9; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .terms div { margin-bottom:8px; }
+    .closing { margin-top:96px; }
+    .sign { display:flex; gap:48px; margin-top:76px; font-weight:700; }
+    .sign > div { flex:1; display:flex; align-items:flex-end; gap:12px; }
+    .sign .line { flex:1; border-bottom:1px solid #111; height:18px; }
+    @media print {
+      body { background:#fff; }
+      .page { box-shadow:none; margin:0; max-width:none; min-height:0; padding:16mm 18mm; }
+      @page { size:A4; margin:0; }
+    }
+  </style></head><body>
+  <div class="page">
+    ${logo ? `<img class="logo" src="${logo}" alt="" />` : ''}
+    <h1>Offer for ${escapeHTML(who)}</h1>
+    <p>We are pleased to offer you a new contract at ${escapeHTML(o.company)}.</p>
+    <p>The following terms and conditions are an integral part of your employment contract and are in accordance with our policies and procedures.</p>
+    <table><tbody>
+      ${rows.map(r => `<tr><td>${escapeHTML(r[0])}</td><td>${escapeHTML(r[1])}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="terms">
+      ${terms.map(r => `<div><strong>${escapeHTML(r[0])}:</strong> ${escapeHTML(r[1])}</div>`).join('')}
+    </div>
+    <div class="closing">
+      <p>We hope that the above offer will meet with your acceptance.</p>
+      <p>Kindly sign a copy of this letter and send it back.</p>
+    </div>
+    <div class="sign">
+      <div><span>Signature:</span><span class="line"></span></div>
+      <div><span>Date:</span><span class="line"></span></div>
+    </div>
+  </div>
+  </body></html>`;
+  openPrintPreview(html, `Offer letter — ${o.name}`);
 }
 
 /* -------------------- DOCUMENTS (IQAMA & Baladiya tracker) -------------------- */
@@ -29876,7 +30005,7 @@ function stopClockTicker() {
 
 // Global ESC handler: closes the topmost modal if any is open.
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && document.getElementById('modal-root')) {
+  if (e.key === 'Escape' && document.getElementById('modal-root') && !document.getElementById('preview-root')) {
     e.preventDefault();
     closeModal();
   }
