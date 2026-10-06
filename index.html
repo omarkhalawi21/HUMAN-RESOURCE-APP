@@ -17489,7 +17489,15 @@ async function printOfferLetter(o) {
     .sign .line { flex:1; border-bottom:1px solid #111; height:18px; }
     @media print {
       body { background:#fff; }
-      .page { box-shadow:none; margin:0; max-width:none; min-height:0; padding:16mm 18mm; }
+      /* Compact on paper: Safari adds its own margins + header/footer lines,
+         which pushed the signature row onto a second page. */
+      .page { box-shadow:none; margin:0; max-width:none; min-height:0; padding:8mm 16mm 0; }
+      .logo { width:105px; height:105px; margin-bottom:12px; }
+      h1 { margin-bottom:28px; }
+      table { margin:26px auto 30px; }
+      td { padding:7px 10px; }
+      .closing { margin-top:44px; }
+      .sign { margin-top:48px; break-inside:avoid; }
       @page { size:A4; margin:0; }
     }
   </style></head><body>
