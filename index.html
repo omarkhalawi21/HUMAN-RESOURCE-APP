@@ -17419,6 +17419,7 @@ function openOfferLetterModal(applicationId) {
   const a = applicationId ? (state.applications || []).find(x => x.id === applicationId) : null;
   const name = a ? (a.firstName + ' ' + (a.lastName || '')).trim() : '';
   const d = offerLetterTerms();
+  const position = !a ? '' : (a.position === 'other' && a.positionOther ? a.positionOther : (APPLY_POSITIONS.find(p => p.value === a.position)?.en || a.position || ''));
   const field = (id, label, val, extra = '') => `<div><label class="label">${label}</label><input id="${id}" class="input" value="${escapeHTML(val)}" ${extra}></div>`;
   const form = `
     <div class="grid grid-cols-2 gap-4">
@@ -17429,6 +17430,11 @@ function openOfferLetterModal(applicationId) {
         </select>
       </div>
       ${field('ol-name', 'Candidate full name', name, 'placeholder="e.g. David Kyania"')}
+      <div class="col-span-2">
+        <label class="label">Position</label>
+        <input id="ol-position" class="input" list="ol-position-list" value="${escapeHTML(position)}" placeholder="e.g. Barista">
+        <datalist id="ol-position-list">${APPLY_POSITIONS.filter(p => p.value !== 'other').map(p => `<option value="${escapeHTML(p.en)}">`).join('')}</datalist>
+      </div>
       ${field('ol-salary', 'Total monthly salary (Saudi Riyal)', d.salary, 'type="number" min="0" step="any" placeholder="e.g. 2500"')}
       ${field('ol-company', 'Company name on the letter', d.company)}
       ${field('ol-medical', 'Medical insurance', d.medical)}
@@ -17445,13 +17451,13 @@ function openOfferLetterModal(applicationId) {
   openModal('Offer letter', form, async () => {
     const v = id => ($('#' + id)?.value || '').trim();
     const o = {
-      title: v('ol-title'), name: v('ol-name'), salary: v('ol-salary'), company: v('ol-company') || OFFER_LETTER_DEFAULTS.company,
+      title: v('ol-title'), name: v('ol-name'), position: v('ol-position'), salary: v('ol-salary'), company: v('ol-company') || OFFER_LETTER_DEFAULTS.company,
       medical: v('ol-medical'), accommodation: v('ol-accommodation'), ticketsEvery: v('ol-tickets-every'), tickets: v('ol-tickets'),
       location: v('ol-location'), hours: v('ol-hours'), offDay: v('ol-offday'), contract: v('ol-contract'),
     };
     if (!o.name) { toast('Candidate name required', 'error'); return false; }
     if (!o.salary) { toast('Salary required', 'error'); return false; }
-    const { title, name: _n, ...terms } = o;
+    const { title, name: _n, position: _p, ...terms } = o;
     try { localStorage.setItem(OFFER_LETTER_KEY, JSON.stringify(terms)); } catch (_) {}
     await printOfferLetter(o);
     return false; // keep the form open behind the preview so a typo is a quick fix
@@ -17469,7 +17475,7 @@ async function printOfferLetter(o) {
     ['Tickets' + (o.ticketsEvery ? ` (Every ${o.ticketsEvery})` : ''), o.tickets],
   ].filter(r => r[1]);
   const terms = [
-    ['Location', o.location], ['Working Hours', o.hours], ['Off Day', o.offDay], ['Contract', o.contract],
+    ['Position', o.position], ['Location', o.location], ['Working Hours', o.hours], ['Off Day', o.offDay], ['Contract', o.contract],
   ].filter(r => r[1]);
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Offer Letter — ${escapeHTML(o.name)}</title>
   <style>
@@ -17493,10 +17499,10 @@ async function printOfferLetter(o) {
          which pushed the signature row onto a second page. */
       .page { box-shadow:none; margin:0; max-width:none; min-height:0; padding:8mm 16mm 0; }
       .logo { width:105px; height:105px; margin-bottom:12px; }
-      h1 { margin-bottom:28px; }
-      table { margin:26px auto 30px; }
+      h1 { margin-bottom:22px; }
+      table { margin:22px auto 24px; }
       td { padding:7px 10px; }
-      .closing { margin-top:44px; }
+      .closing { margin-top:30px; }
       .sign { margin-top:48px; break-inside:avoid; }
       @page { size:A4; margin:0; }
     }
