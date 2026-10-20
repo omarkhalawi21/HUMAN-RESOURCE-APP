@@ -20580,7 +20580,7 @@ function dcCardExpired(it) {
   return `
     <div class="mt-2 flex items-center gap-2 bg-rose-50/60 border border-rose-200 rounded-xl px-3 py-2">
       <span class="text-[10px] uppercase tracking-wider text-rose-600 font-semibold">${escapeHTML(t('fl_expired'))}</span>
-      <input id="dc-x-${it.id}" type="text" inputmode="decimal" autocomplete="off" value="${escapeHTML(l.qty||'')}" placeholder="${escapeHTML(t('fl_ph_qty_lower'))}"
+      <input id="dc-x-${it.id}" type="text" inputmode="decimal" autocomplete="off" oninput="dcMirrorInput(this,'dc-exp-qty-${i}')" value="${escapeHTML(l.qty||'')}" placeholder="${escapeHTML(t('fl_ph_qty_lower'))}"
         class="input !w-16 !h-9 !text-center tabular-nums bg-white border-rose-200">
       <span class="text-[11px] text-rose-500">${escapeHTML(it.unit)}</span>
       <button type="button" onclick="dcRemoveItemExpired('${it.id}')" class="ml-auto text-rose-400 hover:text-rose-700 px-1"
@@ -20699,7 +20699,7 @@ function dcExpiredSection(items, opts = {}) {
     <div class="flex items-center gap-2 flex-wrap bg-rose-50/60 border border-rose-200 rounded-xl px-3 py-2" data-exp-row="${i}">
       <input id="dc-exp-name-${i}" type="hidden" value="${escapeHTML(l.name||'')}">
       <div class="flex-1 min-w-[7rem] text-sm font-medium text-slate-800 truncate">${escapeHTML(l.name||'—')}</div>
-      <input id="dc-exp-qty-${i}" value="${escapeHTML(l.qty||'')}" inputmode="decimal" placeholder="${escapeHTML(t('fl_ph_qty'))}"
+      <input id="dc-exp-qty-${i}" value="${escapeHTML(l.qty||'')}" inputmode="decimal" oninput="dcMirrorInput(this,'dc-x-${l.itemId}')" placeholder="${escapeHTML(t('fl_ph_qty'))}"
         class="input !w-20 !py-2 text-sm text-center tabular-nums bg-white border-rose-200">
       <input id="dc-exp-note-${i}" value="${escapeHTML(l.note||'')}" placeholder="${escapeHTML(t('fl_ph_note_optional'))}"
         class="input flex-1 min-w-[7rem] !py-2 text-sm bg-white border-rose-200">
@@ -20744,6 +20744,13 @@ function dcToggleExpired() {
   dcCaptureExpired();
   dailyCountState.expOpen = !dailyCountState.expOpen;
   dcRerender();
+}
+// A card-logged expired line renders twice on a counting step (the card's own
+// box + its row in the open panel). Mirror keystrokes so neither copy goes
+// stale — captures read both, and a stale twin would overwrite the typed qty.
+function dcMirrorInput(el, twinId) {
+  const twin = document.getElementById(twinId);
+  if (twin && twin !== el) twin.value = el.value;
 }
 // Pull the rendered expired-row inputs back into the draft before any
 // re-render (add/remove line, Back/Next, Save) so nothing typed is lost.
