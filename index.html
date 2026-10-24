@@ -5687,6 +5687,12 @@ function isActiveEmployee(e) {
 function isPayableEmployee(e) {
   return isActiveEmployee(e) && e.systemRole !== 'branch_device';
 }
+// Payroll runs also leave out accounts with no base salary (admin/owner/
+// test logins) so they don't appear as SAR 0.00 payslips. They are listed
+// in the Run payroll preview so a real hire missing a salary is noticed.
+function hasPayrollSalary(e) {
+  return (Number(e?.salary) || 0) > 0;
+}
 function openTerminationModal(empId) {
   const e = getEmployee(empId);
   if (!e) return;
@@ -8054,7 +8060,9 @@ function renderPayroll() {
   `;
 }
 function generatePayrollReport(period) {
-  const records = state.payroll.filter(p => p.period === period).sort((a,b)=>{
+  // Empty payslips (no base, bonus or deductions) from runs made before
+  // zero-salary accounts were skipped are left off the report.
+  const records = state.payroll.filter(p => p.period === period && ((p.base||0) || (p.bonus||0) || (p.deductions||0) || (p.net||0))).sort((a,b)=>{
     const ea=getEmployee(a.employeeId), eb=getEmployee(b.employeeId);
     return (ea?.department||'').localeCompare(eb?.department||'') || (ea?.firstName||'').localeCompare(eb?.firstName||'');
   });
@@ -8386,7 +8394,8 @@ function calcPayroll(ym) {
   // Skip terminated employees — they should not appear in payroll runs
   // after their termination date. Branch-device (iPad) accounts are
   // excluded too: they are login rows, not paid staff.
-  const rows = state.employees.filter(isPayableEmployee).map(e => {
+  const skippedNoSalary = state.employees.filter(e => isPayableEmployee(e) && !hasPayrollSalary(e));
+  const rows = state.employees.filter(e => isPayableEmployee(e) && hasPayrollSalary(e)).map(e => {
     // Every approved, not-yet-repaid advance is recovered IN FULL from
     // the next payroll run (company policy — no partial/installment or
     // manual-only plans). The stored deduct_from_payroll value is
@@ -8511,7 +8520,7 @@ function calcPayroll(ym) {
       manualBonus: s.manualBonus + mb,
     };
   }, { base:0, bonus:0, deductions:0, net:0, manualBonus:0 });
-  return { rows, advanceUpdates, deductionUpdates, advanceLines, totals, isRerun, warnings };
+  return { rows, advanceUpdates, deductionUpdates, advanceLines, totals, isRerun, warnings, skippedNoSalary };
 }
 
 function runPayroll() {
@@ -8619,12 +8628,22 @@ function renderRunPayrollPreview() {
   const calc = calcPayroll(ym);
   const advancesAffected = calc.advanceUpdates.size;
 
+  const skippedNote = calc.skippedNoSalary.length ? `
+    <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex items-start gap-2 mb-3">
+      ${icon('users','w-4 h-4 shrink-0 mt-0.5')}
+      <div><strong>${calc.skippedNoSalary.length} employee${calc.skippedNoSalary.length===1?'':'s'} skipped — no base salary:</strong>
+        ${calc.skippedNoSalary.map(e => escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim() || e.email || '—')).join(', ')}.
+        If any of them should be paid, set their salary on their profile first.</div>
+    </div>
+  ` : '';
+
   if (calc.rows.length === 0) {
-    target.innerHTML = `<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">No employees to pay. Add employees first.</div>`;
+    target.innerHTML = `${skippedNote}<div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">No employees to pay. Add employees first.</div>`;
     return;
   }
 
   target.innerHTML = `
+    ${skippedNote}
     ${calc.isRerun ? `
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2 mb-3">
         ${icon('warning','w-4 h-4 shrink-0 mt-0.5')}
@@ -8684,7 +8703,7 @@ function renderRunPayrollPreview() {
 function renderPayrollAdjust() {
   const target = $('#rp-adjust');
   if (!target) return;
-  const emps = (state.employees || []).filter(isPayableEmployee).slice()
+  const emps = (state.employees || []).filter(e => isPayableEmployee(e) && hasPayrollSalary(e)).slice()
     .sort((a,b) => ((a.firstName||'')+' '+(a.lastName||'')).localeCompare((b.firstName||'')+' '+(b.lastName||'')));
   const empOptions = emps.map(e=>`<option value="${e.id}">${escapeHTML(((e.firstName||'')+' '+(e.lastName||'')).trim())}</option>`).join('');
   // A full breakdown of EVERYTHING reducing pay for the selected month —
