@@ -4689,14 +4689,25 @@ function buildNotifications() {
   // Tasks: ops/admin get all; everyone gets their own assigned ones
   // (so non-ops staff still get reminders via the bell even though
   // the Work Management page itself stays ops/admin for now).
+  // Anything else still open that's assigned to ME stays in the bell as
+  // "Task pending" until it's done (owner request 2026-10-24) — including
+  // tasks with no due date. Ops don't get this for everyone else's tasks.
+  // The key is per-DAY so the badge lights up again each day it's unfinished.
   (state.tasks||[]).filter(t=>t.status!=='done' && (isOps || taskIsAssignedTo(t, me?.id))).forEach(t=>{
+    const mine = taskIsAssignedTo(t, me?.id);
+    const href = mine ? '#/my_work' : '#/work_management';
+    const prog = taskChecklistProgress(t);
+    const extra = prog ? ` · ${prog}` : '';
+    const d = t.dueDate ? daysUntil(t.dueDate) : null;
     if (taskOverdue(t)) {
       out.push({ key:'task-od-'+t.id, icon:'warning', tone:'red', title:'Task overdue',
-        detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}`, href:'#/work_management' });
-    } else if (t.dueDate) {
-      const d=daysUntil(t.dueDate);
-      if (d!==null && d>=0 && d<=3) out.push({ key:'task-soon-'+t.id, icon:'clock', tone:'amber',
-        title:d===0?'Task due today':'Task due soon', detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}`, href:'#/work_management' });
+        detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}${extra}`, href });
+    } else if (d!==null && d>=0 && d<=3) {
+      out.push({ key:'task-soon-'+t.id, icon:'clock', tone:'amber',
+        title:d===0?'Task due today':'Task due soon', detail:`${escapeHTML(t.title)} · ${fmtDate(t.dueDate)}${extra}`, href });
+    } else if (mine) {
+      out.push({ key:'task-pend-'+t.id+'-'+today, icon:'check', tone:'amber', title:'Task pending',
+        detail:`${escapeHTML(t.title)}${t.dueDate?` · due ${fmtDate(t.dueDate)}`:''}${extra}`, href });
     }
   });
   // Every employee: their own warning letters awaiting a signature.
@@ -13893,6 +13904,19 @@ function canTickChecklists() { return hasRole('admin','head_barista','barista');
 const _clLoading = new Set();
 function taskIsOpen(t) { return t.status !== 'done'; }
 function taskOverdue(t) { return t.status !== 'done' && t.dueDate && t.dueDate < todayISO(); }
+// Checklist progress — a task can't be marked done while any item is unticked,
+// and the bell shows "2/5 done" on open tasks that have a checklist.
+function taskChecklistOpen(t) { return (Array.isArray(t?.checklist) ? t.checklist : []).filter(c => !c.done).length; }
+function taskChecklistProgress(t) {
+  const items = Array.isArray(t?.checklist) ? t.checklist : [];
+  return items.length ? `${items.length - taskChecklistOpen(t)}/${items.length} done` : '';
+}
+function taskDoneBlocked(t) {
+  const n = taskChecklistOpen(t);
+  if (!n) return false;
+  toast(`Tick off the ${n} remaining checklist item${n===1?'':'s'} first (or remove ones that no longer apply)`, 'error');
+  return true;
+}
 function taskDueLabel(t) {
   if (!t.dueDate) return '<span class="text-slate-400">—</span>';
   const today = todayISO();
@@ -14242,6 +14266,7 @@ function openTaskModal(id, prefillGroupId) {
     const title = $('#tk-title').value.trim();
     if (!title) { toast('Title is required', 'error'); return false; }
     const status = $('#tk-status').value;
+    if (status === 'done' && editing?.status !== 'done' && taskDoneBlocked(editing)) return false;
     const data = {
       title,
       description: $('#tk-desc').value.trim(),
@@ -14275,6 +14300,7 @@ async function changeTaskStatus(id, status) {
   if (!t || !TASK_STATUSES[status]) return;
   const prevStatus = t.status;
   if (prevStatus === status) return;
+  if (status === 'done' && taskDoneBlocked(t)) { render(); refreshTaskDetailBody(id); return; }
   const completedAt = status === 'done' ? (t.completedAt || new Date().toISOString()) : null;
   const { data, error } = await sb.from('tasks')
     .update({ status, completed_at: completedAt, updated_at: new Date().toISOString() })
