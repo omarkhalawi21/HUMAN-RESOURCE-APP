@@ -6247,6 +6247,52 @@ CREATE POLICY "it_update_roaster_cancel_pending"
   WITH CHECK (status = 'rejected' AND public.has_role(ARRAY['roaster']));
 
 -- =============================================================
+-- 120. TEAM BOARD — why a task is stuck, and since when
+--     The Team board shows one card per person (Free / Working /
+--     Waiting / Blocked), derived from their open tasks and marketing
+--     cards. Adds to BOTH public.tasks and public.marketing_items:
+--       waiting_for       — who/what the work is waiting on (free text,
+--                           e.g. "Finance department"). Stuck + this set
+--                           = WAITING; Stuck without it = BLOCKED.
+--       stuck_reason      — short explanation shown on the card.
+--       status_changed_at — stamped by a trigger whenever status changes,
+--                           so the board can say "Waiting: 3h" no matter
+--                           which screen changed the status.
+--     No new tables; the existing RLS on both tables already covers the
+--     new columns. Backfills status_changed_at from updated_at. Safe to
+--     re-run.
+-- =============================================================
+ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS waiting_for       text;
+ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS stuck_reason      text;
+ALTER TABLE public.tasks           ADD COLUMN IF NOT EXISTS status_changed_at timestamptz;
+ALTER TABLE public.marketing_items ADD COLUMN IF NOT EXISTS waiting_for       text;
+ALTER TABLE public.marketing_items ADD COLUMN IF NOT EXISTS stuck_reason      text;
+ALTER TABLE public.marketing_items ADD COLUMN IF NOT EXISTS status_changed_at timestamptz;
+
+UPDATE public.tasks           SET status_changed_at = COALESCE(updated_at, created_at) WHERE status_changed_at IS NULL;
+UPDATE public.marketing_items SET status_changed_at = COALESCE(updated_at, created_at) WHERE status_changed_at IS NULL;
+
+CREATE OR REPLACE FUNCTION public.stamp_status_changed_at()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW.status_changed_at := COALESCE(NEW.status_changed_at, now());
+  ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
+    NEW.status_changed_at := now();
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS tasks_status_changed_at ON public.tasks;
+CREATE TRIGGER tasks_status_changed_at
+  BEFORE INSERT OR UPDATE ON public.tasks
+  FOR EACH ROW EXECUTE FUNCTION public.stamp_status_changed_at();
+DROP TRIGGER IF EXISTS marketing_items_status_changed_at ON public.marketing_items;
+CREATE TRIGGER marketing_items_status_changed_at
+  BEFORE INSERT OR UPDATE ON public.marketing_items
+  FOR EACH ROW EXECUTE FUNCTION public.stamp_status_changed_at();
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:
