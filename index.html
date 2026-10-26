@@ -462,6 +462,7 @@ const I18N = {
     // resources, etc.). Labels mirror navItems.
     my_work: "My Work",
     work_management: "Work Management",
+    team_board: "Team Board",
     daily_count: "Daily Count",
     weekly_count: "Weekly Count",
     expiry_check: "Expiry Check",
@@ -899,6 +900,7 @@ const I18N = {
     // Route titles
     my_work: "مهامي",
     work_management: "إدارة الأعمال",
+    team_board: "لوحة الفريق",
     daily_count: "الجرد اليومي",
     weekly_count: "الجرد الأسبوعي",
     expiry_check: "فحص الصلاحية",
@@ -1927,6 +1929,9 @@ function mapTaskFromDb(r) {
     // Link to the meeting that spawned this action item (block 100). Set only at
     // creation, never via taskToDb — so editing the task can't wipe it.
     meetingId: r.meeting_id || null,
+    // Team board (block 120): what a Stuck task waits on + when status last
+    // changed. Set via setStuckInfo / the DB trigger, never via taskToDb.
+    waitingFor: r.waiting_for || '', stuckReason: r.stuck_reason || '', statusChangedAt: r.status_changed_at || null,
     createdBy: r.created_by||null, createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -2043,6 +2048,7 @@ function mapMarketingItemFromDb(r) {
     labelIds: Array.isArray(r.label_ids) ? r.label_ids : [],
     startDate: r.start_date||null, dueDate: r.due_date||null, completedAt: r.completed_at||null,
     recurrence: r.recurrence||'none', recurrenceUntil: r.recurrence_until||null,
+    waitingFor: r.waiting_for||'', stuckReason: r.stuck_reason||'', statusChangedAt: r.status_changed_at||null, // block 120
     sortOrder: Number(r.sort_order)||0, createdBy: r.created_by||null,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
@@ -3462,14 +3468,14 @@ function hasRole(...roles) { return roles.includes(currentRole()); }
 const OWNER_PAGE_GROUPS = [
   { label:'Dashboards & Reports', keys:['reports','analytics','spend_report'] },
   { label:'Payroll & Finance',    keys:['payroll','advances','deductions','receipts','b2b_invoices'] },
-  { label:'Operations',           keys:['marketing','inventory','inventory_hub','suppliers','daily_count','weekly_count','expiry_check','roaster','maintenance','assets','bakery_transfers','bakery_stock','bakery_purchases'] },
+  { label:'Operations',           keys:['marketing','team_board','inventory','inventory_hub','suppliers','daily_count','weekly_count','expiry_check','roaster','maintenance','assets','bakery_transfers','bakery_stock','bakery_purchases'] },
 ];
 const OWNER_ALL_KEYS = OWNER_PAGE_GROUPS.flatMap(g => g.keys);
 const OWNER_ALWAYS   = ['dashboard','account','help'];
 const OWNER_PAGE_LABELS = {
   reports:'Reports', analytics:'Analytics', spend_report:'Spend report',
   payroll:'Payroll', advances:'Advances & Loans', deductions:'Deductions', receipts:'Receipts', b2b_invoices:'B2B Invoices',
-  marketing:'Marketing', inventory:'Inventory', inventory_hub:'Inventory hub', suppliers:'Suppliers',
+  marketing:'Marketing', team_board:'Team board', inventory:'Inventory', inventory_hub:'Inventory hub', suppliers:'Suppliers',
   daily_count:'Daily count', weekly_count:'Weekly count', expiry_check:'Expiry checklist',
   roaster:'Roaster', maintenance:'Maintenance', assets:'Assets',
   bakery_transfers:'Bakery transfers', bakery_stock:'Bakery stock', bakery_purchases:'Bakery purchases',
@@ -3647,7 +3653,7 @@ async function setLang(lang) {
 }
 
 /* -------------------- ROUTER -------------------- */
-const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'expired_log', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'assistant', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
+const routes = ['dashboard', 'my_work', 'work_management', 'meetings', 'marketing', 'team_board', 'employees', 'attendance', 'leave', 'payroll', 'holidays', 'warnings', 'advances', 'deductions', 'certificates', 'documents', 'agreements', 'archive', 'resources', 'receipts', 'b2b_invoices', 'inventory', 'suppliers', 'inventory_hub', 'daily_count', 'weekly_count', 'expiry_check', 'expired_log', 'bakery_transfers', 'bakery_stock', 'bakery_purchases', 'roaster', 'maintenance', 'assets', 'purchasing', 'reports', 'analytics', 'assistant', 'spend_report', 'settings', 'account', 'help', 'applications', 'application', 'apply'];
 function getRoute() {
   const raw = location.hash.replace(/^#\/?/, '') || 'dashboard';
   // Param routes: "employee/<id>", "application/<id>"
@@ -4106,6 +4112,7 @@ function renderShell(routeContent) {
     { key:'assistant',    icon:'sparkle',   label:t('ai_assistant'),    show:isAdmin(), group:'main' },
     { key:'meetings',     icon:'calendar',  label:t('meetings'),         show:hasRole('admin','operations','hr'), group:'main' },
     { key:'marketing',    icon:'report',    label:t('marketing'),     show:canManageMarketing(), group:'main' },
+    { key:'team_board',   icon:'users',     label:t('team_board'),    show:hasRole('admin','operations','marketing'), group:'main' },
     { key:'employees',    icon:'users',     label:t('employees'),    show:canManagePeople(), group:'main', parent:'team' },
     { key:'attendance',   icon:'clock',     label:t('attendance'),   show:true,  group:'main', parent:'team' },
     { key:'leave',        icon:'calendar',  label:t('leave'),        show:true,  group:'main', parent:'team' },
@@ -13423,6 +13430,355 @@ function printAdvanceSlip(id) {
   if (!openPrintWindow(html)) return;
 }
 
+/* -------------------- TEAM BOARD (who's free / working / waiting / blocked) --------------------
+   One card per person, derived from their open Work Management tasks AND
+   marketing cards (block 120 adds waiting_for / stuck_reason /
+   status_changed_at to both). No new status: a "Stuck" item with a
+   waiting_for counts as WAITING, without one as BLOCKED. Visible to
+   admin/operations/marketing (+ owners via their page allowlist, read-only).
+   Marketing staff only see the Marketing team. */
+function canViewTeamBoard() { return hasRole('admin','operations','marketing') || currentRole()==='owner'; }
+function tbCanPickTeam() { return hasRole('admin','operations') || currentRole()==='owner'; }
+let _tb = { team:'marketing', q:'', state:'all', waiting:'all', prio:'all' };
+const TB_STATES = {
+  blocked: { label:'Blocked', pill:'bg-rose-50 text-rose-700 border border-rose-200',          color:'#e2445c' },
+  waiting: { label:'Waiting', pill:'bg-amber-50 text-amber-700 border border-amber-200',       color:'#fdab3d' },
+  working: { label:'Working', pill:'bg-blue-50 text-blue-700 border border-blue-200',          color:'#579bfc' },
+  free:    { label:'Free',    pill:'bg-emerald-50 text-emerald-700 border border-emerald-200', color:'#00c875' },
+};
+const TB_STATE_ORDER = { blocked:0, waiting:1, working:2, free:3 };
+// Local (UTC+3) calendar day of a timestamp — completed_at is a timestamptz,
+// so a UTC slice would put 1am-local completions on the previous day.
+function tbLocalDay(iso) { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function tbTeams() {
+  const depts = new Set();
+  (state.employees||[]).filter(isActiveEmployee).forEach(e => { const d=(e.department||'').trim(); if (d && !/marketing/i.test(d)) depts.add(d); });
+  return [{ key:'marketing', label:'Marketing' }, ...[...depts].sort().map(d => ({ key:d, label:d }))];
+}
+function tbTeamMembers(team) {
+  return (state.employees||[]).filter(e => isActiveEmployee(e) && e.systemRole !== 'branch_device')
+    .filter(e => team === 'marketing' ? (e.systemRole === 'marketing' || /marketing/i.test(e.department||'')) : (e.department||'').trim() === team);
+}
+function mktItemContext(it) {
+  const l = (state.marketingLists||[]).find(x => x.id === it.listId);
+  const b = l ? mktBoard(l.boardId) : null;
+  const p = b ? mktProject(b.projectId) : null;
+  return p ? (b ? `${p.name} › ${b.name}` : p.name) : (b ? b.name : 'Marketing');
+}
+// Index every task + (non-recurring) marketing card by assignee as one shape.
+function tbWorkIndex() {
+  const idx = {};
+  const add = (empId, r) => { (idx[empId] = idx[empId] || []).push(r); };
+  (state.tasks||[]).forEach(tk => {
+    const g = tk.groupId ? (state.taskGroups||[]).find(x => x.id === tk.groupId) : null;
+    const r = { kind:'task', id:tk.id, title:tk.title, context: tk.department || g?.name || 'Task', priority:tk.priority, status:tk.status,
+      dueDate:tk.dueDate, completedAt:tk.completedAt, waitingFor:tk.waitingFor, stuckReason:tk.stuckReason,
+      since: tk.statusChangedAt || tk.updatedAt || tk.createdAt, updatedAt: tk.updatedAt || tk.createdAt };
+    taskAssignedIds(tk).forEach(id => add(id, r));
+  });
+  const members = {};
+  (state.marketingItemMembers||[]).forEach(m => { (members[m.itemId] = members[m.itemId] || []).push(m.employeeId); });
+  (state.marketingItems||[]).forEach(it => {
+    if (mktIsRecurring(it) || !members[it.id]) return;
+    const r = { kind:'mkt', id:it.id, title:it.title, context: mktItemContext(it), priority:it.priority, status:it.status,
+      dueDate:it.dueDate, completedAt:it.completedAt, waitingFor:it.waitingFor, stuckReason:it.stuckReason,
+      since: it.statusChangedAt || it.updatedAt || it.createdAt, updatedAt: it.updatedAt || it.createdAt };
+    members[it.id].forEach(id => add(id, r));
+  });
+  return idx;
+}
+function tbSortOpen(a, b) {
+  const pr = { urgent:0, high:1, normal:2, low:3 };
+  return (pr[a.priority]??2)-(pr[b.priority]??2) || (a.dueDate||'9999').localeCompare(b.dueDate||'9999');
+}
+function tbPerson(emp, recs) {
+  recs = recs || [];
+  const open = recs.filter(r => r.status !== 'done');
+  const blocked = open.filter(r => r.status === 'blocked' && !(r.waitingFor||'').trim()).sort(tbSortOpen);
+  const waiting = open.filter(r => r.status === 'blocked' && (r.waitingFor||'').trim()).sort(tbSortOpen);
+  const working = open.filter(r => r.status === 'in_progress').sort(tbSortOpen);
+  const queued  = open.filter(r => r.status === 'todo').sort(tbSortOpen);
+  const st = blocked.length ? 'blocked' : waiting.length ? 'waiting' : working.length ? 'working' : 'free';
+  const current = blocked[0] || waiting[0] || working[0] || null;
+  const done = recs.filter(r => r.status === 'done' && r.completedAt).sort((a,b) => String(b.completedAt).localeCompare(String(a.completedAt)));
+  const today = tbLocalDay(new Date().toISOString());
+  const doneToday = done.filter(r => tbLocalDay(r.completedAt) === today).length;
+  const dueByToday = open.filter(r => r.dueDate && r.dueDate <= todayISO()).length;
+  const lastUpdated = recs.reduce((m, r) => (r.updatedAt && r.updatedAt > m ? r.updatedAt : m), '');
+  return { emp, recs, open, blocked, waiting, working, queued, st, current, done, doneToday, dueByToday, lastUpdated };
+}
+function tbOpenItem(kind, id) { if (kind === 'task') openTaskDetail(id); else openMarketingItemDetail(id); }
+function tbCanEditItem(kind, id) {
+  if (kind === 'task') return taskCanCollaborate((state.tasks||[]).find(x => x.id === id));
+  return canManageMarketing();
+}
+function tbDueLabel(r) {
+  if (!r.dueDate) return '';
+  const d = daysUntil(r.dueDate);
+  const txt = d == null ? fmtDate(r.dueDate) : d < 0 ? `Overdue ${-d}d` : d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : fmtDate(r.dueDate);
+  return `<span class="inline-flex items-center gap-1 ${d!=null&&d<0?'text-rose-600 font-medium':''}">${icon('calendar','w-3.5 h-3.5')} Due: ${escapeHTML(txt)}</span>`;
+}
+function tbCardHTML(p) {
+  const S = TB_STATES[p.st];
+  const e = p.emp;
+  const name = ((e.firstName||'') + ' ' + (e.lastName||'')).trim() || e.email || '—';
+  const sub = e.role || roleLabel(e.systemRole);
+  const c = p.current;
+  const pr = c ? (TASK_PRIORITIES[c.priority] || TASK_PRIORITIES.normal) : null;
+  const canAssign = hasRole('admin','operations') || canManageMarketing();
+  let body = '';
+  if (c) {
+    const editable = tbCanEditItem(c.kind, c.id);
+    const reasonBtn = editable && c.status === 'blocked' ? `<button onclick="openStuckModal('${c.kind}','${c.id}')" class="text-[11px] underline opacity-80 hover:opacity-100 ms-auto">Update</button>` : '';
+    const box = p.st === 'waiting'
+      ? `<div class="mt-3 rounded-xl border-l-4 border-amber-400 bg-amber-50 px-3 py-2"><div class="flex items-center gap-2 text-xs font-semibold text-amber-800">Waiting for: ${escapeHTML(c.waitingFor)}${reasonBtn}</div>${c.stuckReason?`<div class="text-xs text-amber-700 mt-0.5">${escapeHTML(c.stuckReason)}</div>`:''}</div>`
+      : p.st === 'blocked'
+      ? `<div class="mt-3 rounded-xl border-l-4 border-rose-400 bg-rose-50 px-3 py-2"><div class="flex items-center gap-2 text-xs font-semibold text-rose-800">Blocked by: ${escapeHTML(c.stuckReason || 'No reason given yet')}${reasonBtn}</div></div>`
+      : '';
+    const sinceLbl = p.st === 'waiting' ? 'Waiting' : p.st === 'blocked' ? 'Blocked' : 'Working';
+    body = `
+      <div class="text-[10px] uppercase tracking-[0.14em] text-slate-400 font-semibold mt-4">Current task</div>
+      <button onclick="tbOpenItem('${c.kind}','${c.id}')" class="text-left font-semibold text-slate-900 hover:text-brand-700 mt-1 block">${escapeHTML(c.title || 'Untitled')}</button>
+      <div class="flex items-center gap-3 flex-wrap text-xs text-slate-500 mt-1.5">
+        <span class="inline-flex items-center gap-1">${icon('box','w-3.5 h-3.5')} ${escapeHTML(c.context)}</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${pr.pill}">Priority: ${escapeHTML(pr.label)}</span>
+      </div>
+      ${box}
+      <div class="flex items-center gap-4 flex-wrap text-xs text-slate-500 mt-3">
+        ${tbDueLabel(c)}
+        ${c.since ? `<span class="inline-flex items-center gap-1">${icon('clock','w-3.5 h-3.5')} ${sinceLbl}: ${escapeHTML(humanDuration(Date.now() - new Date(c.since).getTime()))}</span>` : ''}
+        ${p.open.length > 1 ? `<span>+${p.open.length-1} more open</span>` : ''}
+      </div>`;
+  } else {
+    const last = p.done[0];
+    const next = p.queued[0];
+    body = `
+      <div class="text-[10px] uppercase tracking-[0.14em] text-slate-400 font-semibold mt-4">Recent activity</div>
+      <div class="mt-1.5 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+        ${last ? `<div class="text-[10px] uppercase tracking-wider text-emerald-700 font-semibold">Completed</div>
+          <button onclick="tbOpenItem('${last.kind}','${last.id}')" class="text-left text-sm text-slate-800 hover:text-brand-700 mt-0.5 block"><span class="text-emerald-600">✓</span> ${escapeHTML(last.title || 'Untitled')}</button>
+          <div class="text-[11px] text-slate-400">Completed ${escapeHTML(timeAgo(last.completedAt))}</div>`
+        : '<div class="text-sm text-slate-500">Nothing completed yet.</div>'}
+      </div>
+      ${next ? `<div class="text-xs text-slate-500 mt-2">Up next: <button onclick="tbOpenItem('${next.kind}','${next.id}')" class="text-slate-700 hover:text-brand-700 font-medium">${escapeHTML(next.title||'Untitled')}</button>${p.queued.length>1?` <span class="text-slate-400">(+${p.queued.length-1})</span>`:''}</div>` : ''}`;
+  }
+  const todayTotal = p.doneToday + p.dueByToday;
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5 flex flex-col" style="border-top:3px solid ${S.color}">
+      <div class="flex items-start gap-3">
+        ${avatarHTML(e, 44)}
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-slate-900 truncate">${escapeHTML(name)}</div>
+          <div class="text-xs text-slate-500 truncate">${escapeHTML(sub || '')}</div>
+        </div>
+        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${S.pill}">${S.label}</span>
+      </div>
+      ${body}
+      <div class="flex items-center justify-between gap-2 text-xs text-slate-500 mt-4 pt-3 border-t border-slate-100">
+        <span class="inline-flex items-center gap-1">${icon('check','w-3.5 h-3.5')} Tasks today: ${p.doneToday}/${todayTotal}</span>
+        ${p.lastUpdated ? `<span class="text-[11px] text-slate-400">Last updated ${escapeHTML(timeAgo(p.lastUpdated))}</span>` : ''}
+      </div>
+      <div class="flex gap-2 mt-3">
+        ${canAssign ? `<button onclick="tbAssign('${e.id}')" class="btn btn-ghost btn-sm flex-1 justify-center">${icon('plus','w-4 h-4')} Assign task</button>` : ''}
+        <button onclick="tbHistory('${e.id}')" class="btn btn-ghost btn-sm flex-1 justify-center">${icon('clock','w-4 h-4')} View history</button>
+      </div>
+    </div>`;
+}
+function tbKpi(label, value, sub, color) {
+  return `<div class="bg-white rounded-2xl shadow-card p-5" style="border-left:4px solid ${color}">
+    <div class="text-[11px] uppercase tracking-[0.14em] text-slate-500 font-semibold">${escapeHTML(label)}</div>
+    <div class="font-display text-3xl font-semibold mt-1" style="color:${color}">${value}</div>
+    <div class="text-xs text-slate-500 mt-1">${sub}</div>
+  </div>`;
+}
+function renderTeamBoard() {
+  if (!canViewTeamBoard()) return renderRoleDashboard();
+  const teams = tbTeams();
+  if (!tbCanPickTeam() || !teams.some(t2 => t2.key === _tb.team)) _tb.team = 'marketing';
+  const teamLabel = (teams.find(t2 => t2.key === _tb.team) || teams[0]).label;
+  const idx = tbWorkIndex();
+  const people = tbTeamMembers(_tb.team).map(e => tbPerson(e, idx[e.id]));
+
+  // Team-wide KPIs over the team's distinct items (a shared task counts once).
+  const seen = new Map();
+  people.forEach(p => p.recs.forEach(r => seen.set(r.kind + ':' + r.id, r)));
+  const items = [...seen.values()];
+  const open = items.filter(r => r.status !== 'done');
+  const overdue = open.filter(r => r.dueDate && r.dueDate < todayISO());
+  const today = tbLocalDay(new Date().toISOString());
+  const yest = tbLocalDay(new Date(Date.now() - 86400000).toISOString());
+  const doneT = items.filter(r => r.status === 'done' && r.completedAt && tbLocalDay(r.completedAt) === today).length;
+  const doneY = items.filter(r => r.status === 'done' && r.completedAt && tbLocalDay(r.completedAt) === yest).length;
+  const byCtx = {};
+  open.forEach(r => { const k = String(r.context).split(' › ')[0]; byCtx[k] = (byCtx[k]||0) + 1; });
+  const ctxLine = Object.entries(byCtx).sort((a,b) => b[1]-a[1]).slice(0,3).map(([k,n]) => `${n} ${escapeHTML(k)}`).join(' • ') || 'Nothing open';
+  const trend = doneY ? (() => { const pct = Math.round((doneT - doneY) / doneY * 100); return pct === 0 ? 'Same as yesterday' : `${pct>0?'↑':'↓'} ${Math.abs(pct)}% from yesterday`; })()
+    : (doneT ? 'None completed yesterday' : 'None yet today');
+  const counts = { blocked:0, waiting:0, working:0, free:0 };
+  people.forEach(p => counts[p.st]++);
+  const teamLine = Object.keys(counts).filter(k => counts[k]).map(k => `${counts[k]} ${TB_STATES[k].label.toLowerCase()}`).join(' • ') || 'No one on this team';
+  const kpis = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+    ${tbKpi('Open tasks', open.length, ctxLine, '#0f6fde')}
+    ${tbKpi('Overdue tasks', overdue.length, overdue.length ? 'Needs immediate attention' : 'All on schedule', '#e2445c')}
+    ${tbKpi('Completed today', doneT, escapeHTML(trend), '#00a35c')}
+    ${tbKpi('Team', people.length, escapeHTML(teamLine), '#6d28d9')}
+  </div>`;
+
+  // Filters
+  const waitingVals = [...new Set(people.flatMap(p => p.waiting.map(r => (r.waitingFor||'').trim())).filter(Boolean))].sort();
+  if (_tb.waiting !== 'all' && !waitingVals.includes(_tb.waiting)) _tb.waiting = 'all';
+  const q = _tb.q.trim().toLowerCase();
+  const shown = people.filter(p => {
+    if (_tb.state !== 'all' && p.st !== _tb.state) return false;
+    if (_tb.waiting !== 'all' && !p.waiting.some(r => (r.waitingFor||'').trim() === _tb.waiting)) return false;
+    if (_tb.prio !== 'all' && !p.open.some(r => r.priority === _tb.prio)) return false;
+    if (q) {
+      const nm = ((p.emp.firstName||'') + ' ' + (p.emp.lastName||'')).toLowerCase();
+      if (!nm.includes(q) && !p.open.some(r => (r.title||'').toLowerCase().includes(q))) return false;
+    }
+    return true;
+  }).sort((a,b) => TB_STATE_ORDER[a.st]-TB_STATE_ORDER[b.st] || ((a.emp.firstName||'')).localeCompare(b.emp.firstName||''));
+  const opt = (v, l, cur) => `<option value="${escapeHTML(v)}" ${cur===v?'selected':''}>${escapeHTML(l)}</option>`;
+  const filters = `<div class="flex flex-wrap items-center gap-3 mb-5">
+    <input class="input !w-auto !py-1.5 text-sm flex-1" style="min-width:200px" placeholder="Search people or tasks…" value="${escapeHTML(_tb.q)}" oninput="_tb.q=this.value; clearTimeout(window._tbT); window._tbT=setTimeout(render,250);">
+    <select class="input !w-auto !py-1.5 text-sm" onchange="_tb.state=this.value; render();">${opt('all','All statuses',_tb.state)}${Object.entries(TB_STATES).map(([k,v]) => opt(k, v.label, _tb.state)).join('')}</select>
+    <select class="input !w-auto !py-1.5 text-sm" onchange="_tb.waiting=this.value; render();">${opt('all','Waiting for: All',_tb.waiting)}${waitingVals.map(w => opt(w, 'Waiting for: ' + w, _tb.waiting)).join('')}</select>
+    <select class="input !w-auto !py-1.5 text-sm" onchange="_tb.prio=this.value; render();">${opt('all','All priorities',_tb.prio)}${Object.entries(TASK_PRIORITIES).map(([k,v]) => opt(k, v.label, _tb.prio)).join('')}</select>
+  </div>`;
+
+  const teamPicker = tbCanPickTeam()
+    ? `<select class="input !w-auto !py-1.5 text-sm" onchange="_tb.team=this.value; _tb.waiting='all'; render();">${teams.map(t2 => opt(t2.key, t2.label, _tb.team)).join('')}</select>` : '';
+  const hero = `
+    <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #6d28d9 0%, transparent 70%);"></div>
+      <div class="relative flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div class="text-[11px] uppercase tracking-[0.18em] text-brand-700 font-semibold flex items-center gap-2">${icon('users','w-3.5 h-3.5')} Team board</div>
+          <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${escapeHTML(teamLabel)}</h2>
+          <p class="text-slate-500 mt-1 text-sm max-w-xl">Who's free, who's working, and who's stuck — from their open tasks and marketing cards. Set a card to <strong>Stuck</strong> and say what it's waiting for.</p>
+        </div>
+        ${teamPicker}
+      </div>
+    </div>`;
+
+  const grid = shown.length
+    ? `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">${shown.map(tbCardHTML).join('')}</div>`
+    : `<div class="bg-white rounded-2xl shadow-card p-10 text-center text-sm text-slate-500">${people.length ? 'No one matches these filters.' : (_tb.team === 'marketing' ? 'No one has the Marketing role or department yet.' : 'No active employees in this department.')}</div>`;
+  return hero + kpis + filters + grid;
+}
+// "Assign task" — a quick card for this person: a Work Management task
+// (admin/ops) or a marketing card in any marketing list (marketing roles).
+function tbAssign(empId) {
+  const emp = getEmployee(empId); if (!emp) return;
+  const opts = [];
+  if (hasRole('admin','operations')) opts.push({ v:'task', l:'Work Management task' });
+  if (canManageMarketing()) {
+    (state.marketingProjects||[]).filter(p => p.status !== 'archived').sort(_mktSort).forEach(p =>
+      mktBoardsOf(p.id).forEach(b => mktListsOf(b.id).forEach(l => opts.push({ v:'mkt:' + l.id, l:`${p.name} › ${b.name} › ${l.name}` }))));
+  }
+  if (!opts.length) { toast('Create a marketing list first', 'error'); return; }
+  const def = (_tb.team === 'marketing' && opts.find(o => o.v.startsWith('mkt:'))) || opts[0];
+  const name = ((emp.firstName||'') + ' ' + (emp.lastName||'')).trim();
+  const body = `<div class="space-y-4">
+    <div><label class="label label-required">Title</label><input id="tb-a-title" class="input" placeholder="e.g. Draft the launch post"></div>
+    <div><label class="label">Add to</label><select id="tb-a-where" class="input">${opts.map(o => `<option value="${escapeHTML(o.v)}" ${o.v===def.v?'selected':''}>${escapeHTML(o.l)}</option>`).join('')}</select></div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="label">Priority</label><select id="tb-a-prio" class="input">${Object.entries(TASK_PRIORITIES).map(([k,v]) => `<option value="${k}" ${k==='normal'?'selected':''}>${escapeHTML(v.label)}</option>`).join('')}</select></div>
+      <div><label class="label">Due date</label><input id="tb-a-due" type="date" class="input"></div>
+    </div>
+  </div>`;
+  openModal(`Assign a task to ${name}`, body, async () => {
+    const title = $('#tb-a-title').value.trim();
+    if (!title) { toast('Title is required', 'error'); return false; }
+    const where = $('#tb-a-where').value, priority = $('#tb-a-prio').value, dueDate = $('#tb-a-due').value || null;
+    const me = currentEmployee();
+    if (where === 'task') {
+      const { data, error } = await sb.from('tasks').insert(taskToDb({ title, assigneeIds:[empId], department: emp.department || null, priority, status:'todo', dueDate, createdBy: me?.id })).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      state.tasks.unshift(mapTaskFromDb(data));
+    } else {
+      const listId = where.slice(4);
+      const { data, error } = await sb.from('marketing_items').insert(marketingItemToDb({ listId, title, priority, dueDate, createdBy: me?.id, sortOrder: mktItemsOf(listId).length })).select().single();
+      if (error) { toast(humanizeError(error), 'error'); return false; }
+      state.marketingItems.push(mapMarketingItemFromDb(data));
+      const m = await sb.from('marketing_item_members').insert({ item_id: data.id, employee_id: empId }).select().single();
+      if (m.error) { toast(humanizeError(m.error), 'error'); render(); return true; }
+      state.marketingItemMembers.push(mapMarketingItemMemberFromDb(m.data));
+    }
+    render(); toast(`Assigned to ${name}`, 'success'); return true;
+  }, { saveLabel:'Assign' });
+}
+// "View history" — this person's open work and the last 25 things they finished.
+function tbHistory(empId) {
+  const emp = getEmployee(empId); if (!emp) return;
+  const p = tbPerson(emp, tbWorkIndex()[empId]);
+  const row = (r, right) => `<button onclick="tbOpenItem('${r.kind}','${r.id}')" class="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-50">
+      <div class="min-w-0 flex-1"><div class="text-sm text-slate-800 truncate">${escapeHTML(r.title||'Untitled')}</div><div class="text-[11px] text-slate-400 truncate">${escapeHTML(r.context)}</div></div>
+      <div class="shrink-0">${right}</div></button>`;
+  const openRows = [...p.blocked, ...p.waiting, ...p.working, ...p.queued].map(r => row(r, mktStatusPill(r.status))).join('');
+  const doneRows = p.done.slice(0, 25).map(r => row(r, `<span class="text-[11px] text-slate-500">${escapeHTML(fmtDate(r.completedAt))}</span>`)).join('');
+  const name = ((emp.firstName||'') + ' ' + (emp.lastName||'')).trim();
+  openModal(`${name} — history`, `
+    <div class="text-[11px] uppercase tracking-[0.14em] text-slate-400 font-semibold mb-1">Open (${p.open.length})</div>
+    <div class="mb-4">${openRows || '<div class="text-sm text-slate-500 px-3 py-2">Nothing open.</div>'}</div>
+    <div class="text-[11px] uppercase tracking-[0.14em] text-slate-400 font-semibold mb-1">Completed (${p.done.length})</div>
+    <div>${doneRows || '<div class="text-sm text-slate-500 px-3 py-2">Nothing completed yet.</div>'}</div>`,
+    () => true, { saveLabel: t('close') });
+}
+// ---- Stuck reason (waiting_for / stuck_reason) on tasks + marketing cards ----
+function stuckRecord(kind, id) {
+  return kind === 'task' ? (state.tasks||[]).find(x => x.id === id) : mktItem(id);
+}
+async function setStuckInfo(kind, id, patch) {
+  if (kind === 'mkt') return mktUpdateItem(id, patch);
+  const tk = stuckRecord('task', id); if (!tk) return false;
+  const { data, error } = await sb.from('tasks').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (error) { toast(humanizeError(error), 'error'); return false; }
+  Object.assign(tk, mapTaskFromDb(data));
+  render(); refreshTaskDetailBody(id);
+  return true;
+}
+// Inline fields shown in the task / marketing-card detail modal while Stuck.
+function stuckInfoBoxHTML(kind, rec, canEdit) {
+  if (!rec || rec.status !== 'blocked') return '';
+  if (!canEdit) {
+    if (!rec.waitingFor && !rec.stuckReason) return '';
+    return `<div class="mb-4 rounded-xl border-l-4 ${rec.waitingFor?'border-amber-400 bg-amber-50 text-amber-800':'border-rose-400 bg-rose-50 text-rose-800'} px-3 py-2 text-sm">
+      ${rec.waitingFor ? `<div class="font-semibold">Waiting for: ${escapeHTML(rec.waitingFor)}</div>` : ''}${rec.stuckReason ? `<div>${escapeHTML(rec.stuckReason)}</div>` : ''}</div>`;
+  }
+  return `<div class="mb-4 rounded-xl border-l-4 ${rec.waitingFor?'border-amber-400 bg-amber-50':'border-rose-400 bg-rose-50'} p-3">
+    <div class="text-xs font-semibold ${rec.waitingFor?'text-amber-800':'text-rose-800'} mb-2">Stuck — ${rec.waitingFor ? 'waiting on someone' : 'blocked'}</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div><label class="label">Waiting for <span class="text-slate-400 font-normal">(person / team)</span></label><input id="stuck-wf-${rec.id}" class="input" list="stuck-wf-list" value="${escapeHTML(rec.waitingFor||'')}" placeholder="e.g. Finance department" onchange="setStuckInfo('${kind}','${rec.id}',{waiting_for:this.value.trim()||null})"></div>
+      <div><label class="label">Reason</label><input class="input" value="${escapeHTML(rec.stuckReason||'')}" placeholder="e.g. Waiting for payment approval" onchange="setStuckInfo('${kind}','${rec.id}',{stuck_reason:this.value.trim()||null})"></div>
+    </div>
+    <p class="text-[11px] text-slate-500 mt-1.5">Fill "Waiting for" to show as <strong>Waiting</strong> on the Team board; leave it empty to show as <strong>Blocked</strong>.</p>
+    ${stuckWaitingDatalist()}
+  </div>`;
+}
+function stuckWaitingDatalist() {
+  const vals = new Set();
+  [...(state.tasks||[]), ...(state.marketingItems||[])].forEach(r => { if ((r.waitingFor||'').trim()) vals.add(r.waitingFor.trim()); });
+  (state.employees||[]).filter(isActiveEmployee).forEach(e => { const d = (e.department||'').trim(); if (d) vals.add(d + ' department'); });
+  return `<datalist id="stuck-wf-list">${[...vals].sort().map(v => `<option value="${escapeHTML(v)}">`).join('')}</datalist>`;
+}
+function openStuckModal(kind, id) {
+  const rec = stuckRecord(kind, id); if (!rec) return;
+  openModal('What is it stuck on?', `<div class="space-y-4">
+    <div class="text-sm text-slate-600">${escapeHTML(rec.title || 'Untitled')}</div>
+    <div><label class="label">Waiting for <span class="text-slate-400 font-normal">(person / team — leave empty if it's just blocked)</span></label>
+      <input id="stuck-m-wf" class="input" list="stuck-wf-list" value="${escapeHTML(rec.waitingFor||'')}" placeholder="e.g. Finance department">${stuckWaitingDatalist()}</div>
+    <div><label class="label">Reason</label><textarea id="stuck-m-reason" class="input" rows="2" placeholder="e.g. Waiting for payment approval from accounting">${escapeHTML(rec.stuckReason||'')}</textarea></div>
+  </div>`, async () => setStuckInfo(kind, id, { waiting_for: $('#stuck-m-wf').value.trim() || null, stuck_reason: $('#stuck-m-reason').value.trim() || null }),
+  { saveLabel:'Save' });
+}
+// After a status change to Stuck: ask why — inline if a detail modal is open
+// (its body now shows the fields), otherwise in a small modal.
+function stuckAfterChange(kind, id) {
+  if (document.getElementById('modal-root')) { setTimeout(() => document.getElementById('stuck-wf-' + id)?.focus(), 0); return; }
+  openStuckModal(kind, id);
+}
+
 /* -------------------- WORK MANAGEMENT (tasks) -------------------- */
 // Phase 1: a lightweight task board so operations + admin assign and
 // track work by department. Checklists + in-app notification centre
@@ -14302,8 +14658,10 @@ async function changeTaskStatus(id, status) {
   if (prevStatus === status) return;
   if (status === 'done' && taskDoneBlocked(t)) { render(); refreshTaskDetailBody(id); return; }
   const completedAt = status === 'done' ? (t.completedAt || new Date().toISOString()) : null;
+  // Leaving Stuck clears the waiting-for/reason so a stale one never lingers.
+  const unstuck = status !== 'blocked' ? { waiting_for: null, stuck_reason: null } : {};
   const { data, error } = await sb.from('tasks')
-    .update({ status, completed_at: completedAt, updated_at: new Date().toISOString() })
+    .update({ status, completed_at: completedAt, ...unstuck, updated_at: new Date().toISOString() })
     .eq('id', id).select().single();
   if (error) { toast(humanizeError(error), 'error'); render(); return; }
   Object.assign(t, mapTaskFromDb(data));
@@ -14313,6 +14671,7 @@ async function changeTaskStatus(id, status) {
   render();
   refreshTaskDetailBody(id);
   toast(`Marked ${TASK_STATUSES[status].label}`, 'success');
+  if (status === 'blocked') stuckAfterChange('task', id);
 }
 
 /* -------------------- TASK ACTIVITY (comments + status timeline) --------------------
@@ -14428,8 +14787,8 @@ function taskDetailBodyHTML(taskId) {
       ${tk.department?`<div><span class="text-slate-400 text-xs uppercase tracking-wider">Dept</span> <span class="text-slate-700">${escapeHTML(tk.department)}</span></div>`:''}
     </div>`;
 
-  const desc = tk.description
-    ? `<div class="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 mb-4 whitespace-pre-wrap">${escapeHTML(tk.description)}</div>` : '';
+  const desc = stuckInfoBoxHTML('task', tk, canEdit) + (tk.description
+    ? `<div class="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 mb-4 whitespace-pre-wrap">${escapeHTML(tk.description)}</div>` : '');
 
   // Checklist (sub-tasks) — tick items off; progress bar + count. Add/toggle/
   // delete for collaborators (assignee + admin/ops). Hidden entirely for a
@@ -16572,6 +16931,7 @@ function mktItemBodyHTML(id){
       <div><label class="label">Repeat</label><select class="input" onchange="mktUpdateItem('${id}',{recurrence:this.value})">${MKT_RECUR.map(([k,l])=>`<option value="${k}" ${(it.recurrence||'none')===k?'selected':''}>${escapeHTML(l)}</option>`).join('')}</select></div>
       <div><label class="label">Repeat until ${mktIsRecurring(it)?'':'<span class="text-slate-400 font-normal">(optional)</span>'}</label><input type="date" class="input" value="${it.recurrenceUntil||''}" ${mktIsRecurring(it)?'':'disabled'} onchange="mktUpdateItem('${id}',{recurrence_until:this.value||null})"></div>
     </div>
+    ${stuckInfoBoxHTML('mkt', it, true)}
     ${mktIsRecurring(it)&&!it.dueDate?`<div class="mb-4 text-[11px] text-amber-600">${icon('calendar','w-3.5 h-3.5 inline')} Set a due date — it's the first occurrence this repeat starts from.</div>`:''}
     ${(()=>{ const board=mktBoardOfItem(it); const bl=(board&&board.labels)||[]; const on=new Set(it.labelIds||[]);
       return `<div class="mb-4"><div class="flex items-center justify-between mb-1"><label class="label !mb-0">Labels</label>${board?`<button class="text-xs text-brand-700 hover:underline" onclick="openMarketingLabelsModal('${board.id}')">Manage labels</button>`:''}</div>
@@ -16616,10 +16976,12 @@ async function mktUpdateItem(id, patch, opts={}){
 }
 async function mktChangeItemStatus(id, status){
   const it=mktItem(id); if(!it) return; const from=it.status;
-  const ok=await mktUpdateItem(id, { status, completed_at: status==='done'? new Date().toISOString() : null }, { silent:true });
+  const unstuck = status!=='blocked' ? { waiting_for:null, stuck_reason:null } : {};
+  const ok=await mktUpdateItem(id, { status, completed_at: status==='done'? new Date().toISOString() : null, ...unstuck }, { silent:true });
   if(!ok) return;
   await logMarketingItemEvent(id,'status',{ fromStatus:from, toStatus:status });
   render(); refreshMarketingItemDetail(id);
+  if(status==='blocked') stuckAfterChange('mkt', id);
 }
 async function mktAddMember(itemId, empId){
   if(!empId) return;
@@ -18569,7 +18931,7 @@ function renderOwnerRoute(route) {
   const FN = {
     reports:renderReports, analytics:renderAnalytics, spend_report:renderSpendReport,
     payroll:renderPayroll, advances:renderAdvances, deductions:renderDeductions, receipts:renderReceipts, b2b_invoices:renderB2bInvoices,
-    marketing:renderMarketing, inventory:renderInventory, inventory_hub:renderInventoryHub, suppliers:renderSuppliers,
+    marketing:renderMarketing, team_board:renderTeamBoard, inventory:renderInventory, inventory_hub:renderInventoryHub, suppliers:renderSuppliers,
     daily_count:renderDailyCount, weekly_count:renderWeeklyCount, expiry_check:renderExpiryCheck,
     roaster:renderRoaster, maintenance:renderMaintenance, assets:renderAssets,
     bakery_transfers:renderBakeryTransfers, bakery_stock:renderBakeryStock, bakery_purchases:renderBakeryPurchases,
@@ -29929,6 +30291,7 @@ function renderMain() {
     case 'work_management': content = hasRole('admin','operations') ? renderWorkManagement() : renderRoleDashboard(); break;
     case 'meetings':     content = hasRole('admin','operations','hr') ? renderMeetings() : renderRoleDashboard(); break;
     case 'marketing':    content = canManageMarketing() ? renderMarketing() : renderRoleDashboard(); break;
+    case 'team_board':   content = canViewTeamBoard() ? renderTeamBoard() : renderRoleDashboard(); break;
     case 'employees':    content = canManagePeople() ? renderEmployees() : renderRoleDashboard(); break;
     case 'employee':     content = canManagePeople() ? renderEmployeeProfile(getRouteParam()) : renderRoleDashboard(); break;
     case 'attendance':   content = renderAttendance(); break;
