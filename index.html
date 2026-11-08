@@ -3666,7 +3666,7 @@ function getRouteParam() {
   const i = raw.indexOf('/');
   return i >= 0 ? raw.slice(i+1) : '';
 }
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => { if (getRoute() !== 'my_work') vaultReset(); render(); });
 
 /* -------------------- LOGIN -------------------- */
 function renderLogin() {
@@ -3895,6 +3895,7 @@ async function afterAuth(user) {
   render();
 }
 async function logout() {
+  vaultReset();
   teardownRealtime();
   await sb.auth.signOut();
   // All data lives in Supabase; in-memory state is rebuilt on next login.
@@ -15230,7 +15231,206 @@ function myWorkTaskListHTML(mine){
   </div>`;
 }
 
+/* Private project workspace: encrypted before storage; owner-only RLS applies. */
+const VAULT_OWNER = 'ba435056-8f50-4a75-bef5-15ae3672f175';
+const VAULT_ID = 'd98d1603-9346-4ec3-9f77-b676d390c864';
+const VAULT_NAME = '__private_projects_v1__';
+const VAULT_PROJECTS = ['GLIO','HASSAD','MAKHSOS'];
+let vaultRow, vaultKey = null, vaultData = null, vaultProject = null;
+let vaultBusy = false, vaultLoading = false, vaultLegacy = false, vaultGeneration = 0;
+function vaultIsOwner() { return currentEmployee()?.id === VAULT_OWNER && isAdmin(); }
+function vaultB64(bytes) { const data=new Uint8Array(bytes); let out=''; for(let i=0;i<data.length;i+=8192) out+=String.fromCharCode(...data.subarray(i,i+8192)); return btoa(out); }
+function vaultUnb64(s) { return Uint8Array.from(atob(s), c=>c.charCodeAt(0)); }
+async function vaultDerive(password, salt) {
+  const material = await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations:310000},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+function vaultAAD() { return new TextEncoder().encode('hassad-private-v1:'+VAULT_OWNER+':'+VAULT_ID); }
+async function vaultSeal(key, data, salt) {
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const plain=new TextEncoder().encode(JSON.stringify(data));
+  const cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:vaultAAD()},key,plain);
+  return {version:1,salt:vaultB64(salt),iv:vaultB64(iv),ciphertext:vaultB64(cipher)};
+}
+async function vaultOpen(password, envelope) {
+  if (!envelope || envelope.version!==1 || typeof envelope.salt!=='string' || typeof envelope.iv!=='string' || typeof envelope.ciphertext!=='string') throw new Error('Invalid vault');
+  const salt=vaultUnb64(envelope.salt), iv=vaultUnb64(envelope.iv);
+  if(salt.length!==16 || iv.length!==12) throw new Error('Invalid vault');
+  const key=await vaultDerive(password,salt);
+  const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv,additionalData:vaultAAD()},key,vaultUnb64(envelope.ciphertext));
+  const data=JSON.parse(new TextDecoder().decode(plain));
+  if(!data || VAULT_PROJECTS.some(p=>!Array.isArray(data[p]))) throw new Error('Invalid vault');
+  return {key,data};
+}
+function vaultReset() {
+  vaultGeneration++; vaultKey=null; vaultData=null; vaultProject=null; vaultRow=undefined;
+  vaultBusy=false; vaultLoading=false; vaultLegacy=false;
+}
+function vaultLock() { vaultReset(); render(); }
+async function vaultEnsureLoaded() {
+  if(vaultLoading || vaultRow!==undefined || !vaultIsOwner()) return;
+  vaultLoading=true; const generation=vaultGeneration;
+  try {
+    const {data,error}=await sb.from('personal_todo_lists').select('id,owner_id,items,updated_at').eq('id',VAULT_ID).eq('owner_id',VAULT_OWNER).maybeSingle();
+    if(error) throw error;
+    if(generation!==vaultGeneration || !vaultIsOwner()) return;
+    vaultRow=data||null;
+  } catch(e) {
+    if(generation!==vaultGeneration) return;
+    vaultRow={loadError:true};
+    toast('Could not load your private workspace. Please try again.','error');
+  } finally {
+    if(generation===vaultGeneration) { vaultLoading=false; if(getRoute()==='my_work') render(); }
+  }
+}
+async function vaultSubmitSetup() {
+  if(vaultBusy || !vaultIsOwner() || vaultRow!==null) return;
+  const password=$('#vault-password')?.value||'', confirmPassword=$('#vault-password-confirm')?.value||'';
+  if(password.length<12) { toast('Use a password of at least 12 characters.','error'); return; }
+  if(password!==confirmPassword) { toast('Passwords do not match.','error'); return; }
+  vaultBusy=true; const generation=vaultGeneration;
+  try {
+    const salt=crypto.getRandomValues(new Uint8Array(16));
+    const key=await vaultDerive(password,salt);
+    const data={GLIO:[],HASSAD:[],MAKHSOS:[]};
+    const envelope=await vaultSeal(key,data,salt);
+    if(generation!==vaultGeneration || !vaultIsOwner()) return;
+    const {data:row,error}=await sb.from('personal_todo_lists').insert({id:VAULT_ID,owner_id:VAULT_OWNER,name:VAULT_NAME,items:[envelope],sort_order:0,recurrence:'once'}).select('id,owner_id,items,updated_at').single();
+    if(error) throw error;
+    if(generation!==vaultGeneration || !vaultIsOwner()) return;
+    vaultRow=row; vaultKey=key; vaultData=data; vaultProject=null;
+    const pass=$('#vault-password'); if(pass) pass.value='';
+    const conf=$('#vault-password-confirm'); if(conf) conf.value='';
+    vaultBusy=false; render();
+  } catch(e) { toast('Could not create workspace. If it already exists, reload and unlock it.','error'); }
+  finally { if(generation===vaultGeneration) vaultBusy=false; }
+}
+async function vaultSubmitUnlock() {
+  if(vaultBusy || !vaultIsOwner() || !vaultRow || vaultRow.loadError) return;
+  const password=$('#vault-password')?.value||''; if(!password) return;
+  vaultBusy=true; const generation=vaultGeneration;
+  try {
+    const result=await vaultOpen(password,vaultRow.items?.[0]);
+    if(generation!==vaultGeneration || !vaultIsOwner()) return;
+    vaultKey=result.key; vaultData=result.data; vaultProject=null;
+    const field=$('#vault-password'); if(field) field.value='';
+    vaultBusy=false; render();
+  } catch(e) { toast('Incorrect password or damaged workspace.','error'); }
+  finally { if(generation===vaultGeneration) vaultBusy=false; }
+}
+async function vaultSave(next) {
+  if(vaultBusy || !vaultKey || !vaultRow || !vaultIsOwner()) return false;
+  vaultBusy=true; const generation=vaultGeneration;
+  try {
+    const envelope=await vaultSeal(vaultKey,next,vaultUnb64(vaultRow.items[0].salt));
+    if(generation!==vaultGeneration || !vaultIsOwner()) return false;
+    const {data,error}=await sb.from('personal_todo_lists').update({items:[envelope],updated_at:new Date().toISOString()}).eq('id',VAULT_ID).eq('owner_id',VAULT_OWNER).eq('updated_at',vaultRow.updated_at).select('id,owner_id,items,updated_at').maybeSingle();
+    if(error) throw error;
+    if(!data) { toast('Changed on another device. Lock and unlock to reload before editing.','error'); return false; }
+    if(generation!==vaultGeneration || !vaultIsOwner()) return false;
+    vaultRow=data; vaultData=next; return true;
+  } catch(e) { toast('Could not save. Please try again.','error'); return false; }
+  finally { if(generation===vaultGeneration) vaultBusy=false; }
+}
+async function vaultAdd() {
+  if(!vaultKey || !VAULT_PROJECTS.includes(vaultProject)) return;
+  const field=$('#vault-new-task'), text=(field?.value||'').trim(); if(!text) return;
+  if(text.length>500) {toast('Task is too long.','error');return;}
+  const next=structuredClone(vaultData);
+  next[vaultProject].push({id:crypto.randomUUID(),text,done:false,createdAt:new Date().toISOString()});
+  if(await vaultSave(next)) render();
+}
+async function vaultToggle(id) {
+  if(!vaultKey || !VAULT_PROJECTS.includes(vaultProject)) return;
+  const next=structuredClone(vaultData), task=next[vaultProject].find(t=>t.id===id); if(!task) return;
+  task.done=!task.done; if(await vaultSave(next)) render();
+}
+async function vaultDelete(id) {
+  if(!vaultKey || !VAULT_PROJECTS.includes(vaultProject)) return;
+  if(!confirm('Delete this task?')) return;
+  const next=structuredClone(vaultData); next[vaultProject]=next[vaultProject].filter(t=>t.id!==id);
+  if(await vaultSave(next)) render();
+}
+function vaultSelect(p) { if(vaultKey && VAULT_PROJECTS.includes(p)) { vaultProject=p; vaultLegacy=false; render(); } }
+function vaultBack() { vaultProject=null; vaultLegacy=false; render(); }
+function vaultShowExisting() { if(vaultKey) { vaultProject='HASSAD'; vaultLegacy=true; render(); } }
+function vaultRetryLoad() { vaultRow=undefined; render(); }
+
+// Personal project vault UI. Vault state, cryptography and persistence are
+// implemented by the surrounding application; this renderer never writes data.
+function vaultRender() {
+  const ar = state.settings.lang === 'ar';
+  const tr = (english, arabic) => ar ? arabic : english;
+  const disabled = vaultBusy ? 'disabled aria-disabled="true"' : '';
+  const header = `<div class="flex items-center justify-between gap-4 mb-6">
+    <div><div class="text-xs font-semibold uppercase tracking-wider text-brand-700">${tr('Your private space','مساحتك الخاصة')}</div>
+    <h2 class="font-display text-2xl md:text-3xl font-semibold text-slate-900 mt-1">${tr('My Work','أعمالي')}</h2></div>
+    ${vaultKey ? `<button type="button" onclick="vaultLock()" class="btn btn-ghost btn-sm" ${disabled}>${icon('shield','w-4 h-4')} ${tr('Lock','قفل')}</button>` : ''}
+  </div>`;
+
+  if (vaultRow === undefined) return `${header}<div class="bg-white rounded-2xl shadow-card p-8 text-center text-slate-500">${tr('Loading your workspace…','جارٍ تحميل مساحة أعمالك…')}</div>`;
+
+  if (vaultRow && vaultRow.loadError) return `${header}<div class="bg-white rounded-2xl shadow-card p-8 text-center"><p class="text-slate-600">${tr('Could not load your workspace.','تعذر تحميل مساحة أعمالك.')}</p><button type="button" class="btn btn-primary mt-4" onclick="vaultRetryLoad()">${tr('Try again','حاول مجددًا')}</button></div>`;
+
+  if (!vaultKey) {
+    const setup = vaultRow === null;
+    return `${header}<div class="bg-white rounded-2xl shadow-card p-6 md:p-8" style="max-width:520px;margin:3rem auto">
+      <div class="w-12 h-12 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-4">${icon('shield','w-6 h-6')}</div>
+      <h3 class="font-display text-xl font-semibold text-slate-900">${setup ? tr('Create your private password','أنشئ كلمة مرور خاصة') : tr('Unlock your workspace','افتح مساحة أعمالك')}</h3>
+      <p class="text-sm text-slate-500 mt-2 mb-5">${setup ? tr('Choose a separate password of at least 12 characters to protect your private project tasks.','اختر كلمة مرور مستقلة من ١٢ حرفًا على الأقل لحماية مهام مشاريعك الخاصة.') : tr('Enter your private password to see your project tasks.','أدخل كلمة المرور الخاصة لعرض مهام مشاريعك.')}</p>
+      <form onsubmit="event.preventDefault(); ${setup ? 'vaultSubmitSetup()' : 'vaultSubmitUnlock()'}">
+        <label for="vault-password" class="label">${tr('Password','كلمة المرور')}</label>
+        <input id="vault-password" class="input" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" required ${disabled}>
+        ${setup ? `<label for="vault-password-confirm" class="label mt-4">${tr('Confirm password','تأكيد كلمة المرور')}</label><input id="vault-password-confirm" class="input" type="password" autocomplete="new-password" required ${disabled}>
+        <p class="text-xs text-slate-500 mt-3">${tr('Keep this password safe. If you forget it, encrypted tasks cannot be recovered.','احتفظ بكلمة المرور في مكان آمن؛ إذا نسيتها فلن تتمكن من استعادة المهام المشفّرة.')}</p>` : ''}
+        <button class="btn btn-primary mt-5 w-full justify-center" type="submit" ${disabled}>${vaultBusy ? tr('Please wait…','لحظة واحدة…') : setup ? tr('Create workspace','إنشاء المساحة') : tr('Unlock','فتح المساحة')}</button>
+      </form>
+    </div>`;
+  }
+
+  const names = ['GLIO','HASSAD','MAKHSOS'];
+  const project = names.includes(vaultProject) ? vaultProject : null;
+  if (!project) {
+    const cards = names.map(name => {
+      const items = Array.isArray(vaultData?.[name]) ? vaultData[name] : [];
+      const open = items.filter(item => !item.done).length;
+      return `<button type="button" onclick="vaultSelect('${name}')" class="bg-white rounded-2xl shadow-card p-6 text-start hover:shadow-pop transition-all" ${disabled}>
+        <span class="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-4">${icon('archive','w-5 h-5')}</span>
+        <span class="block font-display text-xl font-semibold text-slate-900">${name}</span>
+        <span class="block text-sm text-slate-500 mt-2">${open} ${tr('open tasks','مهام مفتوحة')}</span>
+        <span class="block text-sm font-semibold text-brand-700 mt-4">${tr('Open project','فتح المشروع')} ${ar ? '←' : '→'}</span>
+      </button>`;
+    }).join('');
+    return `${header}<p class="text-sm text-slate-500 mb-5">${tr('Choose a project to see its tasks.','اختر المشروع لعرض مهامه.')}</p><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${cards}</div>`;
+  }
+
+  const items = Array.isArray(vaultData?.[project]) ? vaultData[project] : [];
+  const open = items.filter(item => !item.done);
+  const complete = items.filter(item => item.done);
+  const itemHTML = item => `<div class="flex items-center gap-3 py-3 border-b border-slate-100">
+    <button type="button" data-task-id="${escapeHTML(item.id)}" onclick="vaultToggle(this.dataset.taskId)" class="w-6 h-6 rounded border flex items-center justify-center shrink-0 ${item.done ? 'bg-brand-700 text-white border-brand-700' : 'border-slate-300 bg-white'}" aria-label="${item.done ? tr('Mark not done','إعادة فتح المهمة') : tr('Mark done','إنجاز المهمة')}" ${disabled}>${item.done ? icon('check','w-4 h-4') : ''}</button>
+    <span class="flex-1 text-sm ${item.done ? 'text-slate-400 line-through' : 'text-slate-800'}" style="overflow-wrap:anywhere">${escapeHTML(item.text || '')}</span>
+    <button type="button" data-task-id="${escapeHTML(item.id)}" onclick="vaultDelete(this.dataset.taskId)" class="text-slate-400 hover:text-rose-600 p-1" aria-label="${tr('Delete task','حذف المهمة')}" ${disabled}>${icon('trash','w-4 h-4')}</button>
+  </div>`;
+  return `${header}<div class="mb-4"><button type="button" onclick="vaultBack()" class="text-sm font-semibold text-brand-700" ${disabled}>${ar ? '→' : '←'} ${tr('All projects','كل المشاريع')}</button></div>
+    <div class="bg-white rounded-2xl shadow-card p-6">
+      <div class="flex items-center justify-between gap-4 mb-2"><div><div class="text-xs font-semibold text-brand-700 uppercase tracking-wider">${tr('Project','المشروع')}</div><h3 class="font-display text-2xl font-semibold text-slate-900 mt-1">${project}</h3></div><span class="text-sm text-slate-500">${open.length} ${tr('open','مفتوحة')}</span></div>
+      <form class="flex gap-2 mt-5" onsubmit="event.preventDefault(); vaultAdd()"><input id="vault-new-task" class="input" type="text" maxlength="500" placeholder="${tr('Add a task…','أضف مهمة…')}" aria-label="${tr('New task','مهمة جديدة')}" required ${disabled}><button type="submit" class="btn btn-primary" ${disabled}>${icon('plus','w-4 h-4')} ${tr('Add','إضافة')}</button></form>
+      <div class="mt-5">${open.length ? open.map(itemHTML).join('') : `<p class="text-sm text-slate-400 py-4">${tr('No open tasks yet.','ما عندك مهام مفتوحة حاليًا.')}</p>`}</div>
+      ${complete.length ? `<div class="mt-5"><h4 class="text-xs font-semibold text-slate-500 uppercase">${tr('Completed','المكتملة')} · ${complete.length}</h4>${complete.map(itemHTML).join('')}</div>` : ''}
+      ${project === 'HASSAD' ? `<div class="mt-6 pt-4 border-t border-slate-100"><button type="button" onclick="vaultShowExisting()" class="text-sm text-brand-700 font-semibold" ${disabled}>${tr('View my existing Hassad work','عرض مهام حصاد الحالية')} ${ar ? '←' : '→'}</button><p class="text-xs text-slate-500 mt-1">${tr('Existing shared Hassad tasks follow their usual access permissions.','مهام حصاد المشتركة تبقى خاضعة لصلاحياتها المعتادة.')}</p></div>` : ''}
+    </div>`;
+}
+
 function renderMyWork() {
+  if (!vaultIsOwner()) return renderMyWorkLegacy();
+  if (vaultRow === undefined) vaultEnsureLoaded();
+  if (vaultKey && vaultLegacy) {
+    return `<div class="mb-4 flex items-center justify-between gap-4"><button class="btn btn-ghost btn-sm" onclick="vaultSelect('HASSAD')">← HASSAD</button><button class="btn btn-ghost btn-sm" onclick="vaultLock()">Lock</button></div>${renderMyWorkLegacy()}`;
+  }
+  return vaultRender();
+}
+function renderMyWorkLegacy() {
   const me = currentEmployee();
   if (!me) return `<div class="bg-white rounded-2xl shadow-card p-12 text-center text-slate-400">No employee profile linked to your account.</div>`;
   const mine = (state.tasks||[]).filter(t => taskIsAssignedTo(t, me.id));
@@ -15423,7 +15623,7 @@ function renderMyWork() {
   let todoSection = '';
   if (canUsePersonalTodos()) {
     const myLists = (state.todoLists||[])
-      .filter(l => l.ownerId === me.id)
+      .filter(l => l.ownerId === me.id && l.id !== VAULT_ID)
       .slice()
       .sort((a,b)=> (a.sortOrder-b.sortOrder) || (a.createdAt||'').localeCompare(b.createdAt||''));
     const tHead = `<div class="flex items-center justify-between gap-2 mb-3 mt-2">
@@ -30411,6 +30611,7 @@ async function bootstrap() {
       return;
     }
     if (event === 'SIGNED_OUT') {
+      vaultReset();
       teardownRealtime();
       state = emptyState();
       location.hash = '';
