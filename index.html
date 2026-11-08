@@ -15286,7 +15286,7 @@ async function vaultEnsureLoaded() {
 async function vaultSubmitSetup() {
   if(vaultBusy || !vaultIsOwner() || vaultRow!==null) return;
   const password=$('#vault-password')?.value||'', confirmPassword=$('#vault-password-confirm')?.value||'';
-  if(password.length<12) { toast('Use a password of at least 12 characters.','error'); return; }
+  if(password.length<8) { toast('Use a password of at least 8 characters.','error'); return; }
   if(password!==confirmPassword) { toast('Passwords do not match.','error'); return; }
   vaultBusy=true; const generation=vaultGeneration;
   try {
@@ -15377,7 +15377,7 @@ function vaultRender() {
     return `${header}<div class="bg-white rounded-2xl shadow-card p-6 md:p-8" style="max-width:520px;margin:3rem auto">
       <div class="w-12 h-12 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center mb-4">${icon('shield','w-6 h-6')}</div>
       <h3 class="font-display text-xl font-semibold text-slate-900">${setup ? tr('Create your private password','أنشئ كلمة مرور خاصة') : tr('Unlock your workspace','افتح مساحة أعمالك')}</h3>
-      <p class="text-sm text-slate-500 mt-2 mb-5">${setup ? tr('Choose a separate password of at least 12 characters to protect your private project tasks.','اختر كلمة مرور مستقلة من ١٢ حرفًا على الأقل لحماية مهام مشاريعك الخاصة.') : tr('Enter your private password to see your project tasks.','أدخل كلمة المرور الخاصة لعرض مهام مشاريعك.')}</p>
+      <p class="text-sm text-slate-500 mt-2 mb-5">${setup ? tr('Choose a separate password of at least 8 characters to protect your private project tasks.','اختر كلمة مرور مستقلة من ٨ خانات على الأقل لحماية مهام مشاريعك الخاصة.') : tr('Enter your private password to see your project tasks.','أدخل كلمة المرور الخاصة لعرض مهام مشاريعك.')}</p>
       <form onsubmit="event.preventDefault(); ${setup ? 'vaultSubmitSetup()' : 'vaultSubmitUnlock()'}">
         <label for="vault-password" class="label">${tr('Password','كلمة المرور')}</label>
         <input id="vault-password" class="input" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" required ${disabled}>
