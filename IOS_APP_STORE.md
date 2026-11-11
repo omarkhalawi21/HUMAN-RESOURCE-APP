@@ -51,11 +51,11 @@ npm run ios:sync
 npm run ios:open
 ```
 
-In Xcode, select the **App** target, open **Signing & Capabilities**, set
-**Team** to your Apple Developer team, and leave "Automatically manage
-signing" on. The bundle identifier should read `sa.hasadco.hr`. If Apple says
-it is taken, change it to something like `sa.hasadco.hassadhr` in both Xcode
-and `capacitor.config.json`.
+In Xcode, select the **App** target and open **Signing & Capabilities**.
+**Team** should already show Hassad Al-Khobar Trading Company (9LDBHY42LW),
+because it's set in the project. Leave "Automatically manage signing" on. The
+bundle identifier `sa.hasadco.hr` is already registered under that team. If
+Xcode asks you to sign in, add your Apple ID under **Xcode → Settings → Accounts**.
 
 Plug in an iPhone (or pick a simulator) and press ▶ Run. Then go through the
 test list in section 4 before uploading.
