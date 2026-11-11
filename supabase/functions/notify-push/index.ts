@@ -1,8 +1,9 @@
 // notify-push — sends a Web Push to the "person in charge" when a new
-// maintenance or purchase request is created.
+// maintenance request, purchase request or account deletion request is created.
 //
-// Trigger: a Supabase Database Webhook on INSERT into maintenance_requests
-// and purchase_requests calls this function with { type, table, record }.
+// Trigger: a Supabase Database Webhook on INSERT into maintenance_requests,
+// purchase_requests and account_deletion_requests (SQL blocks 112 and 121)
+// calls this function with { type, table, record }.
 //
 // Deploy:
 //   supabase functions deploy notify-push --no-verify-jwt
@@ -33,6 +34,12 @@ Deno.serve(async (req) => {
   } else if (table === 'purchase_requests') {
     title = '🛒 New purchase request'; body = record.item || '';
     url = '/#/purchasing'; roles = ['admin', 'operations', 'maintenance']; exclude = record.requested_by;
+  } else if (table === 'account_deletion_requests') {
+    // record.employee_id is the person asking; they are never an HR recipient of their own request.
+    const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id', record.employee_id).maybeSingle();
+    const who = emp ? `${emp.first_name ?? ''} ${emp.last_name ?? ''}`.trim() : 'An employee';
+    title = '🗑️ Account deletion request'; body = `${who} asked to delete their account`;
+    url = '/#/employees'; roles = ['admin', 'hr']; exclude = record.employee_id;
   } else {
     return new Response('ignored', { status: 200 });
   }

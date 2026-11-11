@@ -147,12 +147,10 @@ code change.
 
 ## 5. Apple review requirements to clear
 
-- **In-app account deletion (guideline 5.1.1(v))**: accounts are created
-  in the app (invite-only sign-up), so Apple requires a way to *start* account
-  deletion from inside the app. For an HR app, a "Request account deletion"
-  button that notifies HR is acceptable, as long as the app says what is kept
-  for legal retention and why. **This doesn't exist yet. Add it before the first
-  submission.**
+- **In-app account deletion (guideline 5.1.1(v))**: done. **My Account →
+  Delete my account** sends a request to HR (SQL block 121), and HR completes
+  it from the Employees page, which deletes the login. Mention it in the App
+  Review notes so the reviewer can find it.
 - **Demo account** for the reviewer (see step 2).
 - **Privacy policy URL** (see step 2).
 
