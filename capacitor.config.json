@@ -1,0 +1,10 @@
+{
+  "appId": "sa.hasadco.hr",
+  "appName": "Hassad Team",
+  "webDir": "www",
+  "backgroundColor": "#faf7f2",
+  "ios": {
+    "contentInset": "automatic",
+    "limitsNavigationsToAppBoundDomains": false
+  }
+}

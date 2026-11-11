@@ -4,7 +4,7 @@
 Commercial Registration: 7037495061
 Eastern Province, Kingdom of Saudi Arabia
 
-_Last updated: 2026-05-08_
+_Last updated: 2026-11-11_
 
 > **Important — read before signing the consent form.** This notice explains what personal data we collect about you as our employee, how we use it, who has access, and the rights you have under the Saudi Personal Data Protection Law (PDPL). The accompanying **Employee Consent Form** must be signed before we can begin processing your data.
 >
@@ -14,7 +14,7 @@ _Last updated: 2026-05-08_
 
 ## 1. Who is responsible for your data
 
-The data controller is **Hassad Al-Khobar Trading Company** ("the Company", "we", "us"). Questions or requests about your personal data should be addressed to the **Human Resources Department** at the company premises in Khobar.
+This notice covers the Hassad HR system, both the web app and the **Hassad Team** iPhone app. The data controller is **Hassad Al-Khobar Trading Company** ("the Company", "we", "us"). Questions or requests about your personal data should be addressed to the **Human Resources Department** at the company premises in Khobar.
 
 ## 2. What personal data we collect
 
@@ -33,6 +33,7 @@ We collect and store the following categories of personal data:
 | Financial | Salary advance requests, amounts, repayment status |
 | Recognition | Certificates of appreciation, employee-of-the-month awards |
 | Documents | Scanned copies of HR documents you have signed |
+| Photos & receipts | Photos you take or upload in the app (expense receipts, maintenance issues) |
 
 ## 3. Why we collect it (lawful basis and purposes)
 
@@ -52,6 +53,7 @@ Access is strictly limited:
 - **Your direct manager** — sees attendance and leave for their team only
 - **Company management** — sees aggregated reports (department-level statistics, overall payroll totals)
 - **Government authorities** — only when legally required (GOSI returns, Ministry inspections, court orders)
+- **Service providers** — Supabase (hosting and database) and Anthropic (AI processing), only as described in Section 6
 
 We do **not** sell your data, share it with marketing companies, or disclose it to any third party that is not listed above.
 
@@ -72,6 +74,13 @@ After the retention period, your data is permanently deleted from our active sys
 Our HR system uses **Supabase**, a cloud database service whose servers may be located in the European Union or the United States. This means your personal data may be transferred outside the Kingdom of Saudi Arabia.
 
 This transfer is necessary to provide the HR system. Supabase implements industry-standard security (encryption in transit and at rest, access controls, audit logging). By signing the consent form you authorize this transfer.
+
+**AI processing (Anthropic).** Two features send data to **Anthropic**, a US-based AI provider, through its Claude API:
+
+- **Receipt scanning**: when you scan a receipt, the receipt image is sent to Anthropic to read the vendor, date and amounts.
+- **AI Assistant (admins only)**: when an administrator asks the assistant a question, the relevant HR and operations records (for example names, branches, attendance, leave) are sent to Anthropic to produce the answer. Government ID numbers, photos, signatures, documents and GPS coordinates are never sent.
+
+Anthropic processes this data only to return the result to us. Under its commercial terms it does not use it to train its models. By signing the consent form you authorize this transfer.
 
 ## 7. Your rights under PDPL
 
@@ -115,7 +124,7 @@ If you believe we have mishandled your data, contact the HR Department first. If
 السجل التجاري: 7037495061
 المنطقة الشرقية، المملكة العربية السعودية
 
-_آخر تحديث: 2026-05-08_
+_آخر تحديث: 2026-11-11_
 
 > **مهم — يُقرأ قبل توقيع نموذج الموافقة.** يوضح هذا الإشعار البيانات الشخصية التي نجمعها عنك بصفتك موظفاً لدينا، وكيفية استخدامها، ومن يطلع عليها، وحقوقك بموجب نظام حماية البيانات الشخصية السعودي (PDPL). يجب توقيع **نموذج موافقة الموظف** المرفق قبل أن نتمكن من البدء في معالجة بياناتك.
 >
@@ -123,7 +132,7 @@ _آخر تحديث: 2026-05-08_
 
 ## 1. الجهة المسؤولة عن بياناتك
 
-الجهة المسؤولة عن البيانات هي **شركة حصاد الخبر التجارية** ("الشركة"، "نحن"). تُوجَّه الاستفسارات والطلبات المتعلقة ببياناتك الشخصية إلى **إدارة الموارد البشرية** في مقر الشركة بالخبر.
+يشمل هذا الإشعار نظام حصاد للموارد البشرية بنسختيه: تطبيق الويب وتطبيق **Hassad Team** على الآيفون. الجهة المسؤولة عن البيانات هي **شركة حصاد الخبر التجارية** ("الشركة"، "نحن"). تُوجَّه الاستفسارات والطلبات المتعلقة ببياناتك الشخصية إلى **إدارة الموارد البشرية** في مقر الشركة بالخبر.
 
 ## 2. البيانات الشخصية التي نجمعها
 
@@ -142,6 +151,7 @@ _آخر تحديث: 2026-05-08_
 | المالية | طلبات السلف، المبالغ، حالة السداد |
 | التكريم | شهادات التقدير، جوائز موظف الشهر |
 | الوثائق | نسخ ممسوحة من المستندات التي وقّعتَها |
+| الصور والإيصالات | الصور التي تلتقطها أو ترفعها في التطبيق (إيصالات المصروفات، أعطال الصيانة) |
 
 ## 3. لماذا نجمعها (الأساس القانوني والأغراض)
 
@@ -161,6 +171,7 @@ _آخر تحديث: 2026-05-08_
 - **مديرك المباشر** — يطلع على حضور وإجازات فريقه فقط
 - **إدارة الشركة** — تطلع على التقارير الإجمالية (إحصائيات على مستوى القسم، إجمالي الرواتب)
 - **الجهات الحكومية** — فقط عند الطلب القانوني (التأمينات، تفتيش الوزارة، أوامر القضاء)
+- **مزودو الخدمة** — Supabase (الاستضافة وقاعدة البيانات) وAnthropic (المعالجة بالذكاء الاصطناعي)، فقط وفق ما هو موضح في القسم (6)
 
 نحن **لا** نبيع بياناتك ولا نشاركها مع شركات تسويق ولا نُفصح عنها لأي طرف ثالث غير المذكورين أعلاه.
 
@@ -181,6 +192,13 @@ _آخر تحديث: 2026-05-08_
 يستخدم نظامنا خدمة سحابية اسمها **Supabase** قد تقع خوادمها في الاتحاد الأوروبي أو الولايات المتحدة. هذا يعني أن بياناتك الشخصية قد تُنقل خارج المملكة العربية السعودية.
 
 النقل ضروري لتشغيل النظام. تُطبق Supabase معايير أمان قياسية في القطاع (التشفير أثناء النقل والتخزين، ضبط الوصول، سجلات التدقيق). بتوقيعك على نموذج الموافقة، فإنك تأذن بهذا النقل.
+
+**المعالجة بالذكاء الاصطناعي (Anthropic).** ترسل ميزتان بيانات إلى **Anthropic**، وهي شركة ذكاء اصطناعي مقرها الولايات المتحدة، عبر واجهة Claude البرمجية:
+
+- **مسح الإيصالات**: عند مسح إيصال تُرسل صورته إلى Anthropic لقراءة اسم المورد والتاريخ والمبالغ.
+- **المساعد الذكي (للمشرفين فقط)**: عندما يطرح المشرف سؤالاً على المساعد، تُرسل السجلات ذات الصلة (مثل الأسماء والفروع والحضور والإجازات) إلى Anthropic لإعداد الإجابة. لا تُرسل أبداً أرقام الهوية أو الصور أو التواقيع أو المستندات أو إحداثيات الموقع.
+
+تعالج Anthropic هذه البيانات فقط لإعادة النتيجة إلينا، ولا تستخدمها لتدريب نماذجها وفق شروطها التجارية. بتوقيعك على نموذج الموافقة، فإنك تأذن بهذا النقل.
 
 ## 7. حقوقك بموجب نظام PDPL
 

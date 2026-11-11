@@ -5523,7 +5523,7 @@ function renderEmployees() {
   const activeFilters = (empFilter.branch!=='all'?1:0) + (empFilter.role!=='all'?1:0) + (empFilter.q?1:0);
   const totalShown = empFilter.showTerminated ? state.employees.length : (state.employees.length - terminatedCount);
 
-  return `
+  return `${renderDeletionRequestsPanel()}
     <div class="bg-white rounded-2xl shadow-card">
       <div class="flex items-center justify-between gap-3 p-5 border-b border-slate-100 flex-wrap">
         <div>
@@ -10170,6 +10170,8 @@ function renderAccount() {
           <button onclick="setLang('ar')" class="btn btn-sm ${state.settings.lang==='ar'?'btn-primary':'btn-ghost'}">العربية</button>
         </div>
       </div>
+
+      ${renderDeleteAccountCard(me)}
     </div>
   `;
 }
@@ -10192,6 +10194,157 @@ async function changeMyPassword() {
   $('#acc-new').value = '';
   $('#acc-confirm').value = '';
   toast('Password updated successfully', 'success');
+}
+
+/* -------------------- ACCOUNT DELETION REQUESTS --------------------
+   App Store guideline 5.1.1(v): anyone who can create an account in the
+   app must be able to start deleting it from inside the app. An employee
+   requests deletion on My Account; admin/HR see pending requests on the
+   Employees page and either complete it (process_account_deletion RPC:
+   removes the LOGIN, keeps legally-required employment records) or
+   decline it with a note. SQL block 121. Small, bounded table, so it is
+   fetched on demand (first visit to either page) rather than in loadAll.
+============================================================ */
+let _adrLoading = false;
+function mapDeletionRequestFromDb(r) {
+  return {
+    id: r.id, employeeId: r.employee_id, reason: r.reason || '',
+    status: r.status, requestedAt: r.requested_at,
+    resolvedAt: r.resolved_at || null, resolvedBy: r.resolved_by || null,
+    resolutionNote: r.resolution_note || '',
+  };
+}
+async function loadDeletionRequests(force = false) {
+  if (_adrLoading || (!force && Array.isArray(state.deletionRequests))) return;
+  _adrLoading = true;
+  try {
+    const { data, error } = await sb.from('account_deletion_requests')
+      .select('*').order('requested_at', { ascending: false }).limit(100);
+    // On error (e.g. SQL block 121 not run yet) cache [] so we don't refetch in a loop.
+    state.deletionRequests = error ? [] : (data || []).map(mapDeletionRequestFromDb);
+    if (error) console.warn('account_deletion_requests load failed', error);
+  } finally {
+    _adrLoading = false;
+  }
+  render();
+}
+function myPendingDeletionRequest(empId) {
+  return (state.deletionRequests || []).find(r => r.employeeId === empId && r.status === 'pending') || null;
+}
+function renderDeleteAccountCard(me) {
+  if (!me) return '';
+  if (!Array.isArray(state.deletionRequests)) { loadDeletionRequests(); }
+  const pending = myPendingDeletionRequest(me.id);
+  const last = (state.deletionRequests || []).find(r => r.employeeId === me.id && r.status === 'declined');
+  return `
+      <div class="bg-white rounded-2xl shadow-card p-6 md:p-8 border border-rose-100">
+        <h3 class="font-display text-xl font-semibold text-slate-900 mb-1 flex items-center gap-2">${icon('trash','w-4 h-4 text-rose-600')} Delete my account</h3>
+        ${pending ? `
+          <p class="text-sm text-slate-600 mt-2">You asked to delete your account on <strong>${fmtDate(pending.requestedAt)}</strong>. HR has been notified and will process it. You can keep using the app until then.</p>
+          <button onclick="cancelMyDeletionRequest('${pending.id}')" class="btn btn-ghost btn-sm mt-4">Cancel request</button>
+        ` : `
+          <p class="text-sm text-slate-500 mt-1 max-w-xl">Ask HR to delete your Hassad login. Once it's done you can no longer sign in. Records the law requires us to keep (attendance, payroll, leave) are kept for 5 years after your employment ends and then deleted. <a href="privacy.html" target="_blank" rel="noopener" class="text-brand-700 hover:underline">Privacy policy</a></p>
+          ${last && last.resolutionNote ? `<p class="text-xs text-slate-500 mt-2">Your last request was declined on ${fmtDate(last.resolvedAt)}: ${escapeHTML(last.resolutionNote)}</p>` : ''}
+          <button onclick="openDeleteAccountModal()" class="btn btn-sm mt-4" style="background:#be123c;color:#fff">${icon('trash','w-4 h-4')} Request account deletion</button>
+        `}
+      </div>`;
+}
+function openDeleteAccountModal() {
+  const me = currentEmployee();
+  if (!me) return;
+  openModal('Delete my account', `
+    <div class="space-y-4 text-sm text-slate-700">
+      <p>This sends a deletion request to HR. When HR completes it:</p>
+      <ul class="list-disc ps-5 space-y-1">
+        <li>Your login is deleted and you can no longer sign in to Hassad Team.</li>
+        <li>Employment records the law requires us to keep (attendance, payroll, leave, warnings) stay for <strong>5 years</strong> after your employment ends, then they are deleted.</li>
+        <li>If you are still working with us, HR may contact you first.</li>
+      </ul>
+      <div>
+        <label class="label" for="adr-reason">Reason (optional)</label>
+        <textarea id="adr-reason" class="input" rows="3" maxlength="1000" placeholder="Anything HR should know"></textarea>
+      </div>
+      <label class="flex items-start gap-2">
+        <input id="adr-confirm" type="checkbox" class="mt-1">
+        <span>I understand that I won't be able to sign in once my account is deleted.</span>
+      </label>
+    </div>
+  `, submitDeleteAccountRequest, { saveLabel: 'Send deletion request' });
+}
+async function submitDeleteAccountRequest() {
+  const me = currentEmployee();
+  if (!me) return false;
+  if (!$('#adr-confirm')?.checked) { toast('Please tick the confirmation box', 'error'); return false; }
+  const reason = ($('#adr-reason')?.value || '').trim().slice(0, 1000);
+  const { error } = await sb.from('account_deletion_requests')
+    .insert({ employee_id: me.id, reason: reason || null });
+  if (error) {
+    toast(/duplicate key|one_pending/i.test(error.message || '') ? 'You already have a pending request' : humanizeError(error), 'error');
+    return false;
+  }
+  await loadDeletionRequests(true);
+  toast('Request sent to HR', 'success');
+}
+async function cancelMyDeletionRequest(id) {
+  if (!confirm('Cancel your account deletion request?')) return;
+  const { error } = await sb.from('account_deletion_requests').update({ status: 'cancelled' }).eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  await loadDeletionRequests(true);
+  toast('Request cancelled', 'success');
+}
+function renderDeletionRequestsPanel() {
+  if (!canManagePeople()) return '';
+  if (!Array.isArray(state.deletionRequests)) { loadDeletionRequests(); return ''; }
+  const pending = state.deletionRequests.filter(r => r.status === 'pending');
+  if (!pending.length) return '';
+  return `
+    <div class="bg-white rounded-2xl shadow-card p-5 mb-5 border border-rose-200">
+      <h3 class="font-semibold text-slate-900 flex items-center gap-2">${icon('trash','w-4 h-4 text-rose-600')} Account deletion requests <span class="badge badge-slate">${pending.length}</span></h3>
+      <p class="text-xs text-slate-500 mt-1">Completing a request deletes the person's login so they can't sign in. Their employment records stay for legal retention. Use Terminate separately if they are also leaving.</p>
+      <div class="divide-y divide-slate-100 mt-3">
+        ${pending.map(r => {
+          const e = getEmployee(r.employeeId);
+          const name = e ? `${e.firstName} ${e.lastName || ''}`.trim() : 'Unknown employee';
+          return `
+          <div class="py-3 flex items-start justify-between gap-3 flex-wrap">
+            <div class="min-w-0">
+              <div class="text-sm font-medium text-slate-900">${escapeHTML(name)} <span class="text-xs text-slate-500 font-normal">· ${fmtDate(r.requestedAt)}</span></div>
+              ${r.reason ? `<div class="text-xs text-slate-600 mt-0.5">${escapeHTML(r.reason)}</div>` : ''}
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button onclick="declineDeletionRequest('${r.id}')" class="btn btn-ghost btn-sm">Decline</button>
+              <button onclick="completeDeletionRequest('${r.id}')" class="btn btn-sm" style="background:#be123c;color:#fff">Delete login</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+async function completeDeletionRequest(id) {
+  if (!canManagePeople()) { toast('Admin or HR only', 'error'); return; }
+  const r = (state.deletionRequests || []).find(x => x.id === id);
+  const e = r && getEmployee(r.employeeId);
+  const name = e ? `${e.firstName} ${e.lastName || ''}`.trim() : 'this employee';
+  if (!confirm(`Delete the login for ${name}?\n\nThey will no longer be able to sign in. Their employment records are kept. This can't be undone (HR can invite them again later).`)) return;
+  const { error } = await sb.rpc('process_account_deletion', { req_id: id });
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  if (e) e.user_id = null;
+  await loadDeletionRequests(true);
+  toast(`${name}'s login was deleted`, 'success');
+}
+async function declineDeletionRequest(id) {
+  if (!canManagePeople()) { toast('Admin or HR only', 'error'); return; }
+  const note = prompt('Reason for declining (the employee will see this):');
+  if (note === null) return;
+  if (!note.trim()) { toast('Please give a reason', 'error'); return; }
+  const me = currentEmployee();
+  const { error } = await sb.from('account_deletion_requests').update({
+    status: 'declined', resolution_note: note.trim().slice(0, 1000),
+    resolved_at: new Date().toISOString(), resolved_by: me ? me.id : null,
+  }).eq('id', id);
+  if (error) { toast(humanizeError(error), 'error'); return; }
+  await loadDeletionRequests(true);
+  toast('Request declined', 'success');
 }
 
 /* -------------------- PASSWORD RECOVERY FLOW --------------------
@@ -12492,6 +12645,7 @@ function printPrivacyNotice() {
 
     <h2>6. Where your data is stored (cross-border transfer)</h2>
     <p>Our system uses <strong>Supabase</strong>, a cloud database whose servers may be located in the European Union or United States. This means your personal data may be transferred outside the Kingdom of Saudi Arabia. The transfer is necessary to provide the service. Supabase implements industry-standard security (encryption in transit and at rest, access controls, audit logging). By signing the consent form you authorize this transfer.</p>
+    <p><strong>AI processing (Anthropic).</strong> Receipt scanning sends the receipt image, and the admin-only AI Assistant sends the HR and operations records relevant to the question (never ID numbers, photos, signatures, documents or GPS coordinates), to <strong>Anthropic</strong>, a US-based AI provider, through its Claude API. Anthropic processes this data only to return the result and does not use it to train its models. By signing the consent form you authorize this transfer.</p>
 
     <h2>7. Your rights under PDPL</h2>
     <ul>
@@ -12581,6 +12735,7 @@ function printPrivacyNotice() {
 
     <h2>٦. مكان تخزين بياناتك (نقل عبر الحدود)</h2>
     <p>يستخدم نظامنا خدمة <strong>Supabase</strong> السحابية التي قد تقع خوادمها في الاتحاد الأوروبي أو الولايات المتحدة، مما يعني نقل بياناتك خارج المملكة. النقل ضروري لتشغيل النظام، وتُطبق Supabase معايير أمان قياسية. بتوقيعك على نموذج الموافقة، فإنك تأذن بهذا النقل.</p>
+    <p><strong>المعالجة بالذكاء الاصطناعي (Anthropic).</strong> ترسل ميزة مسح الإيصالات صورة الإيصال، ويرسل المساعد الذكي (للمشرفين فقط) السجلات ذات الصلة بالسؤال (دون أرقام الهوية أو الصور أو التواقيع أو المستندات أو إحداثيات الموقع)، إلى <strong>Anthropic</strong>، وهي شركة ذكاء اصطناعي مقرها الولايات المتحدة، عبر واجهة Claude البرمجية. تعالج Anthropic هذه البيانات فقط لإعادة النتيجة ولا تستخدمها لتدريب نماذجها. بتوقيعك على نموذج الموافقة، فإنك تأذن بهذا النقل.</p>
 
     <h2>٧. حقوقك بموجب نظام PDPL</h2>
     <ul>

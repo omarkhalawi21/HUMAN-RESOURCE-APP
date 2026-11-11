@@ -6293,6 +6293,146 @@ CREATE TRIGGER marketing_items_status_changed_at
   FOR EACH ROW EXECUTE FUNCTION public.stamp_status_changed_at();
 
 -- =============================================================
+-- 121. ACCOUNT DELETION REQUESTS (App Store guideline 5.1.1(v))
+--
+--   Apple requires every app that creates accounts to let the user start
+--   deleting their account from inside the app. Employees do that from
+--   My Account; HR/admin see the request and either complete or decline it.
+--
+--   account_deletion_requests: one row per request.
+--     status: pending -> completed | declined (HR) | cancelled (employee)
+--     At most one PENDING request per employee (partial unique index).
+--
+--   RLS:
+--     SELECT  own requests, or admin/HR
+--     INSERT  only for yourself, only as 'pending'
+--     UPDATE  admin/HR; the employee may only flip their own
+--             pending request to 'cancelled'
+--     DELETE  admin only
+--
+--   process_account_deletion(req_id): admin/HR only. Deletes the person's
+--   LOGIN (auth.users row) so they can no longer sign in, unlinks it from
+--   the employees row, and marks the request completed. Employment records
+--   (attendance, payroll, leave, warnings) are NOT deleted: Saudi labour law
+--   expects them kept for 5 years after employment ends, as the privacy
+--   notice explains. Use Terminate separately if they are also leaving.
+--   Refuses admins (change their role first) and your own account.
+--
+--   notify_push_account_deletion: Web Push to admin/HR on a new request,
+--   via the notify-push Edge Function (needs block 112's
+--   supabase_functions schema and the updated function deployed).
+--
+--   Safe to re-run.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS public.account_deletion_requests (
+  id              uuid primary key default gen_random_uuid(),
+  employee_id     uuid not null references public.employees(id) ON DELETE CASCADE,
+  requested_by    uuid default auth.uid(),
+  reason          text,
+  status          text not null default 'pending'
+                  CHECK (status IN ('pending','completed','declined','cancelled')),
+  requested_at    timestamptz not null default now(),
+  resolved_at     timestamptz,
+  resolved_by     uuid references public.employees(id) ON DELETE SET NULL,
+  resolution_note text
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_deletion_one_pending_idx
+  ON public.account_deletion_requests(employee_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS account_deletion_status_idx
+  ON public.account_deletion_requests(status, requested_at DESC);
+
+ALTER TABLE public.account_deletion_requests ENABLE ROW LEVEL SECURITY;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='account_deletion_requests'
+  LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON public.account_deletion_requests', r.policyname); END LOOP;
+END $$;
+CREATE POLICY "adr_select_own_or_hr" ON public.account_deletion_requests FOR SELECT TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR EXISTS (SELECT 1 FROM public.employees e WHERE e.id = account_deletion_requests.employee_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "adr_insert_self_pending" ON public.account_deletion_requests FOR INSERT TO authenticated
+  WITH CHECK (
+    status = 'pending'
+    AND resolved_at IS NULL AND resolved_by IS NULL
+    AND EXISTS (SELECT 1 FROM public.employees e WHERE e.id = account_deletion_requests.employee_id AND e.user_id = auth.uid())
+  );
+CREATE POLICY "adr_update_hr_or_self_cancel" ON public.account_deletion_requests FOR UPDATE TO authenticated
+  USING (
+    public.has_role(ARRAY['admin','hr'])
+    OR (status = 'pending' AND EXISTS (SELECT 1 FROM public.employees e WHERE e.id = account_deletion_requests.employee_id AND e.user_id = auth.uid()))
+  )
+  WITH CHECK (
+    public.has_role(ARRAY['admin','hr'])
+    OR (status = 'cancelled' AND EXISTS (SELECT 1 FROM public.employees e WHERE e.id = account_deletion_requests.employee_id AND e.user_id = auth.uid()))
+  );
+CREATE POLICY "adr_delete_admin" ON public.account_deletion_requests FOR DELETE TO authenticated
+  USING (public.is_admin());
+
+CREATE OR REPLACE FUNCTION public.process_account_deletion(req_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  req        public.account_deletion_requests%ROWTYPE;
+  target_uid uuid;
+  target_role text;
+  my_emp     uuid;
+BEGIN
+  IF NOT public.has_role(ARRAY['admin','hr']) THEN
+    RAISE EXCEPTION 'Only an admin or HR can process a deletion request.';
+  END IF;
+
+  SELECT * INTO req FROM public.account_deletion_requests WHERE id = req_id FOR UPDATE;
+  IF req.id IS NULL THEN
+    RAISE EXCEPTION 'That request no longer exists.';
+  END IF;
+  IF req.status <> 'pending' THEN
+    RAISE EXCEPTION 'This request is already %.', req.status;
+  END IF;
+
+  SELECT user_id, system_role INTO target_uid, target_role
+    FROM public.employees WHERE id = req.employee_id;
+  IF target_role = 'admin' THEN
+    RAISE EXCEPTION 'Refusing to delete an admin login. Change their role first.';
+  END IF;
+  IF target_uid IS NOT NULL AND target_uid = auth.uid() THEN
+    RAISE EXCEPTION 'You cannot process your own deletion request.';
+  END IF;
+
+  SELECT id INTO my_emp FROM public.employees WHERE user_id = auth.uid();
+
+  UPDATE public.employees SET user_id = NULL WHERE id = req.employee_id;
+  IF target_uid IS NOT NULL THEN
+    DELETE FROM auth.users WHERE id = target_uid;
+  END IF;
+
+  UPDATE public.account_deletion_requests
+     SET status = 'completed', resolved_at = now(), resolved_by = my_emp
+   WHERE id = req_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.process_account_deletion(uuid) FROM public;
+REVOKE ALL ON FUNCTION public.process_account_deletion(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION public.process_account_deletion(uuid) TO authenticated;
+
+DROP TRIGGER IF EXISTS notify_push_account_deletion ON public.account_deletion_requests;
+CREATE TRIGGER notify_push_account_deletion
+  AFTER INSERT ON public.account_deletion_requests
+  FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request(
+    'https://ymtrycprkbwybzhokvgt.supabase.co/functions/v1/notify-push',
+    'POST',
+    '{"Content-Type":"application/json","apikey":"sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp","Authorization":"Bearer sb_publishable_c7_wBlfuSCCeQUeGzPiKww_dB9YQ2Lp"}',
+    '{}',
+    '5000'
+  );
+
+-- =============================================================
 -- DONE.
 --
 -- Verification queries you can run in the SQL editor:

@@ -20,7 +20,8 @@ Practical reference for the HR person running the app day-to-day. If you've neve
 10. [Issuing certificates](#issuing-certificates)
 11. [Generating reports for evidence](#generating-reports-for-evidence)
 12. [Backup & data export](#backup--data-export)
-13. [Common problems & fixes](#common-problems--fixes)
+13. [Account deletion requests](#account-deletion-requests)
+14. [Common problems & fixes](#common-problems--fixes)
 
 ---
 
@@ -210,6 +211,17 @@ The data lives in Supabase (cloud), but you should still keep a local backup.
 - Attendance → All History → Export CSV
 - Payroll → CSV
 - Reports → Export
+
+---
+
+## Account deletion requests
+
+Any employee can ask to delete their account from **My Account → Delete my account**. Apple requires this for the iPhone app. Admin and HR get a phone alert (if enabled), and the request appears at the top of the **Employees** page.
+
+- **Delete login**: deletes the person's sign-in account so they can no longer log in. Their attendance, payroll, leave and warnings are **kept** for the legal retention period (5 years after employment ends). If they are also leaving, use **Terminate** on their profile as usual. To give them access again later, invite them again from Employees.
+- **Decline**: give a reason (for example, they still work with you and need the app for clock-in). The employee sees the reason on My Account.
+
+Admin logins can't be deleted this way. Change the person's role first.
 
 ---
 
