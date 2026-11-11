@@ -19,7 +19,7 @@ Already set up in this repo:
 
 | What | Where |
 |---|---|
-| Bundle ID `sa.hasadco.hr`, display name "Hassad" | `capacitor.config.json` |
+| Bundle ID `sa.hasadco.hr`, display name "Hassad Team" | `capacitor.config.json` |
 | Xcode project (Swift Package Manager, no CocoaPods) | `ios/` |
 | Camera, photo library and location permission texts (the app crashes without them) | `ios/App/App/Info.plist` |
 | "No non-exempt encryption" flag (skips the export-compliance question on each upload) | `ios/App/App/Info.plist` |
@@ -63,8 +63,12 @@ test list in section 4 before uploading.
 ## 2. Create the app in App Store Connect
 
 1. Open [App Store Connect](https://appstoreconnect.apple.com) and go to **Apps → + → New App**.
-2. Platform **iOS**, name **Hassad** (or "Hassad HR"; names must be unique on
-   the store), primary language, bundle ID `sa.hasadco.hr`, and any SKU (e.g. `hassad-hr`).
+2. Platform **iOS**, name **Hassad Team** (Arabic subtitle/localized name
+   e.g. "حصاد للموظفين"), primary language, bundle ID `sa.hasadco.hr`, and any SKU
+   (e.g. `hassad-team`). Category: **Business**. This sits next to the
+   existing customer app (محمصة حصاد, Food & Drink) under the same account.
+   The description should say it's for Hassad staff so Apple doesn't see it as
+   a duplicate of the customer app (guideline 4.3).
 3. **App Privacy**: declare what the app collects. The app collects name, email,
    phone, precise location (clock-in), photos (receipts/maintenance) and
    employment data, all linked to the user and used for "App Functionality",
