@@ -60,7 +60,7 @@ RLS per table follows a 4-policy shape (SELECT / INSERT / UPDATE / DELETE) using
 
 ## iOS app (Capacitor)
 
-`ios/` + `capacitor.config.json` wrap the same `index.html` as a native iOS app (bundle id `sa.hasadco.hr`). `npm run www` copies the static files into git-ignored `www/`; `npm run ios:sync` then copies them into the Xcode project. Root files stay the source of truth — never edit `www/` or `ios/App/App/public/`. Web changes reach iOS users only via a new App Store build. Inside the iOS WebView there is no service worker/Web Push, and `<a download>` / `window.open('')` may not work. If you add a new native capability (camera, location, etc.), add its usage string to `ios/App/App/Info.plist`. Full release steps: `IOS_APP_STORE.md`.
+`ios/` + `capacitor.config.json` wrap the same `index.html` as a native iOS app (bundle id `sa.hasadco.hr`). `npm run www` copies the static files into git-ignored `www/`; `npm run ios:sync` then copies them into the Xcode project. Root files stay the source of truth — never edit `www/` or `ios/App/App/public/`. Web changes reach iOS users only via a new App Store build. Inside the iOS WebView there is no service worker/Web Push; `<a download>`, `window.open` and `window.print` are rerouted (only when `IS_NATIVE_APP`) by the "iOS APP (Capacitor) BRIDGE" block in `index.html` to the `HassadNative` Swift plugin in `ios/App/CapApp-SPM/Sources/CapApp-SPM/HassadNative.swift` (share sheet / in-app preview / print sheet), so keep using those standard web APIs. Links sent outside the app (emails, apply link) must use `appWebUrl()`, never `location.origin`. If you add a new native capability (camera, location, etc.), add its usage string to `ios/App/App/Info.plist`. Full release steps: `IOS_APP_STORE.md`.
 
 ## Other docs
 

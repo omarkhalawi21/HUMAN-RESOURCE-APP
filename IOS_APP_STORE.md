@@ -132,18 +132,20 @@ iOS app's web view and need a manual check:
 - [ ] Clock in with location: the iOS permission prompt appears and shows the text above
 - [ ] Receipt and maintenance photo upload: the camera and library open
 - [ ] **CSV / JSON exports** (attendance, counts, bakery, admin snapshot)
-      use `<a download>`. They may do nothing inside the app.
-- [ ] **Print / "open in new window" views** (payslips, reports, documents)
-      use `window.open('')`, which an iOS web view usually blocks.
+      open the iOS share sheet (Save to Files, Mail, WhatsApp...).
+- [ ] **Print views** (payslips, letters, reports) open an in-app preview;
+      its Print button opens the iOS print sheet (which can also save a PDF).
+- [ ] **Documents and photos** (archive, visas, receipts) open in the preview,
+      or in the share sheet for PDFs.
 - [ ] Phone notch / home bar: nothing important hidden under them
 - [ ] Web Push notifications **won't work** in the app (Apple only allows
       native push, through APNs). Staff who rely on notifications can keep
       using the Home Screen web app, or native push can be added later with
       `@capacitor/push-notifications`.
 
-If exports or print views fail, they can be routed through the
-`@capacitor/share` / `@capacitor/filesystem` plugins. That is a follow-up
-code change.
+These work through a small native helper,
+`ios/App/CapApp-SPM/Sources/CapApp-SPM/HassadNative.swift`, which the
+"iOS APP (Capacitor) BRIDGE" block in `index.html` calls only inside the app.
 
 ## 5. Apple review requirements to clear
 

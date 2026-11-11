@@ -1427,6 +1427,182 @@ function docNeedsReminder(docLabel, days) {
 const DAY_NAMES_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_NAMES_AR = ['أحد','إثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
 function dayNames() { return state.settings.lang === 'ar' ? DAY_NAMES_AR : DAY_NAMES_EN; }
+/* -------------------- iOS APP (Capacitor) BRIDGE --------------------
+   Inside the Hassad Team iOS app the web view cannot download files
+   (<a download>), open pop-up windows (window.open) or print
+   (window.print) - those buttons silently did nothing. When running in the
+   app (window.Capacitor present), these are routed to the HassadNative
+   plugin (ios/App/CapApp-SPM/Sources/CapApp-SPM/HassadNative.swift):
+     - downloads  -> iOS share sheet (Save to Files, Mail, WhatsApp, Print)
+     - pop-ups    -> the in-app preview (openPrintPreview); PDFs/other files
+                     go to the share sheet, web links open in Safari
+     - print      -> iOS print sheet (which can also save as PDF)
+   In a normal browser IS_NATIVE_APP is false and nothing here changes.
+============================================================ */
+const IS_NATIVE_APP = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function'
+  && window.Capacitor.isNativePlatform());
+const APP_WEB_URL = 'https://app.hasadco.sa/';
+// Links that leave the app (password-reset / invite emails, the public job
+// application link) must point at the website: inside the app the page's own
+// address is capacitor://localhost, which nobody else can open.
+function appWebUrl() {
+  return IS_NATIVE_APP ? APP_WEB_URL : window.location.origin + window.location.pathname;
+}
+function nativeCall(method, options) {
+  return window.Capacitor.nativePromise('HassadNative', method, options || {});
+}
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+async function nativeShareBlob(blob, filename) {
+  try {
+    await nativeCall('shareFile', { data: await blobToBase64(blob), filename: filename || 'download' });
+  } catch (e) {
+    console.error('shareFile failed', e);
+    toast('Could not export the file', 'error');
+  }
+}
+function nativePrintHtml(html, name) {
+  return nativeCall('printHtml', { html, name: name || 'Hassad' })
+    .catch(e => { console.error('printHtml failed', e); toast('Could not open printing', 'error'); });
+}
+function htmlTitle(html, fallback) {
+  const m = /<title>([\s\S]*?)<\/title>/i.exec(html || '');
+  const tmp = document.createElement('textarea');
+  tmp.innerHTML = m ? m[1] : '';
+  return tmp.value.trim() || fallback;
+}
+if (IS_NATIVE_APP) {
+  // Remember every blob behind a blob: URL so a download/open can still read
+  // it after the caller revokes the URL (most callers revoke right away).
+  const blobsByUrl = new Map();
+  const origCreateObjectURL = URL.createObjectURL.bind(URL);
+  const origRevokeObjectURL = URL.revokeObjectURL.bind(URL);
+  URL.createObjectURL = obj => {
+    const u = origCreateObjectURL(obj);
+    if (obj instanceof Blob) blobsByUrl.set(u, obj);
+    return u;
+  };
+  URL.revokeObjectURL = u => {
+    setTimeout(() => { blobsByUrl.delete(u); origRevokeObjectURL(u); }, 120000);
+  };
+  const blobForUrl = async href => {
+    if (blobsByUrl.has(href)) return blobsByUrl.get(href);
+    const r = await fetch(href);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.blob();
+  };
+  const fileNameFor = (blob, base) => {
+    const ext = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
+                  'text/csv': '.csv', 'application/json': '.json' }[(blob.type || '').split(';')[0]];
+    const name = String(base || 'file').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'file';
+    return ext && !name.toLowerCase().endsWith(ext) ? name + ext : name;
+  };
+  // Show a URL that a pop-up or link wanted to open.
+  const openNativeUrl = async (url, title) => {
+    const u = String(url || '');
+    if (!/^(blob:|data:)/i.test(u)) {
+      // Real web address (e.g. a signed storage link): Capacitor hands
+      // window.open of an http(s) URL to Safari.
+      if (/^https?:/i.test(u)) origWindowOpen(u, '_blank');
+      return;
+    }
+    try {
+      const blob = await blobForUrl(u);
+      if ((blob.type || '').startsWith('text/html')) {
+        const html = await blob.text();
+        openPrintPreview(html, htmlTitle(html, title || 'Preview'));
+      } else {
+        closePrintPreview();
+        await nativeShareBlob(blob, fileNameFor(blob, title));
+      }
+    } catch (e) {
+      console.error('open failed', e);
+      toast('Could not open the file', 'error');
+    }
+  };
+  window.openNativeUrl = openNativeUrl;
+
+  // Downloads: <a download> clicked by code (a.click()) or by the user.
+  const shareAnchor = a => {
+    const name = a.getAttribute('download') || 'download';
+    blobForUrl(a.href)
+      .then(blob => nativeShareBlob(blob, name))
+      .catch(e => { console.error('download failed', e); toast('Could not export the file', 'error'); });
+  };
+  const isDownloadAnchor = a => a && a.hasAttribute('download') && /^(blob:|data:|https?:)/i.test(a.href || '');
+  const origAnchorClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function () {
+    if (isDownloadAnchor(this)) { shareAnchor(this); return; }
+    return origAnchorClick.call(this);
+  };
+  document.addEventListener('click', e => {
+    const a = e.target && e.target.closest ? e.target.closest('a[download]') : null;
+    if (isDownloadAnchor(a)) { e.preventDefault(); e.stopPropagation(); shareAnchor(a); }
+  }, true);
+
+  // Pop-ups: window.open('') + document.write(...) and window.open(blobUrl).
+  const origWindowOpen = window.open.bind(window);
+  const makeAppWindow = () => {
+    let buf = '', timer = null;
+    const fw = { closed: false, opener: null, name: '' };
+    const show = () => {
+      timer = null;
+      if (fw.closed || !buf) return;
+      const html = buf;
+      // A written page that only embeds a PDF: hand the PDF to the share
+      // sheet (it has a full preview), since an embedded PDF won't display.
+      const pdf = /<embed[^>]+src="(data:application\/pdf[^"]+)"/i.exec(html);
+      if (pdf) {
+        const tmp = document.createElement('textarea'); tmp.innerHTML = pdf[1];
+        openNativeUrl(tmp.value, htmlTitle(html, 'Document'));
+        return;
+      }
+      openPrintPreview(html, htmlTitle(html, 'Preview'));
+    };
+    const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(show, 0); };
+    const doc = {
+      open() { buf = ''; return doc; },
+      write(...parts) { buf += parts.join(''); schedule(); },
+      writeln(...parts) { buf += parts.join('') + '\n'; schedule(); },
+      close() { if (timer) clearTimeout(timer); show(); },
+      addEventListener() {}, removeEventListener() {},
+      title: '',
+    };
+    const loc = {
+      assign(u) { openNativeUrl(u, doc.title || htmlTitle(buf, 'File')); },
+      replace(u) { openNativeUrl(u, doc.title || htmlTitle(buf, 'File')); },
+      toString() { return 'about:blank'; },
+    };
+    Object.defineProperty(loc, 'href', { get: () => 'about:blank', set: u => loc.assign(u) });
+    Object.assign(fw, {
+      document: doc,
+      focus() {}, blur() {}, print() { show(); },
+      close() { fw.closed = true; if (timer) clearTimeout(timer); closePrintPreview(); },
+      addEventListener() {}, removeEventListener() {},
+    });
+    Object.defineProperty(fw, 'location', { get: () => loc, set: u => loc.assign(u) });
+    return fw;
+  };
+  window.open = function (url, target, features) {
+    const u = url == null ? '' : String(url);
+    if (u === '' || u === 'about:blank') return makeAppWindow();
+    if (/^(blob:|data:)/i.test(u)) { openNativeUrl(u, 'File'); return makeAppWindow(); }
+    return origWindowOpen(url, target, features);
+  };
+
+  // window.print() on an app screen prints that screen.
+  window.print = () => {
+    nativeCall('printPage', { name: document.title || 'Hassad' })
+      .catch(e => { console.error('printPage failed', e); toast('Could not open printing', 'error'); });
+  };
+}
+
 /* Open a popup window for a printable document.
 
    Why this helper exists:
@@ -1487,16 +1663,35 @@ function openPrintPreview(html, title='Preview') {
   document.body.appendChild(root);
   root.addEventListener('click', e => { if (e.target === root) closePrintPreview(); });
   const frame = document.getElementById('preview-frame');
+  _printPreviewHtml = html; _printPreviewTitle = title;
+  if (frame && IS_NATIVE_APP) {
+    // iOS app: the document's own Print button and its links can't work in
+    // the web view, so route them to the native print / share helpers.
+    frame.addEventListener('load', () => {
+      try {
+        const w = frame.contentWindow;
+        w.print = () => nativePrintHtml(html, title);
+        w.document.addEventListener('click', e => {
+          const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+          if (!a) return;
+          const href = a.getAttribute('href') || '';
+          if (/^(blob:|data:|https?:)/i.test(href)) { e.preventDefault(); window.openNativeUrl(a.href, a.textContent || title); }
+        }, true);
+      } catch (_) { /* cross-origin content: leave as is */ }
+    });
+  }
   if (frame) frame.srcdoc = html;
   _printPreviewEsc = e => { if (e.key === 'Escape') closePrintPreview(); };
   document.addEventListener('keydown', _printPreviewEsc);
 }
 let _printPreviewEsc = null;
+let _printPreviewHtml = '', _printPreviewTitle = '';
 function closePrintPreview() {
   document.getElementById('preview-root')?.remove();
   if (_printPreviewEsc) { document.removeEventListener('keydown', _printPreviewEsc); _printPreviewEsc = null; }
 }
 function printPreviewFrame() {
+  if (IS_NATIVE_APP) { nativePrintHtml(_printPreviewHtml, _printPreviewTitle || 'Hassad'); return; }
   const f = document.getElementById('preview-frame');
   if (f && f.contentWindow) { try { f.contentWindow.focus(); } catch(_) {} f.contentWindow.print(); }
 }
@@ -3945,7 +4140,7 @@ function resetPasswordPrompt() {
     // password-reset flow, landing users on a github.io root 404.
     // Building it from window.location keeps this correct on any host:
     // GitHub Pages today, a future hr.hassadcoffee.com domain, or local.
-    const redirectTo = window.location.origin + window.location.pathname;
+    const redirectTo = appWebUrl();
     const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
     if (error) { toast(humanizeError(error), 'error'); return false; }
     toast('Reset link sent to ' + email, 'success');
@@ -11302,7 +11497,7 @@ function renderApplications() {
     if (sec < 86400*30) return `${Math.round(sec/86400)}d ago`;
     return fmtDate2(iso);
   };
-  const applyUrl = window.location.origin + window.location.pathname + '#/apply';
+  const applyUrl = appWebUrl() + '#/apply';
   return `
     <div class="bg-white rounded-2xl shadow-card p-6 mb-5 relative overflow-hidden">
       <div class="absolute -top-10 -right-10 w-40 h-40 rounded-full opacity-20" style="background: radial-gradient(circle, #ab5260 0%, transparent 70%);"></div>
@@ -11986,7 +12181,7 @@ async function resetUserPassword(uid_) {
 
   // Pass redirectTo explicitly built from origin + pathname — see the
   // matching note in the user-facing "Reset password" modal handler for why.
-  const redirectTo = window.location.origin + window.location.pathname;
+  const redirectTo = appWebUrl();
   const { error } = await sb.auth.resetPasswordForEmail(emp.email, { redirectTo });
   if (error) { toast(humanizeError(error), 'error'); return; }
   toast(`Reset link sent to ${emp.email}`, 'success');
@@ -12024,7 +12219,7 @@ async function inviteEmployee(emp) {
     const { data, error } = await sb.functions.invoke('invite-user', {
       body: {
         email: emp.email,
-        redirectTo: window.location.origin + window.location.pathname,
+        redirectTo: appWebUrl(),
       },
     });
     if (error) {
