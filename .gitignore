@@ -27,3 +27,6 @@ build/
 
 # OS / misc
 Thumbs.db
+
+# Capacitor generated web bundle (rebuilt by `npm run www`)
+www/
