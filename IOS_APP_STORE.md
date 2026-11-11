@@ -86,18 +86,32 @@ first.
 
 ### Choose how it is distributed
 
-In App Store Connect, under **Pricing and Availability**:
+In App Store Connect, under **Pricing and Availability**, choose
+**Public**: anyone can download Hassad from the App Store, and only staff
+that HR has added can log in. Plenty of companies publish their employee
+apps this way.
 
-- **Private (recommended for an employee-only app)**: choose *"Private
-  availability"* / Custom App and enter Hassad's Apple Business Manager
-  organization ID. Staff then get the app through Apple Business Manager or a
-  redemption code. Apple's guideline 3.2 says apps built for one company's
-  employees should go this way. On the public store they are often rejected.
-  Apple Business Manager is free, but Hassad needs a D-U-N-S number to enroll.
-- **Public**: anyone can find it, but only invited staff can log in. Expect
-  reviewers to question it under guideline 3.2 or 4.2 ("minimum functionality").
-- **TestFlight only**: up to 10,000 testers by email or public link, with no
-  full review for internal testers. Builds expire after 90 days.
+Apple does sometimes question single-company apps (business guidelines,
+section 3.2) or apps that look like a website in a wrapper (4.2, "minimum
+functionality"). To get through review the first time:
+
+- **App Review notes**: say plainly that this is Hassad Coffee Roasters'
+  employee app, that HR issues accounts (invite-only), and that staff install it
+  on their personal phones, which is why it's on the public store.
+- **Demo account**: give a working login that shows real-looking data
+  (attendance, leave, payslips, counts). An empty account invites rejection.
+- **Description and screenshots**: show the native features (clock-in with
+  location, receipt camera scan), not just forms.
+- **Seller name**: the store shows the developer account's name. If the
+  account was enrolled as an individual, your personal name appears instead of
+  "Hassad". Showing the company name needs an Organization account, which
+  requires a D-U-N-S number.
+
+If Apple still rejects it under 3.2, the fallbacks are:
+
+- **Private (Custom App)**: same build, set to *"Private availability"*, and
+  staff install it through Apple Business Manager.
+- **TestFlight**: up to 10,000 testers, but builds expire after 90 days.
 
 Then **Submit for Review**.
 
