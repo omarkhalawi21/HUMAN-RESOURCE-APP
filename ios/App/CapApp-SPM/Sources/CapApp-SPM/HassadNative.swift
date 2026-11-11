@@ -6,7 +6,8 @@
 //
 //   shareFile({ data, filename })  base64 file -> iOS share sheet
 //                                  (Save to Files, Mail, WhatsApp, Print...)
-//   printHtml({ html, name })      HTML document -> iOS print sheet
+//   printHtml({ html, name })      HTML document -> rendered in a hidden
+//                                  web view -> iOS print sheet
 //   printPage({ name })            the current app screen -> iOS print sheet
 //
 // The iOS print sheet can also save as PDF (share button in its preview).
@@ -61,11 +62,43 @@ public class HassadNativePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    // The document is rendered in a hidden WKWebView first and printed from
+    // that view. UIMarkupTextPrintFormatter was tried first, but it supports
+    // only basic HTML, can't load the documents' images and CSS, and gave up
+    // (completed:false, NSURLErrorUnsupportedURL -1002) on every print.
+    private var htmlPrintJob: HtmlPrintJob?
+
     @objc func printHtml(_ call: CAPPluginCall) {
         let html = call.getString("html") ?? ""
         let name = call.getString("name") ?? "Hassad"
         DispatchQueue.main.async {
-            self.presentPrint(name: name, formatter: UIMarkupTextPrintFormatter(markupText: html), call: call)
+            guard let host = self.bridge?.viewController?.view else {
+                call.reject("No screen to print from")
+                return
+            }
+            // The app's own files (e.g. logo.png) live in the bundled "public"
+            // folder. Point both relative and capacitor://localhost/ links there.
+            let base = Bundle.main.url(forResource: "public", withExtension: nil)
+            var markup = html
+            if let base = base {
+                markup = markup.replacingOccurrences(of: "capacitor://localhost/", with: base.absoluteString)
+            }
+            self.htmlPrintJob?.cleanup()
+            let job = HtmlPrintJob(html: markup, baseURL: base, host: host) { [weak self] webView in
+                guard let self = self else { return }
+                guard let webView = webView else {
+                    self.htmlPrintJob?.cleanup()
+                    self.htmlPrintJob = nil
+                    call.reject("Could not prepare the document for printing")
+                    return
+                }
+                self.presentPrint(name: name, formatter: webView.viewPrintFormatter(), call: call) {
+                    self.htmlPrintJob?.cleanup()
+                    self.htmlPrintJob = nil
+                }
+            }
+            self.htmlPrintJob = job
+            job.start()
         }
     }
 
@@ -80,19 +113,26 @@ public class HassadNativePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func presentPrint(name: String, formatter: UIPrintFormatter, call: CAPPluginCall) {
+    private func presentPrint(name: String, formatter: UIPrintFormatter, call: CAPPluginCall,
+                              finished: (() -> Void)? = nil) {
         let info = UIPrintInfo(dictionary: nil)
         info.outputType = .general
         info.jobName = name
         let controller = UIPrintInteractionController.shared
         controller.printInfo = info
         controller.printFormatter = formatter
-        _ = controller.present(animated: true) { _, completed, error in
+        let shown = controller.present(animated: true) { _, completed, error in
+            finished?()
             if let error = error {
                 call.reject(error.localizedDescription)
             } else {
                 call.resolve(["completed": completed])
             }
+        }
+        if !shown {
+            // e.g. the print sheet is already open from a double tap.
+            finished?()
+            call.reject("The print sheet is already open")
         }
     }
 
@@ -110,6 +150,57 @@ public class HassadNativePlugin: CAPPlugin, CAPBridgedPlugin {
             .joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "download" : cleaned
+    }
+}
+
+/// Loads an HTML string into an invisible WKWebView and reports when it has
+/// finished loading, so the page can be printed with its full CSS and images.
+final class HtmlPrintJob: NSObject, WKNavigationDelegate {
+    private let webView: WKWebView
+    private let html: String
+    private let baseURL: URL?
+    private let onReady: (WKWebView?) -> Void
+    private var reported = false
+
+    init(html: String, baseURL: URL?, host: UIView, onReady: @escaping (WKWebView?) -> Void) {
+        self.html = html
+        self.baseURL = baseURL
+        self.onReady = onReady
+        // Roughly A4 at 96 dpi; the print formatter re-flows it to the paper size.
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 794, height: 1123))
+        super.init()
+        webView.navigationDelegate = self
+        webView.isUserInteractionEnabled = false
+        webView.alpha = 0.01
+        host.insertSubview(webView, at: 0)
+    }
+
+    func start() {
+        webView.loadHTMLString(html, baseURL: baseURL)
+    }
+
+    func cleanup() {
+        webView.navigationDelegate = nil
+        webView.removeFromSuperview()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // A short pause lets images and web fonts finish painting.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.report(webView) }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        report(nil)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        report(nil)
+    }
+
+    private func report(_ view: WKWebView?) {
+        guard !reported else { return }
+        reported = true
+        onReady(view)
     }
 }
 
