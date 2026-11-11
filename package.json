@@ -8,7 +8,8 @@
     "watch": "tailwindcss -i ./tailwind.input.css -o ./tailwind.css --watch",
     "www": "node scripts/build-www.mjs",
     "ios:sync": "npm run www && npx cap sync ios",
-    "ios:open": "npx cap open ios"
+    "ios:open": "npx cap open ios",
+    "privacy": "node scripts/build-privacy.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.6.0",

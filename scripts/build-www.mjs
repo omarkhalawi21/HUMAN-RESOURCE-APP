@@ -3,7 +3,7 @@
 // keeps serving it from there); www/ is generated output and is git-ignored.
 import { cpSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 
-const FILES = ['index.html', 'tailwind.css', 'logo.png', 'bg-coffee.jpg', 'manifest.webmanifest', 'sw.js'];
+const FILES = ['index.html', 'privacy.html', 'tailwind.css', 'logo.png', 'bg-coffee.jpg', 'manifest.webmanifest', 'sw.js'];
 
 rmSync('www', { recursive: true, force: true });
 mkdirSync('www');

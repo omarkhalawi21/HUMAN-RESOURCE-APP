@@ -72,8 +72,11 @@ test list in section 4 before uploading.
 3. **App Privacy**: declare what the app collects. The app collects name, email,
    phone, precise location (clock-in), photos (receipts/maintenance) and
    employment data, all linked to the user and used for "App Functionality",
-   with no tracking. Use the **Privacy Policy URL** of a public page with the
-   content of `PRIVACY_NOTICE.md` (required).
+   with no tracking. Receipt images and (for admins) HR records are sent to
+   Anthropic for AI processing, which is disclosed in the privacy policy.
+   **Privacy Policy URL:** `https://app.hasadco.sa/privacy.html`. It is
+   generated from `PRIVACY_NOTICE.md` by `npm run privacy`, so re-run that after
+   editing the notice. It goes live once the branch is merged to `main`.
 4. **App Review Information**: give a **demo login** (an employee account with
    sample data at a demo branch). Reviewers can't sign up because sign-up is
    invite-only. Without a working demo login the app is rejected.
