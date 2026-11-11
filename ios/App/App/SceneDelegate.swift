@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import CapApp_SPM
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -8,7 +9,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = CAPBridgeViewController()
+        // HassadBridgeViewController (CapApp-SPM/HassadNative.swift) adds the
+        // HassadNative plugin for sharing exported files and printing.
+        window?.rootViewController = HassadBridgeViewController()
         window?.makeKeyAndVisible()
 
         SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
