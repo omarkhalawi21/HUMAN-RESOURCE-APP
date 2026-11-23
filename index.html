@@ -8287,19 +8287,6 @@ function generatePayrollReport(period) {
   const monthName = new Date(+y, +mo-1, 1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
   const totals = records.reduce((s,p)=>{ s.base+=p.base; s.bonus+=p.bonus||0; s.ded+=p.deductions||0; s.net+=p.net; return s; }, {base:0,bonus:0,ded:0,net:0});
 
-  // Department breakdown
-  const byDept = {};
-  records.forEach(p => {
-    const e = getEmployee(p.employeeId);
-    const k = e?.department || 'General';
-    if (!byDept[k]) byDept[k] = { count:0, base:0, bonus:0, ded:0, net:0 };
-    byDept[k].count++;
-    byDept[k].base += p.base;
-    byDept[k].bonus += p.bonus||0;
-    byDept[k].ded   += p.deductions||0;
-    byDept[k].net   += p.net;
-  });
-
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Payroll Report — ${escapeHTML(monthName)}</title>
   <style>
     ${LETTERHEAD_CSS}
@@ -8323,23 +8310,13 @@ function generatePayrollReport(period) {
   <div class="page">
     ${letterheadHTML('PAYROLL REPORT.')}
     <div class="doc-date">Pay Period: ${escapeHTML(monthName)} (${escapeHTML(period)})</div>
-    <p class="doc-intro">This report summarizes payroll activity for the period above, broken down by department and itemized per employee. Issued by the Human Resources Department.</p>
+    <p class="doc-intro">This report summarizes payroll activity for the period above, itemized per employee. Issued by the Human Resources Department.</p>
     <div class="stat-row">
       <div class="stat"><div class="lbl">Employees Paid</div><div class="val">${records.length}</div></div>
       <div class="stat"><div class="lbl">Total Base</div><div class="val">${fmtMoney(totals.base)}</div></div>
       <div class="stat"><div class="lbl">Total Bonus</div><div class="val pos">+${fmtMoney(totals.bonus)}</div></div>
       <div class="stat"><div class="lbl">Total Net</div><div class="val">${fmtMoney(totals.net)}</div></div>
     </div>
-    <div class="section-title">Department Breakdown</div>
-    <table class="pay-table">
-      <thead><tr><th>Department</th><th>Headcount</th><th class="right">Base</th><th class="right">Bonus</th><th class="right">Deductions</th><th class="right">Net</th></tr></thead>
-      <tbody>
-        ${Object.entries(byDept).map(([k,v])=>`
-          <tr><td>${escapeHTML(k)}</td><td>${v.count}</td><td class="right">${fmtMoney(v.base)}</td><td class="right pos">+${fmtMoney(v.bonus)}</td><td class="right neg">-${fmtMoney(v.ded)}</td><td class="right"><strong>${fmtMoney(v.net)}</strong></td></tr>
-        `).join('')}
-        <tr class="total"><td>Total</td><td>${records.length}</td><td class="right">${fmtMoney(totals.base)}</td><td class="right">+${fmtMoney(totals.bonus)}</td><td class="right">-${fmtMoney(totals.ded)}</td><td class="right">${fmtMoney(totals.net)}</td></tr>
-      </tbody>
-    </table>
     <div class="section-title">Detailed Payslips</div>
     <table class="pay-table">
       <thead><tr><th>#</th><th>Employee</th><th>Department</th><th>Role</th><th class="right">Base</th><th class="right">Bonus</th><th class="right">Deductions</th><th class="right">Net</th><th>Paid On</th></tr></thead>
